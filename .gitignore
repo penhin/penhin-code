@@ -1,0 +1,11 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+AGENTS.md
+
+.penhin_todos.json
+.tasks/
+.transcripts/
+
+.DS_Store

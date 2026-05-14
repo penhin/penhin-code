@@ -1,0 +1,356 @@
+import json
+import sys
+import tempfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import compact
+import transcript
+import tools
+from compact import (
+    compact_source_text,
+    auto_compact_messages,
+    micro_compact_text,
+    recent_message_start,
+    should_auto_compact,
+)
+from result import Result
+from skills import load_skill
+from task import TaskStatusManager
+from todo import TODO_FILE, run_todo
+from tools import CHILD_TOOLS, PARENT_TOOLS, TOOL_HANDLERS, run_list
+
+
+class ToolUseBlock:
+    def __init__(self, block_id: str, name: str):
+        self.type = "tool_use"
+        self.id = block_id
+        self.name = name
+
+
+def test_result_json() -> None:
+    data = json.loads(Result(stdout="hello").to_json())
+    assert data == {"exit_code": 0, "stdout": "hello", "stderr": ""}
+
+
+def test_list_ignores_internal_files() -> None:
+    output = run_list(".").stdout
+    paths = output.splitlines()
+
+    assert not any(path == ".venv" or path.startswith(".venv/") for path in paths)
+    assert not any(path == ".git" or path.startswith(".git/") for path in paths)
+    assert not any("__pycache__" in Path(path).parts for path in paths)
+    assert ".penhin_todos.json" not in paths
+    assert not any(path == ".transcripts" or path.startswith(".transcripts/") for path in paths)
+    assert not any(path == ".tasks" or path.startswith(".tasks/") for path in paths)
+
+
+def test_todo_flow() -> None:
+    original = TODO_FILE.read_text(encoding="utf-8") if TODO_FILE.exists() else None
+    try:
+        set_result = run_todo("set", ["inspect", "verify"])
+        assert set_result.exit_code == 0
+        assert "1. [ ] inspect" in set_result.stdout
+        assert "2. [ ] verify" in set_result.stdout
+
+        done_result = run_todo("done", index=1)
+        assert done_result.exit_code == 0
+        assert "1. [x] inspect" in done_result.stdout
+
+        show_result = run_todo("show")
+        assert show_result.exit_code == 0
+        assert "1. [x] inspect" in show_result.stdout
+
+        clear_result = run_todo("clear")
+        assert clear_result.exit_code == 0
+        assert clear_result.stdout == "Cleared todos"
+    finally:
+        if original is None:
+            TODO_FILE.unlink(missing_ok=True)
+        else:
+            TODO_FILE.write_text(original, encoding="utf-8")
+
+
+def test_workspace_tool() -> None:
+    result = TOOL_HANDLERS["workspace"]()
+    assert result.exit_code == 0
+
+    data = json.loads(result.stdout)
+    assert "cwd" in data
+    assert ".venv" in data["ignored"]
+    assert ".penhin_todos.json" in data["ignored"]
+    assert "workspace" in data["tools"]
+    assert "task" in data["tools"]
+
+
+def test_skill_loader() -> None:
+    descriptions = load_skill.get_descriptions()
+    assert "code-review" in descriptions
+
+    content = TOOL_HANDLERS["load_skill"](name="code-review")
+    assert content.exit_code == 0
+    assert "<skill name=\"code-review\">" in content.stdout
+    assert "Code Review" in content.stdout
+
+
+def test_task_tool_registered() -> None:
+    assert "task" in TOOL_HANDLERS
+
+
+def test_tool_schemas_match_handlers() -> None:
+    child_tool_names = {tool["name"] for tool in CHILD_TOOLS}
+    handler_names = set(TOOL_HANDLERS)
+
+    assert child_tool_names <= handler_names
+    assert "task" in handler_names
+    assert "task_status" in handler_names
+    assert "compact" not in handler_names
+
+
+def test_compact_tool_is_parent_only() -> None:
+    parent_tool_names = {tool["name"] for tool in PARENT_TOOLS}
+    child_tool_names = {tool["name"] for tool in CHILD_TOOLS}
+
+    assert "compact" in parent_tool_names
+    assert "compact" not in child_tool_names
+    assert "compact" not in TOOL_HANDLERS
+
+
+def test_task_status_tool_registered() -> None:
+    parent_tool_names = {tool["name"] for tool in PARENT_TOOLS}
+    child_tool_names = {tool["name"] for tool in CHILD_TOOLS}
+
+    assert "task_status" in parent_tool_names
+    assert "task_status" not in child_tool_names
+    assert "task_status" in TOOL_HANDLERS
+
+
+def test_task_status_manager_flow() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        manager = TaskStatusManager(Path(tmpdir))
+        started = manager.start("build task system", description="track task state", note="initial")
+        shown = manager.show()
+        blocked = manager.block(blocked_by=[99], note="waiting")
+        completed = manager.complete(note="done")
+        manager.clear()
+        cleared = manager.show()
+
+    assert started.id == 1
+    assert started.status == "running"
+    assert shown.subject == "build task system"
+    assert blocked.status == "blocked"
+    assert blocked.blocked_by == [99]
+    assert blocked.note == "waiting"
+    assert blocked.updated_at >= blocked.created_at
+    assert completed.status == "completed"
+    assert completed.blocked_by == []
+    assert completed.note == "done"
+    assert cleared is None
+
+
+def test_task_status_tool_handler() -> None:
+    original_task_status = tools.task_status
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        try:
+            tools.task_status = TaskStatusManager(Path(tmpdir))
+            start_result = TOOL_HANDLERS["task_status"](
+                action="start",
+                subject="wire task_status",
+                description="Expose task status to the parent agent",
+            )
+            started = json.loads(start_result.stdout)
+
+            block_result = TOOL_HANDLERS["task_status"](
+                action="block",
+                blocked_by=[99],
+            )
+            blocked = json.loads(block_result.stdout)
+
+            show_result = TOOL_HANDLERS["task_status"](action="show")
+            shown = json.loads(show_result.stdout)
+
+            clear_result = TOOL_HANDLERS["task_status"](action="clear")
+            empty_result = TOOL_HANDLERS["task_status"](action="show")
+        finally:
+            tools.task_status = original_task_status
+
+    assert start_result.exit_code == 0
+    assert started["subject"] == "wire task_status"
+    assert block_result.exit_code == 0
+    assert blocked["status"] == "blocked"
+    assert blocked["blocked_by"] == [99]
+    assert show_result.exit_code == 0
+    assert shown["id"] == started["id"]
+    assert clear_result.stdout == "Cleared current task"
+    assert empty_result.stdout == "(no current task)"
+
+
+def test_micro_compact_text() -> None:
+    long_output = "x" * 200
+    preserved_output = "y" * 200
+    recent_output = "z" * 200
+
+    messages = [
+        {
+            "role": "assistant",
+            "content": [
+                ToolUseBlock("tool-1", "list"),
+                ToolUseBlock("tool-2", "read"),
+                ToolUseBlock("tool-3", "bash"),
+                ToolUseBlock("tool-4", "search"),
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "tool-1", "content": long_output},
+                {"type": "tool_result", "tool_use_id": "tool-2", "content": preserved_output},
+                {"type": "tool_result", "tool_use_id": "tool-3", "content": recent_output},
+                {"type": "tool_result", "tool_use_id": "tool-4", "content": recent_output},
+            ],
+        },
+    ]
+
+    micro_compact_text(messages, keep_recent=2)
+
+    results = messages[1]["content"]
+    assert results[0]["content"] == "[Previous: used list]"
+    assert results[1]["content"] == preserved_output
+    assert results[2]["content"] == recent_output
+    assert results[3]["content"] == recent_output
+
+
+def test_auto_compact_helpers() -> None:
+    assert should_auto_compact([{"role": "user", "content": "x" * 40}], threshold=5)
+    assert not should_auto_compact([{"role": "user", "content": "short"}], threshold=100)
+
+    messages = [
+        {"role": "user", "content": "initial"},
+        {"role": "assistant", "content": [ToolUseBlock("tool-1", "search")]},
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "tool-1", "content": "result"}],
+        },
+        {"role": "assistant", "content": "done"},
+    ]
+    assert recent_message_start(messages, keep_last=2) == 1
+
+
+def test_compact_source_text_keeps_head_and_tail() -> None:
+    original_head_chars = compact.SUMMARY_HEAD_CHARS
+    original_tail_chars = compact.SUMMARY_TAIL_CHARS
+
+    try:
+        compact.SUMMARY_HEAD_CHARS = 80
+        compact.SUMMARY_TAIL_CHARS = 80
+
+        messages = [
+            {"role": "user", "content": "HEAD-" + ("x" * 200) + "-TAIL"},
+        ]
+        text = compact_source_text(messages)
+    finally:
+        compact.SUMMARY_HEAD_CHARS = original_head_chars
+        compact.SUMMARY_TAIL_CHARS = original_tail_chars
+
+    assert "HEAD-" in text
+    assert "...[middle omitted during compaction]..." in text
+    assert "-TAIL" in text
+
+
+def test_save_transcript_writes_jsonl() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = transcript.TranscriptStore(Path(tmpdir))
+        messages = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": [ToolUseBlock("tool-1", "search")]},
+        ]
+        transcript_path = store.save(messages)
+
+        assert transcript_path.parent == Path(tmpdir)
+        assert transcript_path.exists()
+        assert store.latest() == transcript_path
+        lines = transcript_path.read_text(encoding="utf-8").splitlines()
+        stored_messages = store.read(transcript_path)
+
+    assert len(lines) == 2
+    assert json.loads(lines[0]) == {"role": "user", "content": "hello"}
+    assert json.loads(lines[1])["content"][0]["type"] == "ToolUseBlock"
+    assert stored_messages[0] == {"role": "user", "content": "hello"}
+
+
+def test_transcript_read_rejects_unsafe_paths() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = transcript.TranscriptStore(Path(tmpdir) / "transcripts")
+        transcript_path = store.save([{"role": "user", "content": "hello"}])
+        wrong_suffix = Path(tmpdir) / "transcripts" / "notes.txt"
+        outside_path = Path(tmpdir) / "outside.jsonl"
+        wrong_suffix.write_text("{}", encoding="utf-8")
+        outside_path.write_text("{}", encoding="utf-8")
+
+        assert store.read(transcript_path) == [{"role": "user", "content": "hello"}]
+
+        try:
+            store.read(wrong_suffix)
+            raise AssertionError("Expected wrong suffix to be rejected")
+        except ValueError as error:
+            assert ".jsonl" in str(error)
+
+        try:
+            store.read(outside_path)
+            raise AssertionError("Expected outside path to be rejected")
+        except ValueError as error:
+            assert "escapes transcript directory" in str(error)
+
+
+def test_auto_compact_falls_back_when_summary_fails() -> None:
+    def fail_summary(**kwargs):
+        raise RuntimeError("offline failure")
+
+    original_call_llm_once = compact.call_llm_once
+    original_transcripts = compact.transcripts
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        try:
+            compact.call_llm_once = fail_summary
+            compact.transcripts = transcript.TranscriptStore(Path(tmpdir))
+
+            messages = [
+                {"role": "user", "content": "first"},
+                {"role": "assistant", "content": "second"},
+            ]
+            compacted = auto_compact_messages(messages, keep_last=1)
+        finally:
+            compact.call_llm_once = original_call_llm_once
+            compact.transcripts = original_transcripts
+
+    assert compacted[0]["role"] == "user"
+    assert str(Path(tmpdir)) in compacted[0]["content"]
+    assert "Summary failed during compaction: offline failure" in compacted[0]["content"]
+    assert compacted[-1] == {"role": "assistant", "content": "second"}
+
+
+def main() -> None:
+    test_result_json()
+    test_list_ignores_internal_files()
+    test_todo_flow()
+    test_workspace_tool()
+    test_skill_loader()
+    test_task_tool_registered()
+    test_tool_schemas_match_handlers()
+    test_compact_tool_is_parent_only()
+    test_task_status_tool_registered()
+    test_task_status_manager_flow()
+    test_task_status_tool_handler()
+    test_micro_compact_text()
+    test_auto_compact_helpers()
+    test_compact_source_text_keeps_head_and_tail()
+    test_save_transcript_writes_jsonl()
+    test_transcript_read_rejects_unsafe_paths()
+    test_auto_compact_falls_back_when_summary_fails()
+    print("ok")
+
+
+if __name__ == "__main__":
+    main()
