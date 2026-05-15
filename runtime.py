@@ -1,8 +1,9 @@
 import os
 import sys
+import time
 
 from dataclasses import dataclass
-from anthropic import Anthropic
+from anthropic import Anthropic, APIConnectionError, APIError, RateLimitError
 from dotenv import load_dotenv
 
 
@@ -16,6 +17,32 @@ class Runtime:
     max_tokens: int = 10000
     sub_max_turns: int = 30
     sub_max_tokens: int = 2000
+
+    def call_with_retry(self, system: str, messages: list[dict], tools=None, max_tokens: int | None = None):
+        retry_errors = (APIError, APIConnectionError, RateLimitError)
+        delays = [1, 2, 4]
+
+        for attempt in range(len(delays) + 1):
+            try:
+                kwargs = {
+                    "model": self.model,
+                    "system": system,
+                    "messages": messages,
+                    "max_tokens": max_tokens or self.max_tokens,
+                }
+                if tools is not None:
+                    kwargs["tools"] = tools
+                return self.client.messages.create(**kwargs)
+            except retry_errors as error:
+                if attempt == len(delays):
+                    raise
+
+                delay = delays[attempt]
+                print(
+                    f"[retry] messages.create failed ({error.__class__.__name__}), "
+                    f"retrying in {delay}s..."
+                )
+                time.sleep(delay)
     
 
 def print_usage(label: str, response) -> None:
@@ -58,8 +85,7 @@ def call_llm_once(
 ) -> str:
     runtime = get_runtime()
 
-    response = runtime.client.messages.create(
-        model=runtime.model,
+    response = runtime.call_with_retry(
         system=system,
         messages=[{"role": "user", "content": user_content}],
         max_tokens=max_tokens or runtime.max_tokens,

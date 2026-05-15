@@ -34,8 +34,7 @@ def agent_loop(messages: list[dict]) -> None:
         if should_auto_compact(messages):
             messages[:] = auto_compact_messages(messages)
 
-        response = runtime.client.messages.create(
-            model=runtime.model,
+        response = runtime.call_with_retry(
             system=SYSTEM,
             messages=messages,
             tools=PARENT_TOOLS,

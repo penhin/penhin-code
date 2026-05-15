@@ -20,8 +20,7 @@ def extract_summary(content) -> str:
 
 
 def request_final_summary(runtime, sub_messages: list[dict]) -> str:
-    response = runtime.client.messages.create(
-        model=runtime.model,
+    response = runtime.call_with_retry(
         system=(
             SUBAGENT_SYSTEM
             + "The tool budget is exhausted. Use the available tool results and return the final concise summary now."
@@ -39,8 +38,7 @@ def run_subagent(task: str) -> Result:
     sub_messages = [{"role": "user", "content": task}]
     
     for _ in range(0, runtime.sub_max_turns):
-        response = runtime.client.messages.create(
-            model=runtime.model,
+        response = runtime.call_with_retry(
             system=SUBAGENT_SYSTEM,
             messages=sub_messages,
             tools=CHILD_TOOLS,
