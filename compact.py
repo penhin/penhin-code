@@ -8,7 +8,7 @@ SUMMARY_HEAD_CHARS = 40000
 SUMMARY_TAIL_CHARS = 40000
 KEEP_RECENT = 3
 KEEP_LAST_MESSAGES = 8
-PRESERVE_RESULT_TOOLS = {"todo", "load_skill", "read"}
+PRESERVE_RESULT_TOOLS = {"todo_set", "todo_show", "todo_done", "todo_clear", "load_skill", "read"}
 
 
 def block_get(block, key: str, default=None):

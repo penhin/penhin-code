@@ -13,8 +13,8 @@ from compact import auto_compact_messages, micro_compact_text, should_auto_compa
 
 SYSTEM = (
     f"You are Penhin Code, a tiny coding agent running in {os.getcwd()}. "
-    "Use task_status to track the high-level task state. "
-    "Use todo to plan and track multi-step tasks before making changes. "
+    "Use task_start/task_show/task_complete/task_block/task_clear/task_list/task_switch to track the high-level task state. "
+    "Use todo_set/todo_show/todo_done/todo_clear to plan and track multi-step tasks before making changes. "
     "Use task to delegate focused subtasks that benefit from fresh context. "
     "Use list/search/read/edit/write/workspace for file operations. "
     "Use load_skill when a listed skill is relevant and you need its full instructions. "

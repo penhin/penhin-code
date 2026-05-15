@@ -107,7 +107,9 @@ class TaskStatusManager:
         self._next_id += 1
         return task
 
-    def show(self) -> TaskStatus | None:
+    def show(self, id: int = None) -> TaskStatus | None:
+        if id is not None:
+            return self._load(id)
         current_id = self._get_current_id()
         if current_id is None:
             return None
@@ -125,6 +127,24 @@ class TaskStatusManager:
         self._save(task)
         return task
 
+    def switch(self, id: int) -> TaskStatus | None:
+        if id is None:
+            return None
+        task = self._load(id)
+        self._set_current_id(id)
+        return task
+
+    def list(self) -> list[dict]:
+        tasks = []
+        task_paths = sorted(
+            self.tasks_dir.glob("task_*.json"),
+            key=lambda path: int(path.stem.split("_")[1]),
+        )
+        for path in task_paths:
+            task_id = int(path.stem.split("_")[1])
+            tasks.append(self._load(task_id).to_dict())
+        return tasks
+
     def clear(self) -> None:
         self._set_current_id(None)
 
@@ -137,6 +157,7 @@ class TaskStatusManager:
     def __call__(
         self,
         action: str,
+        id: int = None,
         subject: str = None,
         description: str = "",
         note: str = None,
@@ -149,7 +170,7 @@ class TaskStatusManager:
                 return Result(stdout=self.start(subject, description, note or "").to_json())
 
             if action == "show":
-                task = self.show()
+                task = self.show(id)
                 return Result(stdout=task.to_json() if task else "(no current task)")
 
             if action == "complete":
@@ -161,6 +182,12 @@ class TaskStatusManager:
             if action == "clear":
                 self.clear()
                 return Result(stdout="Cleared current task")
+
+            if action == "list":
+                return Result(stdout=json.dumps(self.list(), ensure_ascii=False, indent=2))
+
+            if action == "switch":
+                return Result(stdout=self.switch(id).to_json())
 
             return Result(1, stderr=f"Error: unknown task action: {action}")
         except FileNotFoundError as error:

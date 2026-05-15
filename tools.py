@@ -89,19 +89,48 @@ CHILD_TOOLS = [
         },
     },
     {
-        "name": "todo",
-        "description": "Manage a small in-memory todo list for multi-step tasks.",
+        "name": "todo_set",
+        "description": "Replace the current todo list with ordered items.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "action": {"type": "string", "enum": ["set", "show", "done", "clear"]},
                 "items": {
                     "type": "array",
                     "items": {"type": "string"},
                 },
+            },
+            "required": ["items"],
+        },
+    },
+    {
+        "name": "todo_show",
+        "description": "Show the current todo list.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "todo_done",
+        "description": "Mark one todo item as done by 1-based index.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
                 "index": {"type": "integer"},
             },
-            "required": ["action"],
+            "required": ["index"],
+        },
+    },
+    {
+        "name": "todo_clear",
+        "description": "Clear the current todo list.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+            },
+            "required": [],
         },
     },
     {
@@ -150,21 +179,84 @@ PARENT_TOOLS = [
         },
     },
     {
-        "name": "task_status",
-        "description": "Track the current high-level task state.",
+        "name": "task_start",
+        "description": "Start tracking a new current high-level task.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "action": {"type": "string", "enum": ["start", "show", "complete", "block", "clear"]},
                 "subject": {"type": "string"},
                 "description": {"type": "string"},
                 "note": {"type": "string"},
+            },
+            "required": ["subject"],
+        },
+    },
+    {
+        "name": "task_show",
+        "description": "Show the current high-level task state.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "task_complete",
+        "description": "Mark the current high-level task as completed.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "note": {"type": "string"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "task_block",
+        "description": "Mark the current high-level task as blocked.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
                 "blocked_by": {
                     "type": "array",
                     "items": {"type": "integer"},
                 },
+                "note": {"type": "string"},
             },
-            "required": ["action"],
+            "required": [],
+        },
+    },
+    {
+        "name": "task_clear",
+        "description": "Clear the current high-level task pointer.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "task_list",
+        "description": "list the all high-level task state.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "task_switch",
+        "description": "Switch the current high-level task pointer.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer"},
+            },
+            "required": ["id"],
         },
     },
 ] + CHILD_TOOLS
@@ -354,11 +446,30 @@ TOOL_HANDLERS = {
     "search":     lambda **kwargs: run_search(
         kwargs["query"], kwargs.get("path", "."), kwargs.get("limit")
     ),
-    "todo":       lambda **kwargs: run_todo(
-        kwargs["action"], kwargs.get("items"), kwargs.get("index")
-    ),
+    "todo_set":   lambda **kwargs: run_todo("set", kwargs["items"]),
+    "todo_show":  lambda **kwargs: run_todo("show"),
+    "todo_done":  lambda **kwargs: run_todo("done", index=kwargs["index"]),
+    "todo_clear": lambda **kwargs: run_todo("clear"),
     "workspace":  lambda **kwargs: run_workspace(),
     "load_skill": lambda **kwargs: load_skill(kwargs["name"]),
     "task":       lambda **kwargs: run_task(kwargs["task"]),
-    "task_status": lambda **kwargs: run_task_status(**kwargs),
+    "task_start": lambda **kwargs: run_task_status(
+        action="start",
+        subject=kwargs["subject"],
+        description=kwargs.get("description", ""),
+        note=kwargs.get("note"),
+    ),
+    "task_show": lambda **kwargs: run_task_status(action="show", id=kwargs.get("id")),
+    "task_complete": lambda **kwargs: run_task_status(
+        action="complete",
+        note=kwargs.get("note"),
+    ),
+    "task_block": lambda **kwargs: run_task_status(
+        action="block",
+        blocked_by=kwargs.get("blocked_by"),
+        note=kwargs.get("note"),
+    ),
+    "task_clear": lambda **kwargs: run_task_status(action="clear"),
+    "task_list":  lambda **kwargs: run_task_status(action="list"),
+    "task_switch": lambda **kwargs: run_task_status(action="switch", id=kwargs["id"]),
 }

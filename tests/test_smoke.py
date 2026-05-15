@@ -72,6 +72,28 @@ def test_todo_flow() -> None:
             TODO_FILE.write_text(original, encoding="utf-8")
 
 
+def test_todo_tool_handlers() -> None:
+    original = TODO_FILE.read_text(encoding="utf-8") if TODO_FILE.exists() else None
+    try:
+        set_result = TOOL_HANDLERS["todo_set"](items=["inspect", "verify"])
+        show_result = TOOL_HANDLERS["todo_show"]()
+        done_result = TOOL_HANDLERS["todo_done"](index=1)
+        clear_result = TOOL_HANDLERS["todo_clear"]()
+
+        assert set_result.exit_code == 0
+        assert show_result.exit_code == 0
+        assert "1. [ ] inspect" in show_result.stdout
+        assert done_result.exit_code == 0
+        assert "1. [x] inspect" in done_result.stdout
+        assert clear_result.exit_code == 0
+        assert clear_result.stdout == "Cleared todos"
+    finally:
+        if original is None:
+            TODO_FILE.unlink(missing_ok=True)
+        else:
+            TODO_FILE.write_text(original, encoding="utf-8")
+
+
 def test_workspace_tool() -> None:
     result = TOOL_HANDLERS["workspace"]()
     assert result.exit_code == 0
@@ -104,7 +126,8 @@ def test_tool_schemas_match_handlers() -> None:
 
     assert child_tool_names <= handler_names
     assert "task" in handler_names
-    assert "task_status" in handler_names
+    assert "task_start" in handler_names
+    assert "task_show" in handler_names
     assert "compact" not in handler_names
 
 
@@ -121,9 +144,18 @@ def test_task_status_tool_registered() -> None:
     parent_tool_names = {tool["name"] for tool in PARENT_TOOLS}
     child_tool_names = {tool["name"] for tool in CHILD_TOOLS}
 
-    assert "task_status" in parent_tool_names
-    assert "task_status" not in child_tool_names
-    assert "task_status" in TOOL_HANDLERS
+    for tool_name in {
+        "task_start",
+        "task_show",
+        "task_complete",
+        "task_block",
+        "task_clear",
+        "task_list",
+        "task_switch",
+    }:
+        assert tool_name in parent_tool_names
+        assert tool_name not in child_tool_names
+        assert tool_name in TOOL_HANDLERS
 
 
 def test_task_status_manager_flow() -> None:
@@ -149,40 +181,69 @@ def test_task_status_manager_flow() -> None:
     assert cleared is None
 
 
+def test_task_status_manager_list_and_switch() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        manager = TaskStatusManager(Path(tmpdir))
+        first = manager.start("first task")
+        second = manager.start("second task")
+        listed = manager.list()
+        shown_first = manager.show(first.id)
+        switched = manager.switch(first.id)
+        current = manager.show()
+        missing_switch = manager("switch", id=99)
+
+    assert [task["id"] for task in listed] == [first.id, second.id]
+    assert shown_first.subject == "first task"
+    assert switched.id == first.id
+    assert current.id == first.id
+    assert missing_switch.exit_code == 1
+    assert "Task 99 not found" in missing_switch.stderr
+
+
 def test_task_status_tool_handler() -> None:
     original_task_status = tools.task_status
 
     with tempfile.TemporaryDirectory() as tmpdir:
         try:
             tools.task_status = TaskStatusManager(Path(tmpdir))
-            start_result = TOOL_HANDLERS["task_status"](
-                action="start",
+            start_result = TOOL_HANDLERS["task_start"](
                 subject="wire task_status",
                 description="Expose task status to the parent agent",
             )
             started = json.loads(start_result.stdout)
+            second_result = TOOL_HANDLERS["task_start"](subject="second task")
+            second = json.loads(second_result.stdout)
 
-            block_result = TOOL_HANDLERS["task_status"](
-                action="block",
+            block_result = TOOL_HANDLERS["task_block"](
                 blocked_by=[99],
             )
             blocked = json.loads(block_result.stdout)
 
-            show_result = TOOL_HANDLERS["task_status"](action="show")
+            show_result = TOOL_HANDLERS["task_show"](id=started["id"])
             shown = json.loads(show_result.stdout)
+            list_result = TOOL_HANDLERS["task_list"]()
+            listed = json.loads(list_result.stdout)
+            switch_result = TOOL_HANDLERS["task_switch"](id=started["id"])
+            switched = json.loads(switch_result.stdout)
 
-            clear_result = TOOL_HANDLERS["task_status"](action="clear")
-            empty_result = TOOL_HANDLERS["task_status"](action="show")
+            clear_result = TOOL_HANDLERS["task_clear"]()
+            empty_result = TOOL_HANDLERS["task_show"]()
         finally:
             tools.task_status = original_task_status
 
     assert start_result.exit_code == 0
     assert started["subject"] == "wire task_status"
+    assert second_result.exit_code == 0
+    assert second["subject"] == "second task"
     assert block_result.exit_code == 0
     assert blocked["status"] == "blocked"
     assert blocked["blocked_by"] == [99]
     assert show_result.exit_code == 0
     assert shown["id"] == started["id"]
+    assert list_result.exit_code == 0
+    assert [task["id"] for task in listed] == [started["id"], second["id"]]
+    assert switch_result.exit_code == 0
+    assert switched["id"] == started["id"]
     assert clear_result.stdout == "Cleared current task"
     assert empty_result.stdout == "(no current task)"
 
@@ -220,6 +281,16 @@ def test_micro_compact_text() -> None:
     assert results[1]["content"] == preserved_output
     assert results[2]["content"] == recent_output
     assert results[3]["content"] == recent_output
+
+    todo_messages = [
+        {"role": "assistant", "content": [ToolUseBlock("tool-5", "todo_show")]},
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "tool-5", "content": long_output}],
+        },
+    ]
+    micro_compact_text(todo_messages, keep_recent=0)
+    assert todo_messages[1]["content"][0]["content"] == long_output
 
 
 def test_auto_compact_helpers() -> None:
@@ -335,6 +406,7 @@ def main() -> None:
     test_result_json()
     test_list_ignores_internal_files()
     test_todo_flow()
+    test_todo_tool_handlers()
     test_workspace_tool()
     test_skill_loader()
     test_task_tool_registered()
@@ -342,6 +414,7 @@ def main() -> None:
     test_compact_tool_is_parent_only()
     test_task_status_tool_registered()
     test_task_status_manager_flow()
+    test_task_status_manager_list_and_switch()
     test_task_status_tool_handler()
     test_micro_compact_text()
     test_auto_compact_helpers()

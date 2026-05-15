@@ -34,18 +34,27 @@ requirements.txt     Python 依赖
 ### 当前工具
 
 ```text
-todo          规划和追踪多步骤任务
-task_status   追踪当前主任务状态
-task          委派一个子 agent 执行聚焦任务
-load_skill    读取完整 skill 内容
-workspace     查看当前工作区信息
-compact       压缩长上下文
-list          列出项目文件
-search        搜索项目文本
-read          读取文件，可显示行号
-edit          用唯一 old 文本替换为 new 文本
-write         写入文件
-bash          运行命令、测试或观察运行时行为
+todo_set       设置 todo 列表
+todo_show      查看 todo 列表
+todo_done      标记 todo 项完成
+todo_clear     清空 todo 列表
+task_start     开始追踪当前主任务
+task_show      查看当前或指定主任务
+task_complete  标记当前主任务完成
+task_block     标记当前主任务阻塞
+task_clear     清除当前主任务指针
+task_list      查看所有主任务
+task_switch    切换当前主任务
+task           委派一个子 agent 执行聚焦任务
+load_skill     读取完整 skill 内容
+workspace      查看当前工作区信息
+compact        压缩长上下文
+list           列出项目文件
+search         搜索项目文本
+read           读取文件，可显示行号
+edit           用唯一 old 文本替换为 new 文本
+write          写入文件
+bash           运行命令、测试或观察运行时行为
 ```
 
 ### 安装
@@ -119,18 +128,27 @@ requirements.txt     Python dependencies
 ### Current Tools
 
 ```text
-todo          plan and track multi-step tasks
-task_status   track current high-level task state
-task          delegate a focused task to a subagent
-load_skill    load full skill content
-workspace     show workspace information
-compact       compact long context
-list          list project files
-search        search project text
-read          read files, optionally with line numbers
-edit          replace unique old text with new text
-write         write files
-bash          run commands, tests, or inspect runtime behavior
+todo_set       set the todo list
+todo_show      show the todo list
+todo_done      mark one todo item done
+todo_clear     clear the todo list
+task_start     start tracking the current high-level task
+task_show      show the current or selected high-level task
+task_complete  mark the current high-level task completed
+task_block     mark the current high-level task blocked
+task_clear     clear the current high-level task pointer
+task_list      show all high-level tasks
+task_switch    switch the current high-level task
+task           delegate a focused task to a subagent
+load_skill     load full skill content
+workspace      show workspace information
+compact        compact long context
+list           list project files
+search         search project text
+read           read files, optionally with line numbers
+edit           replace unique old text with new text
+write          write files
+bash           run commands, tests, or inspect runtime behavior
 ```
 
 ### Setup
