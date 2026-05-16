@@ -46,6 +46,14 @@ def test_list_ignores_internal_files() -> None:
     assert not any(path == ".tasks" or path.startswith(".tasks/") for path in paths)
 
 
+def test_list_ignored_path_returns_hint() -> None:
+    result = run_list("skills")
+
+    assert result.exit_code == 0
+    assert "ignored path: skills" in result.stdout
+    assert "load_skill" in result.stdout
+
+
 def test_todo_flow() -> None:
     original = TODO_FILE.read_text(encoding="utf-8") if TODO_FILE.exists() else None
     try:
@@ -152,6 +160,9 @@ def test_task_status_tool_registered() -> None:
         "task_clear",
         "task_list",
         "task_switch",
+        "background_start",
+        "background_list",
+        "background_show",
     }:
         assert tool_name in parent_tool_names
         assert tool_name not in child_tool_names
@@ -198,6 +209,27 @@ def test_task_status_manager_list_and_switch() -> None:
     assert current.id == first.id
     assert missing_switch.exit_code == 1
     assert "Task 99 not found" in missing_switch.stderr
+
+
+def test_background_task_manager_flow() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        manager = TaskStatusManager(Path(tmpdir))
+        main_task = manager.start("main task")
+        background = manager.start_background("inspect parser")
+        completed = manager.finish_background(background.id, "completed", result="parser summary")
+        listed = json.loads(manager("background_list").stdout)
+        shown = json.loads(manager("background_show", id=background.id).stdout)
+        main_show = manager("background_show", id=main_task.id)
+
+    assert background.kind == "background"
+    assert completed.status == "completed"
+    assert completed.result == "parser summary"
+    assert [task["id"] for task in listed] == [background.id]
+    assert "result" not in listed[0]
+    assert shown["kind"] == "background"
+    assert shown["result"] == "parser summary"
+    assert main_show.exit_code == 1
+    assert "Background task" in main_show.stderr
 
 
 def test_task_status_tool_handler() -> None:
@@ -405,6 +437,7 @@ def test_auto_compact_falls_back_when_summary_fails() -> None:
 def main() -> None:
     test_result_json()
     test_list_ignores_internal_files()
+    test_list_ignored_path_returns_hint()
     test_todo_flow()
     test_todo_tool_handlers()
     test_workspace_tool()
@@ -415,6 +448,7 @@ def main() -> None:
     test_task_status_tool_registered()
     test_task_status_manager_flow()
     test_task_status_manager_list_and_switch()
+    test_background_task_manager_flow()
     test_task_status_tool_handler()
     test_micro_compact_text()
     test_auto_compact_helpers()

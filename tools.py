@@ -2,6 +2,7 @@ import os
 import json
 import re
 import subprocess
+import threading
 from pathlib import Path
 
 from result import Result
@@ -259,6 +260,38 @@ PARENT_TOOLS = [
             "required": ["id"],
         },
     },
+    {
+        "name": "background_start",
+        "description": "Start a focused background task and return immediately with its task id.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task": {"type": "string"},
+            },
+            "required": ["task"],
+        },
+    },
+    {
+        "name": "background_list",
+        "description": "Show all background tasks and their current statuses.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "background_show",
+        "description": "Show one background task with its result or error.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer"},
+            },
+            "required": ["id"],
+        },
+    },
 ] + CHILD_TOOLS
 
 def is_ignored_path(path: Path) -> bool:
@@ -305,6 +338,18 @@ def safe_path(path: str) -> Path:
         raise ValueError(f"Path is inside blocked directory: {path}")
 
     return resolved
+
+
+def ignored_path_part(path: Path) -> str | None:
+    try:
+        relative_parts = path.resolve().relative_to(WORKDIR).parts
+    except ValueError:
+        return None
+
+    for part in relative_parts:
+        if part in IGNORED_PATH_PARTS:
+            return part
+    return None
 
 
 def run_bash(command: str) -> Result:
@@ -357,6 +402,12 @@ def run_write(path: str, content: str = None) -> Result:
 
 def run_list(path: str = ".", limit: int = None) -> Result:
     try:
+        resolved = (WORKDIR / path).resolve()
+        ignored_part = ignored_path_part(resolved)
+        if ignored_part:
+            hint = " Use load_skill(name=...) for skill instructions." if ignored_part == "skills" else ""
+            return Result(stdout=f"(ignored path: {ignored_part}.{hint})")
+
         file_path = safe_path(path)
         if not file_path.is_dir():
             return Result(1, stderr="Error: Path should be a dir")
@@ -427,6 +478,28 @@ def run_task_status(**kwargs) -> Result:
     return task_status(**kwargs)
 
 
+def finish_background_task(task_id: int, task: str) -> None:
+    try:
+        from subagent import run_subagent
+
+        result = run_subagent(task)
+        status = "completed" if result.exit_code == 0 else "failed"
+        task_status.finish_background(task_id, status, result.stdout, result.stderr)
+    except Exception as error:
+        task_status.finish_background(task_id, "failed", error=str(error))
+
+
+def run_background_start(task: str) -> Result:
+    background_task = task_status.start_background(task)
+    thread = threading.Thread(
+        target=finish_background_task,
+        args=(background_task.id, task),
+        daemon=True,
+    )
+    thread.start()
+    return Result(stdout=background_task.to_json())
+
+
 def run_workspace() -> Result:
     info = {
         "cwd": str(WORKDIR),
@@ -472,4 +545,10 @@ TOOL_HANDLERS = {
     "task_clear": lambda **kwargs: run_task_status(action="clear"),
     "task_list":  lambda **kwargs: run_task_status(action="list"),
     "task_switch": lambda **kwargs: run_task_status(action="switch", id=kwargs["id"]),
+    "background_start": lambda **kwargs: run_background_start(kwargs["task"]),
+    "background_list": lambda **kwargs: run_task_status(action="background_list"),
+    "background_show": lambda **kwargs: run_task_status(
+        action="background_show",
+        id=kwargs["id"],
+    ),
 }

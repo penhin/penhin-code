@@ -45,6 +45,9 @@ task_block     标记当前主任务阻塞
 task_clear     清除当前主任务指针
 task_list      查看所有主任务
 task_switch    切换当前主任务
+background_start 启动后台任务
+background_list  查看后台任务状态
+background_show  查看后台任务结果
 task           委派一个子 agent 执行聚焦任务
 load_skill     读取完整 skill 内容
 workspace      查看当前工作区信息
@@ -139,6 +142,9 @@ task_block     mark the current high-level task blocked
 task_clear     clear the current high-level task pointer
 task_list      show all high-level tasks
 task_switch    switch the current high-level task
+background_start start a background task
+background_list  show background task statuses
+background_show  show a background task result
 task           delegate a focused task to a subagent
 load_skill     load full skill content
 workspace      show workspace information

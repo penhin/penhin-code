@@ -16,10 +16,13 @@ CURRENT_FILE = "current.json"
 class TaskStatus:
     id: int
     subject: str
+    kind: str = "main"
     description: str = ""
     status: str = "running"
     blocked_by: list[int] = field(default_factory=list)
     note: str = ""
+    error: str = ""
+    result: str = ""
     created_at: int = field(default_factory=time.time_ns)
     updated_at: int = field(default_factory=time.time_ns)
 
@@ -32,10 +35,13 @@ class TaskStatus:
         return cls(
             id=int(data["id"]),
             subject=str(data["subject"]),
+            kind=str(data.get("kind", "main")),
             description=str(data.get("description", "")),
             status=str(data.get("status", "running")),
             blocked_by=list(blocked_by),
             note=str(data.get("note", "")),
+            error=str(data.get("error", "")),
+            result=str(data.get("result", "")),
             created_at=int(data.get("created_at", time.time_ns())),
             updated_at=int(data.get("updated_at", time.time_ns())),
         )
@@ -107,6 +113,19 @@ class TaskStatusManager:
         self._next_id += 1
         return task
 
+    def start_background(self, subject: str, description: str = "", note: str = "") -> TaskStatus:
+        task = TaskStatus(
+            id=self._next_id,
+            subject=subject,
+            kind="background",
+            description=description,
+            note=note,
+            status="running",
+        )
+        self._save(task)
+        self._next_id += 1
+        return task
+
     def show(self, id: int = None) -> TaskStatus | None:
         if id is not None:
             return self._load(id)
@@ -134,7 +153,18 @@ class TaskStatusManager:
         self._set_current_id(id)
         return task
 
-    def list(self) -> list[dict]:
+    def finish_background(self, id: int, status: str, result: str = "", error: str = "") -> TaskStatus:
+        task = self._load(id)
+        if task.kind != "background":
+            raise FileNotFoundError(f"Background task {id} not found")
+        task.status = status
+        task.result = result
+        task.error = error
+        task.updated_at = time.time_ns()
+        self._save(task)
+        return task
+
+    def list(self, kind: str = None) -> list[dict]:
         tasks = []
         task_paths = sorted(
             self.tasks_dir.glob("task_*.json"),
@@ -142,7 +172,14 @@ class TaskStatusManager:
         )
         for path in task_paths:
             task_id = int(path.stem.split("_")[1])
-            tasks.append(self._load(task_id).to_dict())
+            task = self._load(task_id).to_dict()
+            if kind is not None and task["kind"] != kind:
+                continue
+            task.pop("description", None)
+            task.pop("note", None)
+            task.pop("result", None)
+            task.pop("error", None)
+            tasks.append(task)
         return tasks
 
     def clear(self) -> None:
@@ -188,6 +225,15 @@ class TaskStatusManager:
 
             if action == "switch":
                 return Result(stdout=self.switch(id).to_json())
+
+            if action == "background_list":
+                return Result(stdout=json.dumps(self.list(kind="background"), ensure_ascii=False, indent=2))
+
+            if action == "background_show":
+                task = self.show(id)
+                if task is None or task.kind != "background":
+                    return Result(1, stderr=f"Error: Background task {id} not found")
+                return Result(stdout=task.to_json())
 
             return Result(1, stderr=f"Error: unknown task action: {action}")
         except FileNotFoundError as error:
