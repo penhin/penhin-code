@@ -56,9 +56,16 @@ class SkillLoader:
         skill = self.skills.get(name)
         if not skill:
             available = ", ".join(self.skills.keys()) or "(none)"
-            return Result(1, stderr=f"Error: Unknown skill '{name}'. Available: {available}")
+            return Result.failure(
+                f"Error: Unknown skill '{name}'. Available: {available}",
+                code="unknown_skill",
+                available=list(self.skills.keys()),
+            )
 
-        return Result(stdout=f"<skill name=\"{name}\">\n{skill['body']}\n</skill>")
+        return Result.success(
+            f"<skill name=\"{name}\">\n{skill['body']}\n</skill>",
+            data={"name": name, "path": skill["path"], "meta": skill["meta"]},
+        )
 
     def __call__(self, name: str) -> Result:
         return self.get_content(name)

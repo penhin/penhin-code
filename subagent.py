@@ -48,7 +48,7 @@ def run_subagent(task: str) -> Result:
         
         print_usage("subagent", response)
         if response.stop_reason != "tool_use":
-            return Result(stdout=extract_summary(response.content))
+            return Result.success(extract_summary(response.content))
 
         tool_results = []
         for block in response.content:
@@ -60,14 +60,14 @@ def run_subagent(task: str) -> Result:
 
             handler = TOOL_HANDLERS.get(tool_name)
             if handler is None:
-                output = Result(1, stderr=f"Unknown tool: {tool_name}")
+                output = Result.failure(f"Unknown tool: {tool_name}", code="unknown_tool")
             else:
                 try:
                     output = handler(**block.input)
                 except TypeError as e:
-                    output = Result(1, stderr=f"Invalid input for {tool_name}: {e}")
+                    output = Result.failure(f"Invalid input for {tool_name}: {e}", code="invalid_tool_input")
                 except Exception as e:
-                    output = Result(1, stderr=f"Tool {tool_name} failed: {e}")
+                    output = Result.failure(f"Tool {tool_name} failed: {e}", code="tool_error")
 
             output_text = output.to_json()
             print(output_text)
@@ -81,14 +81,17 @@ def run_subagent(task: str) -> Result:
             )
 
         if not tool_results:
-            return Result(stdout=extract_summary(response.content))
+            return Result.success(extract_summary(response.content))
 
         sub_messages.append({"role": "user", "content": tool_results})
     
     try:
-        return Result(stdout=request_final_summary(runtime, sub_messages))
+        return Result.success(request_final_summary(runtime, sub_messages))
     except Exception as error:
-        return Result(1, stderr=f"Subagent failed to summarize after max turns: {error}")
+        return Result.failure(
+            f"Subagent failed to summarize after max turns: {error}",
+            code="summary_failed",
+        )
     
 
         

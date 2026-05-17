@@ -12,6 +12,7 @@ from task import task_status
 
 WORKDIR = Path.cwd()
 IGNORED_PATH_PARTS = [".venv", ".git", "__pycache__", ".penhin_todos.json", ".transcripts", ".tasks", "skills"]
+BACKGROUND_THREAD_PREFIX = "background-task-"
 
 
 CHILD_TOOLS = [
@@ -355,10 +356,14 @@ def ignored_path_part(path: Path) -> str | None:
 def run_bash(command: str) -> Result:
     blocked = ["rm -rf /", "sudo", "shutdown", "reboot"]
     if any(text in command for text in blocked):
-        return Result(1, stderr="Error: blocked dangerous command")
+        return Result.failure("Error: blocked dangerous command", code="blocked_command")
     ignored_part = command_references_ignored_path(command)
     if ignored_part:
-        return Result(1, stderr=f"Error: command references ignored path: {ignored_part}")
+        return Result.failure(
+            f"Error: command references ignored path: {ignored_part}",
+            code="ignored_path",
+            ignored_part=ignored_part,
+        )
     try:
         result = subprocess.run(
             command,
@@ -369,10 +374,20 @@ def run_bash(command: str) -> Result:
             timeout=30,
         )
     except subprocess.TimeoutExpired:
-        return Result(1, stderr="Error: Timeout (30s)")
+        return Result.failure("Error: Timeout (30s)", code="timeout", timeout_seconds=30)
     except OSError as error:
-        return Result(1, stderr=f"Error: {error}")
-    return Result(result.returncode, result.stdout, result.stderr)
+        return Result.failure(f"Error: {error}", code="os_error")
+    return Result(
+        result.returncode,
+        result.stdout,
+        result.stderr,
+        data={
+            "command": command,
+            "returncode": result.returncode,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+        },
+    )
 
 
 def run_read(path: str, limit: int = None, line_numbers: bool = True) -> Result:
@@ -383,21 +398,29 @@ def run_read(path: str, limit: int = None, line_numbers: bool = True) -> Result:
             lines = lines[:limit] + [f"... ({len(lines) - limit} more lines)"]
         if line_numbers:
             lines = [f"{i}: {line}" for i, line in enumerate(lines, start=1)]
-        return Result(stdout="\n".join(lines)[:50000])
+        output = "\n".join(lines)[:50000]
+        return Result.success(
+            output,
+            data={"path": path, "lines": lines, "line_numbers": line_numbers},
+            truncated=len(output) >= 50000,
+        )
     except Exception as error:
-        return Result(1, stderr=f"Error: {error}")
+        return Result.failure(f"Error: {error}", code="read_error")
 
 
 def run_write(path: str, content: str = None) -> Result:
     try:
         if content is None:
-            return Result(1, stderr="Error: content is required")
+            return Result.failure("Error: content is required", code="missing_content")
         file_path = safe_path(path)
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(content, encoding="utf-8")
-        return Result(stdout=f"Wrote {len(content)} bytes to {path}")
+        return Result.success(
+            f"Wrote {len(content)} bytes to {path}",
+            data={"path": path, "bytes": len(content)},
+        )
     except Exception as error:
-        return Result(1, stderr=f"Error: {error}")
+        return Result.failure(f"Error: {error}", code="write_error")
 
 
 def run_list(path: str = ".", limit: int = None) -> Result:
@@ -406,11 +429,14 @@ def run_list(path: str = ".", limit: int = None) -> Result:
         ignored_part = ignored_path_part(resolved)
         if ignored_part:
             hint = " Use load_skill(name=...) for skill instructions." if ignored_part == "skills" else ""
-            return Result(stdout=f"(ignored path: {ignored_part}.{hint})")
+            return Result.success(
+                f"(ignored path: {ignored_part}.{hint})",
+                data={"path": path, "ignored_part": ignored_part},
+            )
 
         file_path = safe_path(path)
         if not file_path.is_dir():
-            return Result(1, stderr="Error: Path should be a dir")
+            return Result.failure("Error: Path should be a dir", code="not_directory", data={"path": path})
 
         paths = []
         for child in iter_workspace_files(file_path):
@@ -419,10 +445,14 @@ def run_list(path: str = ".", limit: int = None) -> Result:
                 paths.append("... (limit reached)")
                 break
 
-        return Result(stdout="\n".join(paths))
+        return Result.success(
+            "\n".join(paths),
+            data={"path": path, "paths": paths, "limit": limit},
+            count=len(paths),
+        )
 
     except Exception as error:
-        return Result(1, stderr=f"Error: {error}")
+        return Result.failure(f"Error: {error}", code="list_error")
 
 
 def run_edit(path: str, old: str, new: str) -> Result:
@@ -432,16 +462,16 @@ def run_edit(path: str, old: str, new: str) -> Result:
 
         count = text.count(old)
         if count == 0:
-            return Result(1, stderr="Error: old text not found")
+            return Result.failure("Error: old text not found", code="old_text_not_found")
         if count > 1:
-            return Result(1, stderr=f"Error: old text appears {count}")
+            return Result.failure(f"Error: old text appears {count}", code="old_text_not_unique", count=count)
 
         updated = text.replace(old, new, 1)
         file_path.write_text(updated, encoding="utf-8")
 
-        return Result(stdout=f"Edited {path}")
+        return Result.success(f"Edited {path}", data={"path": path, "replacements": 1})
     except Exception as error:
-        return Result(1, stderr=f"Error: {error}")
+        return Result.failure(f"Error: {error}", code="edit_error")
 
 
 def run_search(query: str, path: str = ".", limit: int = None) -> Result:
@@ -465,9 +495,13 @@ def run_search(query: str, path: str = ".", limit: int = None) -> Result:
                     if limit and len(results) >= limit:
                         break
 
-        return Result(stdout="\n".join(results))
+        return Result.success(
+            "\n".join(results),
+            data={"query": query, "path": path, "matches": results, "limit": limit},
+            count=len(results),
+        )
     except Exception as error:
-        return Result(1, stderr=f"Error: {error}")
+        return Result.failure(f"Error: {error}", code="search_error")
 
 def run_task(task: str) -> Result:
     from subagent import run_subagent
@@ -490,14 +524,21 @@ def finish_background_task(task_id: int, task: str) -> None:
 
 
 def run_background_start(task: str) -> Result:
+    if threading.current_thread().name.startswith(BACKGROUND_THREAD_PREFIX):
+        return Result.failure(
+            "Error: background tasks cannot start nested background tasks",
+            code="nested_background_task",
+        )
+
     background_task = task_status.start_background(task)
     thread = threading.Thread(
         target=finish_background_task,
         args=(background_task.id, task),
         daemon=True,
+        name=f"{BACKGROUND_THREAD_PREFIX}{background_task.id}",
     )
     thread.start()
-    return Result(stdout=background_task.to_json())
+    return Result.success(background_task.to_json(), data=background_task.to_dict())
 
 
 def run_workspace() -> Result:
@@ -506,7 +547,7 @@ def run_workspace() -> Result:
         "ignored": IGNORED_PATH_PARTS,
         "tools": [tool["name"] for tool in PARENT_TOOLS],
     }
-    return Result(stdout=json.dumps(info, ensure_ascii=False, indent=2))
+    return Result.success(json.dumps(info, ensure_ascii=False, indent=2), data=info)
 
 TOOL_HANDLERS = {
     "bash":       lambda **kwargs: run_bash(kwargs["command"]),

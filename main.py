@@ -63,16 +63,16 @@ def agent_loop(messages: list[dict]) -> None:
             if handler is None:
                 if tool_name == "compact":
                     manual_compact = True
-                    output = Result(stdout="Compacting conversation history now")
+                    output = Result.success("Compacting conversation history now")
                 else:
-                    output = Result(1, stderr=f"Unknown tool: {tool_name}")
+                    output = Result.failure(f"Unknown tool: {tool_name}", code="unknown_tool")
             else:
                 try:
                     output = handler(**block.input)
                 except TypeError as e:
-                    output = Result(1, stderr=f"Invalid input for {tool_name}: {e}")
+                    output = Result.failure(f"Invalid input for {tool_name}: {e}", code="invalid_tool_input")
                 except Exception as e:
-                    output = Result(1, stderr=f"Tool {tool_name} failed: {e}")
+                    output = Result.failure(f"Tool {tool_name} failed: {e}", code="tool_error")
 
             output_text = output.to_json()
             print(output_text)

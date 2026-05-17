@@ -43,7 +43,27 @@ class Runtime:
                     f"retrying in {delay}s..."
                 )
                 time.sleep(delay)
-    
+
+    def call_llm_once(
+        self,
+        system: str,
+        user_content: str,
+        max_tokens: int | None = None,
+        label: str = "llm",
+    ) -> str:
+        response = self.call_with_retry(
+            system=system,
+            messages=[{"role": "user", "content": user_content}],
+            max_tokens=max_tokens or self.max_tokens,
+        )
+
+        print_usage(label, response)
+
+        return "\n".join(
+            block.text
+            for block in response.content
+            if getattr(block, "type", None) == "text"
+        )
 
 def print_usage(label: str, response) -> None:
     usage = response.usage
@@ -76,25 +96,3 @@ def get_runtime() -> Runtime:
     if runtime is None:
         raise RuntimeError("init_runtime() must be called before get_runtime()")
     return runtime
-
-def call_llm_once(
-    system: str,
-    user_content: str,
-    max_tokens: int | None = None,
-    label: str = "llm",
-) -> str:
-    runtime = get_runtime()
-
-    response = runtime.call_with_retry(
-        system=system,
-        messages=[{"role": "user", "content": user_content}],
-        max_tokens=max_tokens or runtime.max_tokens,
-    )
-
-    print_usage(label, response)
-
-    return "\n".join(
-        block.text
-        for block in response.content
-        if getattr(block, "type", None) == "text"
-    )

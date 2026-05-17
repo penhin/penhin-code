@@ -1,6 +1,7 @@
 import json
 import sys
 import tempfile
+import threading
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -30,8 +31,21 @@ class ToolUseBlock:
 
 
 def test_result_json() -> None:
-    data = json.loads(Result(stdout="hello").to_json())
-    assert data == {"exit_code": 0, "stdout": "hello", "stderr": ""}
+    data = json.loads(Result.success("hello", data={"value": 1}).to_json())
+    assert data["ok"] is True
+    assert data["message"] == "hello"
+    assert data["data"] == {"value": 1}
+    assert data["error"] == ""
+    assert data["exit_code"] == 0
+    assert data["stdout"] == "hello"
+    assert data["stderr"] == ""
+
+    failed = Result.failure("broken", code="test_error")
+    failed_data = json.loads(failed.to_json())
+    assert failed.exit_code == 1
+    assert failed.stderr == "broken"
+    assert failed_data["ok"] is False
+    assert failed_data["meta"]["code"] == "test_error"
 
 
 def test_list_ignores_internal_files() -> None:
@@ -107,11 +121,13 @@ def test_workspace_tool() -> None:
     assert result.exit_code == 0
 
     data = json.loads(result.stdout)
+    result_data = json.loads(result.to_json())["data"]
     assert "cwd" in data
     assert ".venv" in data["ignored"]
     assert ".penhin_todos.json" in data["ignored"]
     assert "workspace" in data["tools"]
     assert "task" in data["tools"]
+    assert result_data["cwd"] == data["cwd"]
 
 
 def test_skill_loader() -> None:
@@ -232,6 +248,19 @@ def test_background_task_manager_flow() -> None:
     assert "Background task" in main_show.stderr
 
 
+def test_background_start_rejects_nested_background_tasks() -> None:
+    results = []
+    thread = threading.Thread(
+        target=lambda: results.append(tools.run_background_start("nested")),
+        name="background-task-test",
+    )
+    thread.start()
+    thread.join()
+
+    assert results[0].exit_code == 1
+    assert "cannot start nested background tasks" in results[0].stderr
+
+
 def test_task_status_tool_handler() -> None:
     original_task_status = tools.task_status
 
@@ -265,6 +294,7 @@ def test_task_status_tool_handler() -> None:
 
     assert start_result.exit_code == 0
     assert started["subject"] == "wire task_status"
+    assert json.loads(start_result.to_json())["data"]["subject"] == "wire task_status"
     assert second_result.exit_code == 0
     assert second["subject"] == "second task"
     assert block_result.exit_code == 0
@@ -274,6 +304,7 @@ def test_task_status_tool_handler() -> None:
     assert shown["id"] == started["id"]
     assert list_result.exit_code == 0
     assert [task["id"] for task in listed] == [started["id"], second["id"]]
+    assert json.loads(list_result.to_json())["data"][0]["id"] == started["id"]
     assert switch_result.exit_code == 0
     assert switched["id"] == started["id"]
     assert clear_result.stdout == "Cleared current task"
@@ -408,15 +439,16 @@ def test_transcript_read_rejects_unsafe_paths() -> None:
 
 
 def test_auto_compact_falls_back_when_summary_fails() -> None:
-    def fail_summary(**kwargs):
-        raise RuntimeError("offline failure")
+    class FailingRuntime:
+        def call_llm_once(self, **kwargs):
+            raise RuntimeError("offline failure")
 
-    original_call_llm_once = compact.call_llm_once
+    original_get_runtime = compact.get_runtime
     original_transcripts = compact.transcripts
 
     with tempfile.TemporaryDirectory() as tmpdir:
         try:
-            compact.call_llm_once = fail_summary
+            compact.get_runtime = lambda: FailingRuntime()
             compact.transcripts = transcript.TranscriptStore(Path(tmpdir))
 
             messages = [
@@ -425,7 +457,7 @@ def test_auto_compact_falls_back_when_summary_fails() -> None:
             ]
             compacted = auto_compact_messages(messages, keep_last=1)
         finally:
-            compact.call_llm_once = original_call_llm_once
+            compact.get_runtime = original_get_runtime
             compact.transcripts = original_transcripts
 
     assert compacted[0]["role"] == "user"
@@ -449,6 +481,7 @@ def main() -> None:
     test_task_status_manager_flow()
     test_task_status_manager_list_and_switch()
     test_background_task_manager_flow()
+    test_background_start_rejects_nested_background_tasks()
     test_task_status_tool_handler()
     test_micro_compact_text()
     test_auto_compact_helpers()

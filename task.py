@@ -203,41 +203,49 @@ class TaskStatusManager:
         try:
             if action == "start":
                 if not subject:
-                    return Result(1, stderr="Error: subject is required for start")
-                return Result(stdout=self.start(subject, description, note or "").to_json())
+                    return Result.failure("Error: subject is required for start", code="missing_subject")
+                task = self.start(subject, description, note or "")
+                return Result.success(task.to_json(), data=task.to_dict(), action=action)
 
             if action == "show":
                 task = self.show(id)
-                return Result(stdout=task.to_json() if task else "(no current task)")
+                if task is None:
+                    return Result.success("(no current task)", data=None, action=action)
+                return Result.success(task.to_json(), data=task.to_dict(), action=action)
 
             if action == "complete":
-                return Result(stdout=self.complete(note).to_json())
+                task = self.complete(note)
+                return Result.success(task.to_json(), data=task.to_dict(), action=action)
 
             if action == "block":
-                return Result(stdout=self.block(blocked_by, note).to_json())
+                task = self.block(blocked_by, note)
+                return Result.success(task.to_json(), data=task.to_dict(), action=action)
 
             if action == "clear":
                 self.clear()
-                return Result(stdout="Cleared current task")
+                return Result.success("Cleared current task", data={"current_id": None}, action=action)
 
             if action == "list":
-                return Result(stdout=json.dumps(self.list(), ensure_ascii=False, indent=2))
+                tasks = self.list()
+                return Result.success(json.dumps(tasks, ensure_ascii=False, indent=2), data=tasks, action=action)
 
             if action == "switch":
-                return Result(stdout=self.switch(id).to_json())
+                task = self.switch(id)
+                return Result.success(task.to_json(), data=task.to_dict(), action=action)
 
             if action == "background_list":
-                return Result(stdout=json.dumps(self.list(kind="background"), ensure_ascii=False, indent=2))
+                tasks = self.list(kind="background")
+                return Result.success(json.dumps(tasks, ensure_ascii=False, indent=2), data=tasks, action=action)
 
             if action == "background_show":
                 task = self.show(id)
                 if task is None or task.kind != "background":
-                    return Result(1, stderr=f"Error: Background task {id} not found")
-                return Result(stdout=task.to_json())
+                    return Result.failure(f"Error: Background task {id} not found", code="not_found")
+                return Result.success(task.to_json(), data=task.to_dict(), action=action)
 
-            return Result(1, stderr=f"Error: unknown task action: {action}")
+            return Result.failure(f"Error: unknown task action: {action}", code="unknown_action")
         except FileNotFoundError as error:
-            return Result(1, stderr=f"Error: {error}")
+            return Result.failure(f"Error: {error}", code="not_found")
 
 
 task_status = TaskStatusManager(TASKS_DIR)
