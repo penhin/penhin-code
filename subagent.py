@@ -1,11 +1,13 @@
 from result import Result
-from tools import TOOL_HANDLERS, CHILD_TOOLS
+from tools import CHILD_TOOLS
+from tool_runtime import PermissionPolicy, run_tool
 from runtime import get_runtime, print_usage
 
 
 SUBAGENT_SYSTEM = (
     "You are a focused subagent. "
     "Complete the assigned task independently and return a concise summary. "
+    "Tool results are JSON with ok/message/data/error/meta fields; prefer data for structured facts and error for failures. "
 )
 
 def extract_summary(content) -> str:
@@ -34,6 +36,10 @@ def request_final_summary(runtime, sub_messages: list[dict]) -> str:
 
 def run_subagent(task: str) -> Result:
     runtime = get_runtime()
+    tool_policy = PermissionPolicy(
+        allow={tool["name"] for tool in CHILD_TOOLS},
+        deny=set(),
+    )
     
     sub_messages = [{"role": "user", "content": task}]
     
@@ -58,16 +64,7 @@ def run_subagent(task: str) -> Result:
             tool_name = block.name
             print(f"$ AI use {tool_name}...")
 
-            handler = TOOL_HANDLERS.get(tool_name)
-            if handler is None:
-                output = Result.failure(f"Unknown tool: {tool_name}", code="unknown_tool")
-            else:
-                try:
-                    output = handler(**block.input)
-                except TypeError as e:
-                    output = Result.failure(f"Invalid input for {tool_name}: {e}", code="invalid_tool_input")
-                except Exception as e:
-                    output = Result.failure(f"Tool {tool_name} failed: {e}", code="tool_error")
+            output = run_tool(tool_name, block.input, tool_policy).result
 
             output_text = output.to_json()
             print(output_text)

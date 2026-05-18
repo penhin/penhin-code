@@ -20,6 +20,7 @@ from result import Result
 from skills import load_skill
 from task import TaskStatusManager
 from todo import TODO_FILE, run_todo
+from tool_runtime import PermissionPolicy, run_tool
 from tools import CHILD_TOOLS, PARENT_TOOLS, TOOL_HANDLERS, run_list
 
 
@@ -162,6 +163,26 @@ def test_compact_tool_is_parent_only() -> None:
     assert "compact" in parent_tool_names
     assert "compact" not in child_tool_names
     assert "compact" not in TOOL_HANDLERS
+
+
+def test_tool_runtime_policy_and_control_signals() -> None:
+    policy = PermissionPolicy(allow={"workspace", "compact"}, deny={"workspace"})
+    denied = run_tool("workspace", {}, policy)
+    assert denied.result.exit_code == 1
+    assert "Denied by policy" in denied.result.stderr
+
+    policy = PermissionPolicy(allow={"workspace", "compact"}, deny=set())
+    workspace = run_tool("workspace", {}, policy)
+    assert workspace.result.exit_code == 0
+    assert workspace.manual_compact is False
+
+    compact_run = run_tool("compact", {}, policy)
+    assert compact_run.result.exit_code == 0
+    assert compact_run.manual_compact is True
+
+    not_allowed = run_tool("read", {"path": "README.md"}, policy)
+    assert not_allowed.result.exit_code == 1
+    assert "Not allowed by policy" in not_allowed.result.stderr
 
 
 def test_task_status_tool_registered() -> None:
@@ -477,6 +498,7 @@ def main() -> None:
     test_task_tool_registered()
     test_tool_schemas_match_handlers()
     test_compact_tool_is_parent_only()
+    test_tool_runtime_policy_and_control_signals()
     test_task_status_tool_registered()
     test_task_status_manager_flow()
     test_task_status_manager_list_and_switch()
