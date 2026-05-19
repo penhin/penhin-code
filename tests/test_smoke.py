@@ -20,7 +20,7 @@ from result import Result
 from skills import load_skill
 from task import TaskStatusManager
 from todo import TODO_FILE, run_todo
-from tool_runtime import CHILD_AGENT_POLICY, PARENT_AGENT_POLICY, PermissionPolicy, run_tool
+from tool_runtime import ApprovalFlow, CHILD_AGENT_POLICY, PARENT_AGENT_POLICY, PermissionPolicy, run_tool
 from tools import CHILD_TOOLS, PARENT_TOOLS, TOOL_SPECS, ToolCategory, run_list
 
 
@@ -209,17 +209,19 @@ def test_tool_runtime_policy_and_control_signals() -> None:
     assert "task" in PARENT_AGENT_POLICY.allow
     assert "task" not in CHILD_AGENT_POLICY.allow
 
-    policy = PermissionPolicy(allow={"workspace", "compact"}, deny={"workspace"}, approved={"compact"})
+    approval = ApprovalFlow.preapproved({"workspace", "compact"})
+
+    policy = PermissionPolicy(allow={"workspace", "compact"}, deny={"workspace"})
     denied = run_tool("workspace", {}, policy)
     assert denied.result.exit_code == 1
     assert "Denied by policy" in denied.result.stderr
 
-    policy = PermissionPolicy(allow={"workspace", "compact"}, deny=set(), approved={"compact"})
+    policy = PermissionPolicy(allow={"workspace", "compact"}, deny=set())
     workspace = run_tool("workspace", {}, policy)
     assert workspace.result.exit_code == 0
     assert workspace.manual_compact is False
 
-    compact_run = run_tool("compact", {}, policy)
+    compact_run = run_tool("compact", {}, policy, approval)
     assert compact_run.result.exit_code == 0
     assert compact_run.manual_compact is True
 
@@ -227,7 +229,12 @@ def test_tool_runtime_policy_and_control_signals() -> None:
     assert not_allowed.result.exit_code == 1
     assert "Not allowed by policy" in not_allowed.result.stderr
 
-    approval_required = run_tool("compact", {}, PermissionPolicy(allow={"compact"}, deny=set()))
+    approval_required = run_tool(
+        "compact",
+        {},
+        PermissionPolicy(allow={"compact"}, deny=set()),
+        ApprovalFlow.require_confirmation({"compact"}),
+    )
     assert approval_required.result.exit_code == 1
     assert "Approval required" in approval_required.result.stderr
 

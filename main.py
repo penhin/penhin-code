@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 
+import json
 import os
 import sys
 
 from skills import load_skill
 from transcript import transcripts
 from tools import PARENT_TOOLS
-from tool_runtime import PARENT_AGENT_POLICY, run_tool
 from runtime import init_runtime, get_runtime, print_usage
 from compact import auto_compact_messages, micro_compact_text, should_auto_compact
+from tool_runtime import ApprovalFlow, PARENT_AGENT_POLICY, run_tool
 
 
 SYSTEM = (
@@ -28,8 +29,16 @@ SYSTEM = (
     f"{load_skill.get_descriptions()}"
 )
 
-def agent_loop(messages: list[dict]) -> None:
+def format_tool_input(tool_input: dict) -> str:
+    if not tool_input:
+        return "{}"
+    return json.dumps(tool_input, ensure_ascii=False, indent=2)
+
+
+def agent_loop(messages: list[dict], approval: ApprovalFlow = None) -> None:
     runtime = get_runtime()
+
+    approval = approval or ApprovalFlow.require_confirmation(PARENT_AGENT_POLICY.allow)
 
     while True:
         micro_compact_text(messages)
@@ -60,8 +69,42 @@ def agent_loop(messages: list[dict]) -> None:
             tool_name = block.name
             print(f"$ AI use {tool_name}...")
 
-            tool_run = run_tool(tool_name, block.input, PARENT_AGENT_POLICY)
+            tool_run = run_tool(
+                tool_name,
+                block.input,
+                PARENT_AGENT_POLICY,
+                approval,
+            )
+
             output = tool_run.result
+
+            if tool_run.approval_required:
+                print(f"[approval] tool: {tool_name}")
+                print(format_tool_input(block.input))
+                reply = input("[approval] approve for this session? [y/N] ").strip().lower()
+                if reply == "y":
+                    approval.approved.add(tool_name)
+                    tool_run = run_tool(
+                        tool_name,
+                        block.input,
+                        PARENT_AGENT_POLICY,
+                        approval,
+                    )
+                    output = tool_run.result
+                else:
+                    rejection = ApprovalFlow(
+                        approved=set(approval.approved),
+                        required=set(approval.required),
+                        rejected={tool_name},
+                    )
+                    tool_run = run_tool(
+                        tool_name,
+                        block.input,
+                        PARENT_AGENT_POLICY,
+                        rejection,
+                    )
+                    output = tool_run.result
+
             if tool_run.manual_compact:
                 manual_compact = True
 
@@ -87,7 +130,8 @@ def agent_loop(messages: list[dict]) -> None:
 
 def run_once(query: str) -> None:
     messages = [{"role": "user", "content": query}]
-    agent_loop(messages)
+    approval = ApprovalFlow.require_confirmation(PARENT_AGENT_POLICY.allow)
+    agent_loop(messages, approval)
     transcripts.save(messages)
     print_last_text(messages)
 
@@ -113,6 +157,7 @@ def main() -> None:
         return
 
     messages = []
+    approval = ApprovalFlow.require_confirmation(PARENT_AGENT_POLICY.allow)
 
     while True:
         try:
@@ -125,7 +170,7 @@ def main() -> None:
             break
 
         messages.append({"role": "user", "content": user_input})
-        agent_loop(messages)
+        agent_loop(messages, approval)
         transcripts.save(messages)
         print_last_text(messages)
 

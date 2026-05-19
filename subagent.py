@@ -1,6 +1,6 @@
 from result import Result
 from tools import CHILD_TOOLS
-from tool_runtime import CHILD_AGENT_POLICY, run_tool
+from tool_runtime import CHILD_AGENT_APPROVAL_FLOW, CHILD_AGENT_POLICY, run_tool
 from runtime import get_runtime, print_usage
 
 
@@ -60,7 +60,12 @@ def run_subagent(task: str) -> Result:
             tool_name = block.name
             print(f"$ AI use {tool_name}...")
 
-            output = run_tool(tool_name, block.input, CHILD_AGENT_POLICY).result
+            output = run_tool(
+                tool_name,
+                block.input,
+                CHILD_AGENT_POLICY,
+                CHILD_AGENT_APPROVAL_FLOW,
+            ).result
 
             output_text = output.to_json()
             print(output_text)
