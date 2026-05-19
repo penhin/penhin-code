@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from result import Result
-from tools import TOOL_SPECS, ToolCategory
+from tools import TOOL_SPECS, ToolCategory, ToolInput
 
 
 @dataclass
@@ -27,6 +27,18 @@ class ApprovalFlow:
     def require_confirmation(cls, tool_names: set[str]) -> ApprovalFlow:
         return cls(required=approval_required_tools(tool_names))
 
+    def approve(self, tool_name: str, tool_input: ToolInput) -> None:
+        self.approved.add(approval_key(tool_name, tool_input))
+
+    def reject(self, tool_name: str, tool_input: ToolInput) -> None:
+        self.rejected.add(approval_key(tool_name, tool_input))
+
+    def is_approved(self, tool_name: str, tool_input: ToolInput) -> bool:
+        return tool_name in self.approved or approval_key(tool_name, tool_input) in self.approved
+
+    def is_rejected(self, tool_name: str, tool_input: ToolInput) -> bool:
+        return tool_name in self.rejected or approval_key(tool_name, tool_input) in self.rejected
+
 
 @dataclass
 class ToolRun:
@@ -47,9 +59,9 @@ class ToolAccess:
 
 def tool_names_for(scope: str) -> set[str]:
     if scope == "parent":
-        return {name for name, spec in TOOL_SPECS.items() if spec.parent}
+        return {name for name, spec in TOOL_SPECS.items() if spec.available_to_parent}
     if scope == "child":
-        return {name for name, spec in TOOL_SPECS.items() if spec.child}
+        return {name for name, spec in TOOL_SPECS.items() if spec.available_to_child}
     raise ValueError(f"Unknown tool scope: {scope}")
 
 
@@ -64,7 +76,7 @@ def tool_names_by_category(categories: set[ToolCategory]) -> set[str]:
 def approval_required_tools(tool_names: set[str]) -> set[str]:
     return {
         name for name in tool_names
-        if name in TOOL_SPECS and TOOL_SPECS[name].requires_approval
+        if name in TOOL_SPECS and TOOL_SPECS[name].approval.requires_approval
     }
 
 
@@ -106,7 +118,19 @@ def default_approval_flow(policy: PermissionPolicy) -> ApprovalFlow:
     return ApprovalFlow.preapproved(policy.allow)
 
 
-def check_tool_access(tool_name: str, policy: PermissionPolicy, approval: ApprovalFlow) -> ToolAccess:
+def approval_key(tool_name: str, tool_input: ToolInput) -> str:
+    spec = TOOL_SPECS.get(tool_name)
+    if spec is None:
+        return tool_name
+    return spec.approval.approval_key(tool_name, tool_input)
+
+
+def check_tool_access(
+    tool_name: str,
+    tool_input: ToolInput,
+    policy: PermissionPolicy,
+    approval: ApprovalFlow,
+) -> ToolAccess:
     if tool_name in policy.deny:
         return ToolAccess(Result.failure(f"Denied by policy: {tool_name}", code="tool_denied"))
 
@@ -117,10 +141,10 @@ def check_tool_access(tool_name: str, policy: PermissionPolicy, approval: Approv
     if tool_name not in policy.allow:
         return ToolAccess(Result.failure(f"Not allowed by policy: {tool_name}", code="tool_not_allowed"))
 
-    if tool_name in approval.rejected:
+    if approval.is_rejected(tool_name, tool_input):
         return ToolAccess(Result.failure(f"Approval rejected for tool: {tool_name}", code="tool_approval_rejected"))
 
-    if spec.requires_approval and tool_name not in approval.approved:
+    if spec.approval.requires_approval and not approval.is_approved(tool_name, tool_input):
         return ToolAccess(
             Result.failure(f"Approval required for tool: {tool_name}", code="tool_approval_required"),
             approval_required=True,
@@ -129,7 +153,7 @@ def check_tool_access(tool_name: str, policy: PermissionPolicy, approval: Approv
     return ToolAccess()
 
 
-def execute_tool(tool_name: str, tool_input: dict) -> ToolRun:
+def execute_tool(tool_name: str, tool_input: ToolInput) -> ToolRun:
     spec = TOOL_SPECS[tool_name]
 
     if spec.handler is None:
@@ -150,13 +174,13 @@ def execute_tool(tool_name: str, tool_input: dict) -> ToolRun:
 
 def run_tool(
     tool_name: str,
-    tool_input: dict,
+    tool_input: ToolInput,
     policy: PermissionPolicy,
     approval: ApprovalFlow = None,
 ) -> ToolRun:
     approval = approval or default_approval_flow(policy)
 
-    access = check_tool_access(tool_name, policy, approval)
+    access = check_tool_access(tool_name, tool_input, policy, approval)
     if access.approval_required:
         return ToolRun(
             result=access.result,

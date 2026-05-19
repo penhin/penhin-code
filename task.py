@@ -4,6 +4,7 @@ import json
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 
 from result import Result
 
@@ -27,7 +28,7 @@ class TaskStatus:
     updated_at: int = field(default_factory=time.time_ns)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "TaskStatus":
+    def from_dict(cls, data: dict[str, Any]) -> "TaskStatus":
         blocked_by = data.get("blocked_by", [])
         if isinstance(blocked_by, int):
             blocked_by = [blocked_by]
@@ -54,7 +55,7 @@ class TaskStatus:
             self.note = note
         self.updated_at = time.time_ns()
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     def to_json(self) -> str:
@@ -164,8 +165,8 @@ class TaskStatusManager:
         self._save(task)
         return task
 
-    def list(self, kind: str = None) -> list[dict]:
-        tasks = []
+    def list(self, kind: str = None) -> list[dict[str, Any]]:
+        tasks: list[dict[str, Any]] = []
         task_paths = sorted(
             self.tasks_dir.glob("task_*.json"),
             key=lambda path: int(path.stem.split("_")[1]),

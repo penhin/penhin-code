@@ -1,4 +1,5 @@
 import json
+from typing import Any
 from runtime import get_runtime
 from transcript import serialize_for_json, transcripts
 
@@ -11,13 +12,13 @@ KEEP_LAST_MESSAGES = 8
 PRESERVE_RESULT_TOOLS = {"todo_set", "todo_show", "todo_done", "todo_clear", "load_skill", "read"}
 
 
-def block_get(block, key: str, default=None):
+def block_get(block: Any, key: str, default: Any = None) -> Any:
     if isinstance(block, dict):
         return block.get(key, default)
     return getattr(block, key, default)
 
 
-def compact_source_text(messages: list[dict]) -> str:
+def compact_source_text(messages: list[dict[str, Any]]) -> str:
     text = json.dumps(serialize_for_json(messages), ensure_ascii=False)
     max_chars = SUMMARY_HEAD_CHARS + SUMMARY_TAIL_CHARS
     if len(text) <= max_chars:
@@ -29,11 +30,11 @@ def compact_source_text(messages: list[dict]) -> str:
     )
 
 
-def estimate_tokens(messages: list) -> int:
+def estimate_tokens(messages: list[Any]) -> int:
     return len(str(messages)) // 4
 
 
-def micro_compact_text(messages: list[dict], keep_recent: int = KEEP_RECENT) -> None:
+def micro_compact_text(messages: list[dict[str, Any]], keep_recent: int = KEEP_RECENT) -> None:
     tool_results = []
     for msg_id, msg in enumerate(messages):
         if msg.get("role") == "user" and isinstance(msg.get("content"), list):
@@ -61,18 +62,18 @@ def micro_compact_text(messages: list[dict], keep_recent: int = KEEP_RECENT) -> 
         result["content"] = f"[Previous: used {tool_name}]"
 
 
-def should_auto_compact(messages: list[dict], threshold: int = THRESHOLD) -> bool:
+def should_auto_compact(messages: list[dict[str, Any]], threshold: int = THRESHOLD) -> bool:
     return estimate_tokens(messages) >= threshold
 
 
-def is_tool_result_message(message: dict) -> bool:
+def is_tool_result_message(message: dict[str, Any]) -> bool:
     content = message.get("content")
     if not isinstance(content, list):
         return False
     return any(isinstance(block, dict) and block.get("type") == "tool_result" for block in content)
 
 
-def recent_message_start(messages: list[dict], keep_last: int) -> int:
+def recent_message_start(messages: list[dict[str, Any]], keep_last: int) -> int:
     start = max(0, min(len(messages) - keep_last, len(messages) - 1))
     while start > 0 and is_tool_result_message(messages[start]):
         start -= 1
@@ -80,9 +81,9 @@ def recent_message_start(messages: list[dict], keep_last: int) -> int:
 
 
 def auto_compact_messages(
-    messages: list[dict],
+    messages: list[dict[str, Any]],
     keep_last: int = KEEP_LAST_MESSAGES,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     transcript_path = transcripts.save(messages)
 
     print(f"[transcript saved: {transcript_path}]")

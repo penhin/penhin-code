@@ -3,6 +3,7 @@ import sys
 import time
 
 from dataclasses import dataclass
+from typing import Any
 from anthropic import Anthropic, APIConnectionError, APIError, RateLimitError
 from dotenv import load_dotenv
 
@@ -18,13 +19,13 @@ class Runtime:
     sub_max_turns: int = 30
     sub_max_tokens: int = 2000
 
-    def call_with_retry(self, system: str, messages: list[dict], tools=None, max_tokens: int | None = None):
+    def call_with_retry(self, system: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None, max_tokens: int | None = None):
         retry_errors = (APIError, APIConnectionError, RateLimitError)
         delays = [1, 2, 4]
 
         for attempt in range(len(delays) + 1):
             try:
-                kwargs = {
+                kwargs: dict[str, Any] = {
                     "model": self.model,
                     "system": system,
                     "messages": messages,

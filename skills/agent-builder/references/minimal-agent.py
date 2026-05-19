@@ -15,6 +15,7 @@ from anthropic import Anthropic
 from pathlib import Path
 import subprocess
 import os
+from typing import Any
 
 # Configuration
 client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
@@ -64,7 +65,7 @@ TOOLS = [
 ]
 
 
-def execute_tool(name: str, args: dict) -> str:
+def execute_tool(name: str, args: dict[str, Any]) -> str:
     """Execute a tool and return result."""
     if name == "bash":
         try:

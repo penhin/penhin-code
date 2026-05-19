@@ -14,7 +14,7 @@ class Result:
     message: str
     data: Any
     error: str
-    meta: dict
+    meta: dict[str, Any]
 
     def __init__(
         self,
@@ -26,7 +26,7 @@ class Result:
         message: str | None = None,
         data: Any = None,
         error: str | None = None,
-        meta: dict | None = None,
+        meta: dict[str, Any] | None = None,
     ):
         self.ok = (exit_code == 0) if ok is None else ok
         self.message = stdout if message is None else message
@@ -35,11 +35,11 @@ class Result:
         self.meta = {} if meta is None else meta
 
     @classmethod
-    def success(cls, message: str = "", data: Any = None, **meta) -> Result:
+    def success(cls, message: str = "", data: Any = None, **meta: Any) -> Result:
         return cls(ok=True, message=message, data=data, meta=meta)
 
     @classmethod
-    def failure(cls, error: str, code: str = None, data: Any = None, **meta) -> Result:
+    def failure(cls, error: str, code: str = None, data: Any = None, **meta: Any) -> Result:
         result_meta = dict(meta)
         if code is not None:
             result_meta["code"] = code
@@ -62,7 +62,7 @@ class Result:
             return text
         return text[:MAX_RESULT_CHARS] + f"\n... truncated {len(text) - MAX_RESULT_CHARS} chars"
 
-    def _truncate_value(self, value):
+    def _truncate_value(self, value: Any) -> Any:
         if isinstance(value, str):
             return self._truncate(value)
         if isinstance(value, list):
@@ -71,7 +71,7 @@ class Result:
             return {key: self._truncate_value(item) for key, item in value.items()}
         return value
 
-    def _to_dict(self) -> dict:
+    def _to_dict(self) -> dict[str, Any]:
         return {
             "ok": self.ok,
             "message": self._truncate(self.message),

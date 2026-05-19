@@ -15,6 +15,7 @@ Examples:
 import argparse
 import sys
 from pathlib import Path
+from typing import Any
 
 # Agent templates for each level
 TEMPLATES = {
@@ -88,6 +89,7 @@ The model IS the agent. Code just runs the loop.
 from anthropic import Anthropic
 from dotenv import load_dotenv
 from pathlib import Path
+from typing import Any
 import subprocess
 import os
 
@@ -126,7 +128,7 @@ def safe_path(p: str) -> Path:
         raise ValueError(f"Path escapes workspace: {{p}}")
     return path
 
-def execute(name: str, args: dict) -> str:
+def execute(name: str, args: dict[str, Any]) -> str:
     """Execute a tool and return result."""
     if name == "bash":
         dangerous = ["rm -rf /", "sudo", "shutdown", "> /dev/"]

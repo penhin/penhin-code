@@ -1,4 +1,5 @@
 import json
+from typing import Any
 from pathlib import Path
 
 from result import Result
@@ -10,7 +11,7 @@ TODO_FILE = Path(".penhin_todos.json")
 class TodoManager:
     def __init__(self, todo_file: Path):
         self.todo_file = todo_file
-        self.todos = []
+        self.todos: list[dict[str, Any]] = []
 
     def load(self) -> None:
         if not self.todo_file.exists():
@@ -34,7 +35,7 @@ class TodoManager:
             lines.append(f"{index}. [{marker}] {todo['text']}")
         return "\n".join(lines)
 
-    def data(self) -> list[dict]:
+    def data(self) -> list[dict[str, Any]]:
         return [
             {
                 "index": index,

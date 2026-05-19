@@ -1,5 +1,6 @@
 import json
 import time
+from typing import Any
 
 from pathlib import Path
 
@@ -7,7 +8,7 @@ from pathlib import Path
 TRANSCRIPT_DIR = Path(".transcripts")
 
 
-def serialize_for_json(value):
+def serialize_for_json(value: Any) -> Any:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     if isinstance(value, list):
@@ -26,7 +27,7 @@ class TranscriptStore:
     def __init__(self, transcript_dir: Path):
         self.transcript_dir = transcript_dir
     
-    def save(self, messages: list) -> Path:
+    def save(self, messages: list[Any]) -> Path:
         self.transcript_dir.mkdir(exist_ok=True)
         transcript_path = self.transcript_dir / f"transcript_{time.time_ns()}.jsonl"
         with open(transcript_path, "w") as f:
@@ -42,7 +43,7 @@ class TranscriptStore:
         paths = sorted(self.transcript_dir.glob("transcript_*.jsonl"))
         return paths[-1] if paths else None
 
-    def read(self, path: Path) -> list[dict]:
+    def read(self, path: Path) -> list[dict[str, Any]]:
         resolved = path.resolve()
         base = self.transcript_dir.resolve()
         if not resolved.is_relative_to(base):

@@ -1,4 +1,5 @@
 import re
+from typing import Any
 from pathlib import Path
 
 import yaml
@@ -12,7 +13,7 @@ SKILLS_DIR = Path("skills")
 class SkillLoader:
     def __init__(self, skills_dir: Path):
         self.skills_dir = skills_dir
-        self.skills = {}
+        self.skills: dict[str, dict[str, Any]] = {}
         self._load_all()
 
     def _load_all(self) -> None:
@@ -29,7 +30,7 @@ class SkillLoader:
                 "path": str(skill_file),
             }
 
-    def _parse_frontmatter(self, text: str) -> tuple[dict, str]:
+    def _parse_frontmatter(self, text: str) -> tuple[dict[str, Any], str]:
         match = re.match(r"^---\r?\n(.*?)\r?\n---\r?\n?(.*)$", text, re.DOTALL)
         if not match:
             return {}, text

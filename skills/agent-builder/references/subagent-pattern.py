@@ -223,7 +223,7 @@ Complete the task and return a clear, concise summary."""
 """
 # In your main agent's execute_tool function:
 
-def execute_tool(name: str, args: dict) -> str:
+def execute_tool(name: str, args: dict[str, Any]) -> str:
     if name == "Task":
         return run_task(
             description=args["description"],

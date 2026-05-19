@@ -1,12 +1,13 @@
 import os
+import hashlib
 import json
 import re
 import subprocess
 import threading
 from enum import Enum
 from pathlib import Path
-from typing import Callable
-from dataclasses import dataclass
+from typing import Any, Callable
+from dataclasses import dataclass, field
 
 from result import Result
 from todo import run_todo
@@ -26,19 +27,44 @@ class ToolCategory(Enum):
     agent = 4
 
 
+ToolInput = dict[str, Any]
+ToolSchema = dict[str, Any]
+ApprovalKey = Callable[[ToolInput], str]
+
+
+def _short_digest(value: Any) -> str:
+    text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+
+
+def _input_value_key(name: str) -> ApprovalKey:
+    return lambda tool_input: str(tool_input.get(name, ""))
+
+
+@dataclass
+class ToolApproval:
+    requires_approval: bool = False
+    key: ApprovalKey | None = None
+
+    def approval_key(self, tool_name: str, tool_input: ToolInput) -> str:
+        if self.key is None:
+            return tool_name
+        return f"{tool_name}:{self.key(tool_input)}"
+
+
 @dataclass
 class ToolSpec:
     name: str
     description: str
-    input_schema: dict
+    input_schema: ToolSchema
     category: ToolCategory
     handler: Callable[..., Result] | None
-    child: bool = True
-    parent: bool = True
-    requires_approval: bool = False
+    available_to_child: bool = True
+    available_to_parent: bool = True
+    approval: ToolApproval = field(default_factory=ToolApproval)
 
 
-def tool_schema(spec: ToolSpec) -> dict:
+def tool_schema(spec: ToolSpec) -> ToolSchema:
     return {
         "name": spec.name,
         "description": spec.description,
@@ -300,7 +326,7 @@ def run_workspace() -> Result:
     }
     return Result.success(json.dumps(info, ensure_ascii=False, indent=2), data=info)
 
-def object_schema(properties: dict = None, required: list[str] = None) -> dict:
+def object_schema(properties: ToolSchema | None = None, required: list[str] | None = None) -> ToolSchema:
     return {
         "type": "object",
         "properties": properties or {},
@@ -315,9 +341,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema({"task": {"type": "string"}}, ["task"]),
         category=ToolCategory.agent,
         handler=lambda **kwargs: run_task(kwargs["task"]),
-        child=False,
-        parent=True,
-        requires_approval=True,
+        available_to_child=False,
+        available_to_parent=True,
+        approval=ToolApproval(requires_approval=True, key=lambda tool_input: _short_digest(tool_input.get("task", ""))),
     ),
     "compact": ToolSpec(
         name="compact",
@@ -325,9 +351,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema(),
         category=ToolCategory.agent,
         handler=None,
-        child=False,
-        parent=True,
-        requires_approval=True,
+        available_to_child=False,
+        available_to_parent=True,
+        approval=ToolApproval(requires_approval=True),
     ),
     "task_start": ToolSpec(
         name="task_start",
@@ -347,9 +373,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
             description=kwargs.get("description", ""),
             note=kwargs.get("note"),
         ),
-        child=False,
-        parent=True,
-        requires_approval=True,
+        available_to_child=False,
+        available_to_parent=True,
+        approval=ToolApproval(requires_approval=True, key=_input_value_key("subject")),
     ),
     "task_show": ToolSpec(
         name="task_show",
@@ -357,9 +383,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema({"id": {"type": "integer"}}),
         category=ToolCategory.state,
         handler=lambda **kwargs: run_task_status(action="show", id=kwargs.get("id")),
-        child=False,
-        parent=True,
-        requires_approval=False,
+        available_to_child=False,
+        available_to_parent=True,
+        approval=ToolApproval(),
     ),
     "task_complete": ToolSpec(
         name="task_complete",
@@ -367,9 +393,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema({"note": {"type": "string"}}),
         category=ToolCategory.state,
         handler=lambda **kwargs: run_task_status(action="complete", note=kwargs.get("note")),
-        child=False,
-        parent=True,
-        requires_approval=True,
+        available_to_child=False,
+        available_to_parent=True,
+        approval=ToolApproval(requires_approval=True),
     ),
     "task_block": ToolSpec(
         name="task_block",
@@ -386,9 +412,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
             blocked_by=kwargs.get("blocked_by"),
             note=kwargs.get("note"),
         ),
-        child=False,
-        parent=True,
-        requires_approval=True,
+        available_to_child=False,
+        available_to_parent=True,
+        approval=ToolApproval(requires_approval=True),
     ),
     "task_clear": ToolSpec(
         name="task_clear",
@@ -396,9 +422,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema(),
         category=ToolCategory.state,
         handler=lambda **kwargs: run_task_status(action="clear"),
-        child=False,
-        parent=True,
-        requires_approval=True,
+        available_to_child=False,
+        available_to_parent=True,
+        approval=ToolApproval(requires_approval=True),
     ),
     "task_list": ToolSpec(
         name="task_list",
@@ -406,9 +432,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema(),
         category=ToolCategory.state,
         handler=lambda **kwargs: run_task_status(action="list"),
-        child=False,
-        parent=True,
-        requires_approval=False,
+        available_to_child=False,
+        available_to_parent=True,
+        approval=ToolApproval(),
     ),
     "task_switch": ToolSpec(
         name="task_switch",
@@ -416,9 +442,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema({"id": {"type": "integer"}}, ["id"]),
         category=ToolCategory.state,
         handler=lambda **kwargs: run_task_status(action="switch", id=kwargs["id"]),
-        child=False,
-        parent=True,
-        requires_approval=True,
+        available_to_child=False,
+        available_to_parent=True,
+        approval=ToolApproval(requires_approval=True, key=_input_value_key("id")),
     ),
     "background_start": ToolSpec(
         name="background_start",
@@ -426,9 +452,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema({"task": {"type": "string"}}, ["task"]),
         category=ToolCategory.agent,
         handler=lambda **kwargs: run_background_start(kwargs["task"]),
-        child=False,
-        parent=True,
-        requires_approval=True,
+        available_to_child=False,
+        available_to_parent=True,
+        approval=ToolApproval(requires_approval=True, key=lambda tool_input: _short_digest(tool_input.get("task", ""))),
     ),
     "background_list": ToolSpec(
         name="background_list",
@@ -436,9 +462,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema(),
         category=ToolCategory.state,
         handler=lambda **kwargs: run_task_status(action="background_list"),
-        child=False,
-        parent=True,
-        requires_approval=False,
+        available_to_child=False,
+        available_to_parent=True,
+        approval=ToolApproval(),
     ),
     "background_show": ToolSpec(
         name="background_show",
@@ -446,9 +472,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema({"id": {"type": "integer"}}, ["id"]),
         category=ToolCategory.state,
         handler=lambda **kwargs: run_task_status(action="background_show", id=kwargs["id"]),
-        child=False,
-        parent=True,
-        requires_approval=False,
+        available_to_child=False,
+        available_to_parent=True,
+        approval=ToolApproval(),
     ),
     "bash": ToolSpec(
         name="bash",
@@ -456,7 +482,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema({"command": {"type": "string"}}, ["command"]),
         category=ToolCategory.shell,
         handler=lambda **kwargs: run_bash(kwargs["command"]),
-        requires_approval=True,
+        approval=ToolApproval(requires_approval=True, key=_input_value_key("command")),
     ),
     "read": ToolSpec(
         name="read",
@@ -473,7 +499,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         handler=lambda **kwargs: run_read(
             kwargs["path"], kwargs.get("limit"), kwargs.get("line_numbers", True)
         ),
-        requires_approval=False,
+        approval=ToolApproval(),
     ),
     "write": ToolSpec(
         name="write",
@@ -484,7 +510,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         ),
         category=ToolCategory.write,
         handler=lambda **kwargs: run_write(kwargs["path"], kwargs["content"]),
-        requires_approval=True,
+        approval=ToolApproval(requires_approval=True, key=_input_value_key("path")),
     ),
     "list": ToolSpec(
         name="list",
@@ -492,7 +518,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema({"path": {"type": "string"}, "limit": {"type": "integer"}}),
         category=ToolCategory.readonly,
         handler=lambda **kwargs: run_list(kwargs.get("path", "."), kwargs.get("limit")),
-        requires_approval=False,
+        approval=ToolApproval(),
     ),
     "edit": ToolSpec(
         name="edit",
@@ -507,7 +533,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         ),
         category=ToolCategory.write,
         handler=lambda **kwargs: run_edit(kwargs["path"], kwargs["old"], kwargs["new"]),
-        requires_approval=True,
+        approval=ToolApproval(requires_approval=True, key=_input_value_key("path")),
     ),
     "search": ToolSpec(
         name="search",
@@ -524,7 +550,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         handler=lambda **kwargs: run_search(
             kwargs["query"], kwargs.get("path", "."), kwargs.get("limit")
         ),
-        requires_approval=False,
+        approval=ToolApproval(),
     ),
     "todo_set": ToolSpec(
         name="todo_set",
@@ -535,7 +561,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         ),
         category=ToolCategory.state,
         handler=lambda **kwargs: run_todo("set", kwargs["items"]),
-        requires_approval=True,
+        approval=ToolApproval(requires_approval=True),
     ),
     "todo_show": ToolSpec(
         name="todo_show",
@@ -543,7 +569,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema(),
         category=ToolCategory.state,
         handler=lambda **kwargs: run_todo("show"),
-        requires_approval=False,
+        approval=ToolApproval(),
     ),
     "todo_done": ToolSpec(
         name="todo_done",
@@ -551,7 +577,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema({"index": {"type": "integer"}}, ["index"]),
         category=ToolCategory.state,
         handler=lambda **kwargs: run_todo("done", index=kwargs["index"]),
-        requires_approval=True,
+        approval=ToolApproval(requires_approval=True, key=_input_value_key("index")),
     ),
     "todo_clear": ToolSpec(
         name="todo_clear",
@@ -559,7 +585,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema(),
         category=ToolCategory.state,
         handler=lambda **kwargs: run_todo("clear"),
-        requires_approval=True,
+        approval=ToolApproval(requires_approval=True),
     ),
     "workspace": ToolSpec(
         name="workspace",
@@ -567,7 +593,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema(),
         category=ToolCategory.readonly,
         handler=lambda **kwargs: run_workspace(),
-        requires_approval=False,
+        approval=ToolApproval(),
     ),
     "load_skill": ToolSpec(
         name="load_skill",
@@ -575,10 +601,10 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema({"name": {"type": "string"}}, ["name"]),
         category=ToolCategory.readonly,
         handler=lambda **kwargs: load_skill(kwargs["name"]),
-        requires_approval=False,
+        approval=ToolApproval(),
     ),
 }
 
 
-CHILD_TOOLS = [tool_schema(spec) for spec in TOOL_SPECS.values() if spec.child]
-PARENT_TOOLS = [tool_schema(spec) for spec in TOOL_SPECS.values() if spec.parent]
+CHILD_TOOLS = [tool_schema(spec) for spec in TOOL_SPECS.values() if spec.available_to_child]
+PARENT_TOOLS = [tool_schema(spec) for spec in TOOL_SPECS.values() if spec.available_to_parent]

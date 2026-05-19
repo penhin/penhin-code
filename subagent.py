@@ -1,3 +1,5 @@
+from typing import Any
+
 from result import Result
 from tools import CHILD_TOOLS
 from tool_runtime import CHILD_AGENT_APPROVAL_FLOW, CHILD_AGENT_POLICY, run_tool
@@ -10,7 +12,7 @@ SUBAGENT_SYSTEM = (
     "Tool results are JSON with ok/message/data/error/meta fields; prefer data for structured facts and error for failures. "
 )
 
-def extract_summary(content) -> str:
+def extract_summary(content: Any) -> str:
     parts = []
     for block in content:
         if isinstance(block, dict):
@@ -21,7 +23,7 @@ def extract_summary(content) -> str:
     return ("\n".join(parts)) or "(no summary)"
 
 
-def request_final_summary(runtime, sub_messages: list[dict]) -> str:
+def request_final_summary(runtime, sub_messages: list[dict[str, Any]]) -> str:
     response = runtime.call_with_retry(
         system=(
             SUBAGENT_SYSTEM

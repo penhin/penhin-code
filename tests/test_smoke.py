@@ -161,12 +161,12 @@ def test_tool_schemas_match_handlers() -> None:
     spec_names = set(TOOL_SPECS)
     approval_tool_names = {
         name for name, spec in TOOL_SPECS.items()
-        if spec.requires_approval
+        if spec.approval.requires_approval
     }
 
     assert child_tool_names <= spec_names
-    assert child_tool_names == {name for name, spec in TOOL_SPECS.items() if spec.child}
-    assert parent_tool_names == {name for name, spec in TOOL_SPECS.items() if spec.parent}
+    assert child_tool_names == {name for name, spec in TOOL_SPECS.items() if spec.available_to_child}
+    assert parent_tool_names == {name for name, spec in TOOL_SPECS.items() if spec.available_to_parent}
     assert child_tool_names | parent_tool_names == spec_names
     assert approval_tool_names == {
         "task",

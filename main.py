@@ -3,13 +3,14 @@
 import json
 import os
 import sys
+from typing import Any
 
 from skills import load_skill
 from transcript import transcripts
 from tools import PARENT_TOOLS
 from runtime import init_runtime, get_runtime, print_usage
 from compact import auto_compact_messages, micro_compact_text, should_auto_compact
-from tool_runtime import ApprovalFlow, PARENT_AGENT_POLICY, run_tool
+from tool_runtime import ApprovalFlow, PARENT_AGENT_POLICY, approval_key, run_tool
 
 
 SYSTEM = (
@@ -29,13 +30,13 @@ SYSTEM = (
     f"{load_skill.get_descriptions()}"
 )
 
-def format_tool_input(tool_input: dict) -> str:
+def format_tool_input(tool_input: dict[str, Any]) -> str:
     if not tool_input:
         return "{}"
     return json.dumps(tool_input, ensure_ascii=False, indent=2)
 
 
-def agent_loop(messages: list[dict], approval: ApprovalFlow = None) -> None:
+def agent_loop(messages: list[dict[str, Any]], approval: ApprovalFlow = None) -> None:
     runtime = get_runtime()
 
     approval = approval or ApprovalFlow.require_confirmation(PARENT_AGENT_POLICY.allow)
@@ -80,10 +81,11 @@ def agent_loop(messages: list[dict], approval: ApprovalFlow = None) -> None:
 
             if tool_run.approval_required:
                 print(f"[approval] tool: {tool_name}")
+                print(f"[approval] key: {approval_key(tool_name, block.input)}")
                 print(format_tool_input(block.input))
                 reply = input("[approval] approve for this session? [y/N] ").strip().lower()
                 if reply == "y":
-                    approval.approved.add(tool_name)
+                    approval.approve(tool_name, block.input)
                     tool_run = run_tool(
                         tool_name,
                         block.input,
@@ -95,8 +97,9 @@ def agent_loop(messages: list[dict], approval: ApprovalFlow = None) -> None:
                     rejection = ApprovalFlow(
                         approved=set(approval.approved),
                         required=set(approval.required),
-                        rejected={tool_name},
+                        rejected=set(approval.rejected),
                     )
+                    rejection.reject(tool_name, block.input)
                     tool_run = run_tool(
                         tool_name,
                         block.input,
@@ -136,7 +139,7 @@ def run_once(query: str) -> None:
     print_last_text(messages)
 
 
-def print_last_text(messages: list[dict]) -> None:
+def print_last_text(messages: list[dict[str, Any]]) -> None:
     content = messages[-1]["content"]
     if not isinstance(content, list):
         return

@@ -8,6 +8,7 @@ Each tool needs:
 
 from pathlib import Path
 import subprocess
+from typing import Any
 
 WORKDIR = Path.cwd()
 
@@ -250,7 +251,7 @@ def run_edit_file(path: str, old_text: str, new_text: str) -> str:
 # DISPATCHER PATTERN
 # =============================================================================
 
-def execute_tool(name: str, args: dict) -> str:
+def execute_tool(name: str, args: dict[str, Any]) -> str:
     """
     Dispatch tool call to implementation.
 
