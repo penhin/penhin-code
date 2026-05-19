@@ -20,8 +20,14 @@ from result import Result
 from skills import load_skill
 from task import TaskStatusManager
 from todo import TODO_FILE, run_todo
-from tool_runtime import PermissionPolicy, run_tool
-from tools import CHILD_TOOLS, PARENT_TOOLS, TOOL_HANDLERS, run_list
+from tool_runtime import CHILD_AGENT_POLICY, PARENT_AGENT_POLICY, PermissionPolicy, run_tool
+from tools import CHILD_TOOLS, PARENT_TOOLS, TOOL_SPECS, ToolCategory, run_list
+
+
+def run_spec_tool(tool_name: str, **kwargs) -> Result:
+    handler = TOOL_SPECS[tool_name].handler
+    assert handler is not None
+    return handler(**kwargs)
 
 
 class ToolUseBlock:
@@ -98,10 +104,10 @@ def test_todo_flow() -> None:
 def test_todo_tool_handlers() -> None:
     original = TODO_FILE.read_text(encoding="utf-8") if TODO_FILE.exists() else None
     try:
-        set_result = TOOL_HANDLERS["todo_set"](items=["inspect", "verify"])
-        show_result = TOOL_HANDLERS["todo_show"]()
-        done_result = TOOL_HANDLERS["todo_done"](index=1)
-        clear_result = TOOL_HANDLERS["todo_clear"]()
+        set_result = run_spec_tool("todo_set", items=["inspect", "verify"])
+        show_result = run_spec_tool("todo_show")
+        done_result = run_spec_tool("todo_done", index=1)
+        clear_result = run_spec_tool("todo_clear")
 
         assert set_result.exit_code == 0
         assert show_result.exit_code == 0
@@ -118,7 +124,7 @@ def test_todo_tool_handlers() -> None:
 
 
 def test_workspace_tool() -> None:
-    result = TOOL_HANDLERS["workspace"]()
+    result = run_spec_tool("workspace")
     assert result.exit_code == 0
 
     data = json.loads(result.stdout)
@@ -135,25 +141,58 @@ def test_skill_loader() -> None:
     descriptions = load_skill.get_descriptions()
     assert "code-review" in descriptions
 
-    content = TOOL_HANDLERS["load_skill"](name="code-review")
+    content = run_spec_tool("load_skill", name="code-review")
     assert content.exit_code == 0
     assert "<skill name=\"code-review\">" in content.stdout
     assert "Code Review" in content.stdout
 
 
 def test_task_tool_registered() -> None:
-    assert "task" in TOOL_HANDLERS
+    assert TOOL_SPECS["task"].handler is not None
 
 
 def test_tool_schemas_match_handlers() -> None:
     child_tool_names = {tool["name"] for tool in CHILD_TOOLS}
-    handler_names = set(TOOL_HANDLERS)
+    parent_tool_names = {tool["name"] for tool in PARENT_TOOLS}
+    handler_names = {
+        name for name, spec in TOOL_SPECS.items()
+        if spec.handler is not None
+    }
+    spec_names = set(TOOL_SPECS)
+    approval_tool_names = {
+        name for name, spec in TOOL_SPECS.items()
+        if spec.requires_approval
+    }
 
-    assert child_tool_names <= handler_names
+    assert child_tool_names <= spec_names
+    assert child_tool_names == {name for name, spec in TOOL_SPECS.items() if spec.child}
+    assert parent_tool_names == {name for name, spec in TOOL_SPECS.items() if spec.parent}
+    assert child_tool_names | parent_tool_names == spec_names
+    assert approval_tool_names == {
+        "task",
+        "compact",
+        "task_start",
+        "task_complete",
+        "task_block",
+        "task_clear",
+        "task_switch",
+        "background_start",
+        "bash",
+        "write",
+        "edit",
+        "todo_set",
+        "todo_done",
+        "todo_clear",
+    }
     assert "task" in handler_names
     assert "task_start" in handler_names
     assert "task_show" in handler_names
     assert "compact" not in handler_names
+
+
+def test_tool_specs_have_one_category() -> None:
+    for spec in TOOL_SPECS.values():
+        assert isinstance(spec.category, ToolCategory)
 
 
 def test_compact_tool_is_parent_only() -> None:
@@ -162,16 +201,20 @@ def test_compact_tool_is_parent_only() -> None:
 
     assert "compact" in parent_tool_names
     assert "compact" not in child_tool_names
-    assert "compact" not in TOOL_HANDLERS
+    assert TOOL_SPECS["compact"].handler is None
 
 
 def test_tool_runtime_policy_and_control_signals() -> None:
-    policy = PermissionPolicy(allow={"workspace", "compact"}, deny={"workspace"})
+    assert "compact" in PARENT_AGENT_POLICY.allow
+    assert "task" in PARENT_AGENT_POLICY.allow
+    assert "task" not in CHILD_AGENT_POLICY.allow
+
+    policy = PermissionPolicy(allow={"workspace", "compact"}, deny={"workspace"}, approved={"compact"})
     denied = run_tool("workspace", {}, policy)
     assert denied.result.exit_code == 1
     assert "Denied by policy" in denied.result.stderr
 
-    policy = PermissionPolicy(allow={"workspace", "compact"}, deny=set())
+    policy = PermissionPolicy(allow={"workspace", "compact"}, deny=set(), approved={"compact"})
     workspace = run_tool("workspace", {}, policy)
     assert workspace.result.exit_code == 0
     assert workspace.manual_compact is False
@@ -183,6 +226,10 @@ def test_tool_runtime_policy_and_control_signals() -> None:
     not_allowed = run_tool("read", {"path": "README.md"}, policy)
     assert not_allowed.result.exit_code == 1
     assert "Not allowed by policy" in not_allowed.result.stderr
+
+    approval_required = run_tool("compact", {}, PermissionPolicy(allow={"compact"}, deny=set()))
+    assert approval_required.result.exit_code == 1
+    assert "Approval required" in approval_required.result.stderr
 
 
 def test_task_status_tool_registered() -> None:
@@ -203,7 +250,7 @@ def test_task_status_tool_registered() -> None:
     }:
         assert tool_name in parent_tool_names
         assert tool_name not in child_tool_names
-        assert tool_name in TOOL_HANDLERS
+        assert TOOL_SPECS[tool_name].handler is not None
 
 
 def test_task_status_manager_flow() -> None:
@@ -288,28 +335,30 @@ def test_task_status_tool_handler() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         try:
             tools.task_status = TaskStatusManager(Path(tmpdir))
-            start_result = TOOL_HANDLERS["task_start"](
+            start_result = run_spec_tool(
+                "task_start",
                 subject="wire task_status",
                 description="Expose task status to the parent agent",
             )
             started = json.loads(start_result.stdout)
-            second_result = TOOL_HANDLERS["task_start"](subject="second task")
+            second_result = run_spec_tool("task_start", subject="second task")
             second = json.loads(second_result.stdout)
 
-            block_result = TOOL_HANDLERS["task_block"](
+            block_result = run_spec_tool(
+                "task_block",
                 blocked_by=[99],
             )
             blocked = json.loads(block_result.stdout)
 
-            show_result = TOOL_HANDLERS["task_show"](id=started["id"])
+            show_result = run_spec_tool("task_show", id=started["id"])
             shown = json.loads(show_result.stdout)
-            list_result = TOOL_HANDLERS["task_list"]()
+            list_result = run_spec_tool("task_list")
             listed = json.loads(list_result.stdout)
-            switch_result = TOOL_HANDLERS["task_switch"](id=started["id"])
+            switch_result = run_spec_tool("task_switch", id=started["id"])
             switched = json.loads(switch_result.stdout)
 
-            clear_result = TOOL_HANDLERS["task_clear"]()
-            empty_result = TOOL_HANDLERS["task_show"]()
+            clear_result = run_spec_tool("task_clear")
+            empty_result = run_spec_tool("task_show")
         finally:
             tools.task_status = original_task_status
 
@@ -497,6 +546,7 @@ def main() -> None:
     test_skill_loader()
     test_task_tool_registered()
     test_tool_schemas_match_handlers()
+    test_tool_specs_have_one_category()
     test_compact_tool_is_parent_only()
     test_tool_runtime_policy_and_control_signals()
     test_task_status_tool_registered()

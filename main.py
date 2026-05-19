@@ -6,7 +6,7 @@ import sys
 from skills import load_skill
 from transcript import transcripts
 from tools import PARENT_TOOLS
-from tool_runtime import PermissionPolicy, run_tool
+from tool_runtime import PARENT_AGENT_POLICY, run_tool
 from runtime import init_runtime, get_runtime, print_usage
 from compact import auto_compact_messages, micro_compact_text, should_auto_compact
 
@@ -30,10 +30,6 @@ SYSTEM = (
 
 def agent_loop(messages: list[dict]) -> None:
     runtime = get_runtime()
-    tool_policy = PermissionPolicy(
-        allow={tool["name"] for tool in PARENT_TOOLS} | {"compact"},
-        deny=set(),
-    )
 
     while True:
         micro_compact_text(messages)
@@ -64,7 +60,7 @@ def agent_loop(messages: list[dict]) -> None:
             tool_name = block.name
             print(f"$ AI use {tool_name}...")
 
-            tool_run = run_tool(tool_name, block.input, tool_policy)
+            tool_run = run_tool(tool_name, block.input, PARENT_AGENT_POLICY)
             output = tool_run.result
             if tool_run.manual_compact:
                 manual_compact = True

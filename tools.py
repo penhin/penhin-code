@@ -3,7 +3,10 @@ import json
 import re
 import subprocess
 import threading
+from enum import Enum
 from pathlib import Path
+from typing import Callable
+from dataclasses import dataclass
 
 from result import Result
 from todo import run_todo
@@ -15,285 +18,33 @@ IGNORED_PATH_PARTS = [".venv", ".git", "__pycache__", ".penhin_todos.json", ".tr
 BACKGROUND_THREAD_PREFIX = "background-task-"
 
 
-CHILD_TOOLS = [
-    {
-        "name": "bash",
-        "description": "Run a shell command in the current project directory.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "command": {"type": "string"},
-            },
-            "required": ["command"],
-        },
-    },
-    {
-        "name": "read",
-        "description": "Read a file in the current project directory.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string"},
-                "limit": {"type": "integer"},
-                "line_numbers": {"type": "boolean"},
-            },
-            "required": ["path"],
-        },
-    },
-    {
-        "name": "write",
-        "description": "Write a file in the current project directory.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string"},
-                "content": {"type": "string"},
-            },
-            "required": ["path", "content"],
-        },
-    },
-    {
-        "name": "list",
-        "description": "List all files in the current project directory.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string"},
-                "limit": {"type": "integer"},
-            },
-            "required": [],
-        },
-    },
-    {
-        "name": "edit",
-        "description": "Edit a text file by replacing specific content without rewriting the entire file.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string"},
-                "old": {"type": "string"},
-                "new": {"type": "string"},
-            },
-            "required": ["path", "old", "new"],
-        },
-    },
-    {
-        "name": "search",
-        "description": "Search for text, patterns, symbols, or files within the project.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string"},
-                "path": {"type": "string"},
-                "limit": {"type": "integer"},
-            },
-            "required": ["query"],
-        },
-    },
-    {
-        "name": "todo_set",
-        "description": "Replace the current todo list with ordered items.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "items": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                },
-            },
-            "required": ["items"],
-        },
-    },
-    {
-        "name": "todo_show",
-        "description": "Show the current todo list.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-            },
-            "required": [],
-        },
-    },
-    {
-        "name": "todo_done",
-        "description": "Mark one todo item as done by 1-based index.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "index": {"type": "integer"},
-            },
-            "required": ["index"],
-        },
-    },
-    {
-        "name": "todo_clear",
-        "description": "Clear the current todo list.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-            },
-            "required": [],
-        },
-    },
-    {
-        "name": "workspace",
-        "description": "Show the absolute path of the current project working directory.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-            },
-            "required": [],
-        },
-    },
-    {
-        "name": "load_skill",
-        "description": "Load the full content for a skill from skills/<name>/SKILL.md.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "name": {"type": "string"},
-            },
-            "required": ["name"],
-        },
-    },
-]
+class ToolCategory(Enum):
+    readonly = 0
+    state = 1
+    write = 2
+    shell = 3
+    agent = 4
 
-PARENT_TOOLS = [
-    {
-        "name": "task",
-        "description": "Spawn a subagent with fresh context. It shares the filesystem but not conversation history.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "task": {"type": "string"},
-            },
-            "required": ["task"],
-        },
-    },   
-    {
-        "name": "compact",
-        "description": "Summarize large context into compact memory representations. Also writes generated transcripts to `.transcripts/`.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-            },
-            "required": [],
-        },
-    },
-    {
-        "name": "task_start",
-        "description": "Start tracking a new current high-level task.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "subject": {"type": "string"},
-                "description": {"type": "string"},
-                "note": {"type": "string"},
-            },
-            "required": ["subject"],
-        },
-    },
-    {
-        "name": "task_show",
-        "description": "Show the current high-level task state.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "id": {"type": "integer"},
-            },
-            "required": [],
-        },
-    },
-    {
-        "name": "task_complete",
-        "description": "Mark the current high-level task as completed.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "note": {"type": "string"},
-            },
-            "required": [],
-        },
-    },
-    {
-        "name": "task_block",
-        "description": "Mark the current high-level task as blocked.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "blocked_by": {
-                    "type": "array",
-                    "items": {"type": "integer"},
-                },
-                "note": {"type": "string"},
-            },
-            "required": [],
-        },
-    },
-    {
-        "name": "task_clear",
-        "description": "Clear the current high-level task pointer.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-            },
-            "required": [],
-        },
-    },
-    {
-        "name": "task_list",
-        "description": "list the all high-level task state.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-            },
-            "required": [],
-        },
-    },
-    {
-        "name": "task_switch",
-        "description": "Switch the current high-level task pointer.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "id": {"type": "integer"},
-            },
-            "required": ["id"],
-        },
-    },
-    {
-        "name": "background_start",
-        "description": "Start a focused background task and return immediately with its task id.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "task": {"type": "string"},
-            },
-            "required": ["task"],
-        },
-    },
-    {
-        "name": "background_list",
-        "description": "Show all background tasks and their current statuses.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-            },
-            "required": [],
-        },
-    },
-    {
-        "name": "background_show",
-        "description": "Show one background task with its result or error.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "id": {"type": "integer"},
-            },
-            "required": ["id"],
-        },
-    },
-] + CHILD_TOOLS
+
+@dataclass
+class ToolSpec:
+    name: str
+    description: str
+    input_schema: dict
+    category: ToolCategory
+    handler: Callable[..., Result] | None
+    child: bool = True
+    parent: bool = True
+    requires_approval: bool = False
+
+
+def tool_schema(spec: ToolSpec) -> dict:
+    return {
+        "name": spec.name,
+        "description": spec.description,
+        "input_schema": spec.input_schema,
+    }
+
 
 def is_ignored_path(path: Path) -> bool:
     try:
@@ -549,47 +300,285 @@ def run_workspace() -> Result:
     }
     return Result.success(json.dumps(info, ensure_ascii=False, indent=2), data=info)
 
-TOOL_HANDLERS = {
-    "bash":       lambda **kwargs: run_bash(kwargs["command"]),
-    "read":       lambda **kwargs: run_read(
-        kwargs["path"], kwargs.get("limit"), kwargs.get("line_numbers", True)
+def object_schema(properties: dict = None, required: list[str] = None) -> dict:
+    return {
+        "type": "object",
+        "properties": properties or {},
+        "required": required or [],
+    }
+
+
+TOOL_SPECS: dict[str, ToolSpec] = {
+    "task": ToolSpec(
+        name="task",
+        description="Spawn a subagent with fresh context. It shares the filesystem but not conversation history.",
+        input_schema=object_schema({"task": {"type": "string"}}, ["task"]),
+        category=ToolCategory.agent,
+        handler=lambda **kwargs: run_task(kwargs["task"]),
+        child=False,
+        parent=True,
+        requires_approval=True,
     ),
-    "list":       lambda **kwargs: run_list(kwargs.get("path", "."), kwargs.get("limit")),
-    "edit":       lambda **kwargs: run_edit(kwargs["path"], kwargs["old"], kwargs["new"]),
-    "write":      lambda **kwargs: run_write(kwargs["path"], kwargs["content"]),
-    "search":     lambda **kwargs: run_search(
-        kwargs["query"], kwargs.get("path", "."), kwargs.get("limit")
+    "compact": ToolSpec(
+        name="compact",
+        description="Summarize large context into compact memory representations. Also writes generated transcripts to `.transcripts/`.",
+        input_schema=object_schema(),
+        category=ToolCategory.agent,
+        handler=None,
+        child=False,
+        parent=True,
+        requires_approval=True,
     ),
-    "todo_set":   lambda **kwargs: run_todo("set", kwargs["items"]),
-    "todo_show":  lambda **kwargs: run_todo("show"),
-    "todo_done":  lambda **kwargs: run_todo("done", index=kwargs["index"]),
-    "todo_clear": lambda **kwargs: run_todo("clear"),
-    "workspace":  lambda **kwargs: run_workspace(),
-    "load_skill": lambda **kwargs: load_skill(kwargs["name"]),
-    "task":       lambda **kwargs: run_task(kwargs["task"]),
-    "task_start": lambda **kwargs: run_task_status(
-        action="start",
-        subject=kwargs["subject"],
-        description=kwargs.get("description", ""),
-        note=kwargs.get("note"),
+    "task_start": ToolSpec(
+        name="task_start",
+        description="Start tracking a new current high-level task.",
+        input_schema=object_schema(
+            {
+                "subject": {"type": "string"},
+                "description": {"type": "string"},
+                "note": {"type": "string"},
+            },
+            ["subject"],
+        ),
+        category=ToolCategory.state,
+        handler=lambda **kwargs: run_task_status(
+            action="start",
+            subject=kwargs["subject"],
+            description=kwargs.get("description", ""),
+            note=kwargs.get("note"),
+        ),
+        child=False,
+        parent=True,
+        requires_approval=True,
     ),
-    "task_show": lambda **kwargs: run_task_status(action="show", id=kwargs.get("id")),
-    "task_complete": lambda **kwargs: run_task_status(
-        action="complete",
-        note=kwargs.get("note"),
+    "task_show": ToolSpec(
+        name="task_show",
+        description="Show the current high-level task state.",
+        input_schema=object_schema({"id": {"type": "integer"}}),
+        category=ToolCategory.state,
+        handler=lambda **kwargs: run_task_status(action="show", id=kwargs.get("id")),
+        child=False,
+        parent=True,
+        requires_approval=False,
     ),
-    "task_block": lambda **kwargs: run_task_status(
-        action="block",
-        blocked_by=kwargs.get("blocked_by"),
-        note=kwargs.get("note"),
+    "task_complete": ToolSpec(
+        name="task_complete",
+        description="Mark the current high-level task as completed.",
+        input_schema=object_schema({"note": {"type": "string"}}),
+        category=ToolCategory.state,
+        handler=lambda **kwargs: run_task_status(action="complete", note=kwargs.get("note")),
+        child=False,
+        parent=True,
+        requires_approval=True,
     ),
-    "task_clear": lambda **kwargs: run_task_status(action="clear"),
-    "task_list":  lambda **kwargs: run_task_status(action="list"),
-    "task_switch": lambda **kwargs: run_task_status(action="switch", id=kwargs["id"]),
-    "background_start": lambda **kwargs: run_background_start(kwargs["task"]),
-    "background_list": lambda **kwargs: run_task_status(action="background_list"),
-    "background_show": lambda **kwargs: run_task_status(
-        action="background_show",
-        id=kwargs["id"],
+    "task_block": ToolSpec(
+        name="task_block",
+        description="Mark the current high-level task as blocked.",
+        input_schema=object_schema(
+            {
+                "blocked_by": {"type": "array", "items": {"type": "integer"}},
+                "note": {"type": "string"},
+            }
+        ),
+        category=ToolCategory.state,
+        handler=lambda **kwargs: run_task_status(
+            action="block",
+            blocked_by=kwargs.get("blocked_by"),
+            note=kwargs.get("note"),
+        ),
+        child=False,
+        parent=True,
+        requires_approval=True,
+    ),
+    "task_clear": ToolSpec(
+        name="task_clear",
+        description="Clear the current high-level task pointer.",
+        input_schema=object_schema(),
+        category=ToolCategory.state,
+        handler=lambda **kwargs: run_task_status(action="clear"),
+        child=False,
+        parent=True,
+        requires_approval=True,
+    ),
+    "task_list": ToolSpec(
+        name="task_list",
+        description="List all high-level task states.",
+        input_schema=object_schema(),
+        category=ToolCategory.state,
+        handler=lambda **kwargs: run_task_status(action="list"),
+        child=False,
+        parent=True,
+        requires_approval=False,
+    ),
+    "task_switch": ToolSpec(
+        name="task_switch",
+        description="Switch the current high-level task pointer.",
+        input_schema=object_schema({"id": {"type": "integer"}}, ["id"]),
+        category=ToolCategory.state,
+        handler=lambda **kwargs: run_task_status(action="switch", id=kwargs["id"]),
+        child=False,
+        parent=True,
+        requires_approval=True,
+    ),
+    "background_start": ToolSpec(
+        name="background_start",
+        description="Start a focused background task and return immediately with its task id.",
+        input_schema=object_schema({"task": {"type": "string"}}, ["task"]),
+        category=ToolCategory.agent,
+        handler=lambda **kwargs: run_background_start(kwargs["task"]),
+        child=False,
+        parent=True,
+        requires_approval=True,
+    ),
+    "background_list": ToolSpec(
+        name="background_list",
+        description="Show all background tasks and their current statuses.",
+        input_schema=object_schema(),
+        category=ToolCategory.state,
+        handler=lambda **kwargs: run_task_status(action="background_list"),
+        child=False,
+        parent=True,
+        requires_approval=False,
+    ),
+    "background_show": ToolSpec(
+        name="background_show",
+        description="Show one background task with its result or error.",
+        input_schema=object_schema({"id": {"type": "integer"}}, ["id"]),
+        category=ToolCategory.state,
+        handler=lambda **kwargs: run_task_status(action="background_show", id=kwargs["id"]),
+        child=False,
+        parent=True,
+        requires_approval=False,
+    ),
+    "bash": ToolSpec(
+        name="bash",
+        description="Run a shell command in the current project directory.",
+        input_schema=object_schema({"command": {"type": "string"}}, ["command"]),
+        category=ToolCategory.shell,
+        handler=lambda **kwargs: run_bash(kwargs["command"]),
+        requires_approval=True,
+    ),
+    "read": ToolSpec(
+        name="read",
+        description="Read a file in the current project directory.",
+        input_schema=object_schema(
+            {
+                "path": {"type": "string"},
+                "limit": {"type": "integer"},
+                "line_numbers": {"type": "boolean"},
+            },
+            ["path"],
+        ),
+        category=ToolCategory.readonly,
+        handler=lambda **kwargs: run_read(
+            kwargs["path"], kwargs.get("limit"), kwargs.get("line_numbers", True)
+        ),
+        requires_approval=False,
+    ),
+    "write": ToolSpec(
+        name="write",
+        description="Write a file in the current project directory.",
+        input_schema=object_schema(
+            {"path": {"type": "string"}, "content": {"type": "string"}},
+            ["path", "content"],
+        ),
+        category=ToolCategory.write,
+        handler=lambda **kwargs: run_write(kwargs["path"], kwargs["content"]),
+        requires_approval=True,
+    ),
+    "list": ToolSpec(
+        name="list",
+        description="List all files in the current project directory.",
+        input_schema=object_schema({"path": {"type": "string"}, "limit": {"type": "integer"}}),
+        category=ToolCategory.readonly,
+        handler=lambda **kwargs: run_list(kwargs.get("path", "."), kwargs.get("limit")),
+        requires_approval=False,
+    ),
+    "edit": ToolSpec(
+        name="edit",
+        description="Edit a text file by replacing specific content without rewriting the entire file.",
+        input_schema=object_schema(
+            {
+                "path": {"type": "string"},
+                "old": {"type": "string"},
+                "new": {"type": "string"},
+            },
+            ["path", "old", "new"],
+        ),
+        category=ToolCategory.write,
+        handler=lambda **kwargs: run_edit(kwargs["path"], kwargs["old"], kwargs["new"]),
+        requires_approval=True,
+    ),
+    "search": ToolSpec(
+        name="search",
+        description="Search for text, patterns, symbols, or files within the project.",
+        input_schema=object_schema(
+            {
+                "query": {"type": "string"},
+                "path": {"type": "string"},
+                "limit": {"type": "integer"},
+            },
+            ["query"],
+        ),
+        category=ToolCategory.readonly,
+        handler=lambda **kwargs: run_search(
+            kwargs["query"], kwargs.get("path", "."), kwargs.get("limit")
+        ),
+        requires_approval=False,
+    ),
+    "todo_set": ToolSpec(
+        name="todo_set",
+        description="Replace the current todo list with ordered items.",
+        input_schema=object_schema(
+            {"items": {"type": "array", "items": {"type": "string"}}},
+            ["items"],
+        ),
+        category=ToolCategory.state,
+        handler=lambda **kwargs: run_todo("set", kwargs["items"]),
+        requires_approval=True,
+    ),
+    "todo_show": ToolSpec(
+        name="todo_show",
+        description="Show the current todo list.",
+        input_schema=object_schema(),
+        category=ToolCategory.state,
+        handler=lambda **kwargs: run_todo("show"),
+        requires_approval=False,
+    ),
+    "todo_done": ToolSpec(
+        name="todo_done",
+        description="Mark one todo item as done by 1-based index.",
+        input_schema=object_schema({"index": {"type": "integer"}}, ["index"]),
+        category=ToolCategory.state,
+        handler=lambda **kwargs: run_todo("done", index=kwargs["index"]),
+        requires_approval=True,
+    ),
+    "todo_clear": ToolSpec(
+        name="todo_clear",
+        description="Clear the current todo list.",
+        input_schema=object_schema(),
+        category=ToolCategory.state,
+        handler=lambda **kwargs: run_todo("clear"),
+        requires_approval=True,
+    ),
+    "workspace": ToolSpec(
+        name="workspace",
+        description="Show the absolute path of the current project working directory.",
+        input_schema=object_schema(),
+        category=ToolCategory.readonly,
+        handler=lambda **kwargs: run_workspace(),
+        requires_approval=False,
+    ),
+    "load_skill": ToolSpec(
+        name="load_skill",
+        description="Load the full content for a skill from skills/<name>/SKILL.md.",
+        input_schema=object_schema({"name": {"type": "string"}}, ["name"]),
+        category=ToolCategory.readonly,
+        handler=lambda **kwargs: load_skill(kwargs["name"]),
+        requires_approval=False,
     ),
 }
+
+
+CHILD_TOOLS = [tool_schema(spec) for spec in TOOL_SPECS.values() if spec.child]
+PARENT_TOOLS = [tool_schema(spec) for spec in TOOL_SPECS.values() if spec.parent]

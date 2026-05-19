@@ -9,7 +9,7 @@ import tools
 from result import Result
 from task import TaskStatusManager
 from todo import TODO_FILE
-from tools import PARENT_TOOLS, TOOL_HANDLERS
+from tools import PARENT_TOOLS, TOOL_SPECS
 
 try:
     from dotenv import load_dotenv
@@ -112,8 +112,17 @@ def assert_registered_tool(expected_tool: str) -> None:
     tool_names = {tool["name"] for tool in PARENT_TOOLS}
     if expected_tool not in tool_names:
         raise AssertionError(f"{expected_tool} is not in PARENT_TOOLS")
-    if expected_tool != "compact" and expected_tool not in TOOL_HANDLERS:
+    if expected_tool not in TOOL_SPECS:
+        raise AssertionError(f"{expected_tool} is not in TOOL_SPECS")
+    if expected_tool != "compact" and TOOL_SPECS[expected_tool].handler is None:
         raise AssertionError(f"{expected_tool} has no handler")
+
+
+def run_spec_handler(tool_name: str, **kwargs) -> Result:
+    handler = TOOL_SPECS[tool_name].handler
+    if handler is None:
+        raise AssertionError(f"{tool_name} has no handler")
+    return handler(**kwargs)
 
 
 def tool_test_names() -> list[str]:
@@ -187,9 +196,9 @@ def execute_handler(tool_use) -> Result:
     if tool_use.name == "edit":
         Path(".llm_tool_test_edit.txt").write_text("old", encoding="utf-8")
     if tool_use.name in {"todo_show", "todo_done"}:
-        TOOL_HANDLERS["todo_set"](items=["inspect", "verify"])
+        run_spec_handler("todo_set", items=["inspect", "verify"])
 
-    return TOOL_HANDLERS[tool_use.name](**tool_use.input)
+    return run_spec_handler(tool_use.name, **tool_use.input)
 
 
 def test_llm_calls_requested_tool() -> None:
@@ -229,7 +238,7 @@ def test_llm_calls_requested_tool_and_finishes() -> None:
     runtime = get_runtime()
     expected_tool = os.getenv("LLM_TOOL_TEST_NAME", "workspace")
     tool_use, response, messages = call_expected_tool(runtime, expected_tool)
-    handler_result = TOOL_HANDLERS[tool_use.name](**tool_use.input)
+    handler_result = run_spec_handler(tool_use.name, **tool_use.input)
     messages.append({"role": "assistant", "content": response.content})
     messages.append(
         {
