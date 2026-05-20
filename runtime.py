@@ -18,10 +18,11 @@ class Runtime:
     max_tokens: int = 10000
     sub_max_turns: int = 30
     sub_max_tokens: int = 2000
+    retry_delays: tuple[int, ...] = (1, 2, 4)
 
     def call_with_retry(self, system: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None, max_tokens: int | None = None):
         retry_errors = (APIError, APIConnectionError, RateLimitError)
-        delays = [1, 2, 4]
+        delays = self.retry_delays
 
         for attempt in range(len(delays) + 1):
             try:
