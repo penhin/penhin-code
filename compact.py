@@ -1,6 +1,7 @@
 import json
 from typing import Any
 from runtime import get_runtime
+from prompt import AUTO_COMPACT_SYSTEM
 from transcript import serialize_for_json, transcripts
 
 THRESHOLD = 50000
@@ -91,10 +92,7 @@ def auto_compact_messages(
     conversation_text = compact_source_text(messages)
     try:
         summary = get_runtime().call_llm_once(
-            system=(
-                "You summarize coding-agent conversation history into a compact "
-                "state snapshot for continuing engineering work."
-            ),
+            system=AUTO_COMPACT_SYSTEM,
             user_content=(
                 "Create a concise continuation snapshot from this conversation.\n"
                 "Preserve these details when present:\n"

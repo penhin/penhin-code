@@ -1,16 +1,11 @@
 from typing import Any
 
+from prompt import SUBAGENT_FINAL_SYSTEM, SUBAGENT_SYSTEM
 from result import Result
 from tools import CHILD_TOOLS
 from tool_runtime import CHILD_AGENT_APPROVAL_FLOW, CHILD_AGENT_POLICY, run_tool
 from runtime import get_runtime, print_usage
 
-
-SUBAGENT_SYSTEM = (
-    "You are a focused subagent. "
-    "Complete the assigned task independently and return a concise summary. "
-    "Tool results are JSON with ok/message/data/error/meta fields; prefer data for structured facts and error for failures. "
-)
 
 def extract_summary(content: Any) -> str:
     parts = []
@@ -25,10 +20,7 @@ def extract_summary(content: Any) -> str:
 
 def request_final_summary(runtime, sub_messages: list[dict[str, Any]]) -> str:
     response = runtime.call_with_retry(
-        system=(
-            SUBAGENT_SYSTEM
-            + "The tool budget is exhausted. Use the available tool results and return the final concise summary now."
-        ),
+        system=SUBAGENT_FINAL_SYSTEM,
         messages=sub_messages,
         max_tokens=runtime.sub_max_tokens,
     )

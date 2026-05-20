@@ -1,31 +1,12 @@
 import json
-import os
 from typing import Any
 
 from compact import auto_compact_messages, micro_compact_text, should_auto_compact
+from prompt import MAIN_SYSTEM
 from runtime import get_runtime, print_usage
-from skills import load_skill
 from tool_runtime import ApprovalFlow, PARENT_AGENT_POLICY, approval_key, run_tool
 from tools import PARENT_TOOLS
 from transcript import transcripts
-
-
-SYSTEM = (
-    f"You are Penhin Code, a tiny coding agent running in {os.getcwd()}. "
-    "Use task_start/task_show/task_complete/task_block/task_clear/task_list/task_switch to track the high-level task state. "
-    "Use background_start/background_list/background_show for focused tasks that can run while the main conversation continues. "
-    "Use todo_set/todo_show/todo_done/todo_clear to plan and track multi-step tasks before making changes. "
-    "Use task to delegate focused subtasks that benefit from fresh context. "
-    "Use list/search/read/edit/write/workspace for file operations. "
-    "Use load_skill when a listed skill is relevant and you need its full instructions. "
-    "Use compact when context is getting long, tool results are noisy, or before switching tasks. "
-    "Use bash only for running commands, tests, or inspecting runtime behavior. "
-    "Prefer structured tools over ad hoc shell commands for file operations. "
-    "Tool results are JSON with ok/message/data/error/meta fields; prefer data for structured facts and error for failures. "
-    "Ignore .venv, .git, __pycache__, skills, and internal state files."
-    "\n\nAvailable skills:\n"
-    f"{load_skill.get_descriptions()}"
-)
 
 
 def format_tool_input(tool_input: dict[str, Any]) -> str:
@@ -88,7 +69,7 @@ def agent_loop(messages: list[dict[str, Any]], approval: ApprovalFlow = None) ->
             messages[:] = auto_compact_messages(messages)
 
         response = runtime.call_with_retry(
-            system=SYSTEM,
+            system=MAIN_SYSTEM,
             messages=messages,
             tools=PARENT_TOOLS,
             max_tokens=runtime.max_tokens,
