@@ -27,6 +27,13 @@ class ApprovalFlow:
     def require_confirmation(cls, tool_names: set[str]) -> ApprovalFlow:
         return cls(required=approval_required_tools(tool_names))
 
+    def copy(self) -> ApprovalFlow:
+        return ApprovalFlow(
+            approved=set(self.approved),
+            required=set(self.required),
+            rejected=set(self.rejected),
+        )
+
     def approve(self, tool_name: str, tool_input: ToolInput) -> None:
         self.approved.add(approval_key(tool_name, tool_input))
 

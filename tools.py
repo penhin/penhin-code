@@ -343,7 +343,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         handler=lambda **kwargs: run_task(kwargs["task"]),
         available_to_child=False,
         available_to_parent=True,
-        approval=ToolApproval(requires_approval=True, key=lambda tool_input: _short_digest(tool_input.get("task", ""))),
+        approval=ToolApproval(),
     ),
     "compact": ToolSpec(
         name="compact",
@@ -353,7 +353,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         handler=None,
         available_to_child=False,
         available_to_parent=True,
-        approval=ToolApproval(requires_approval=True),
+        approval=ToolApproval(),
     ),
     "task_start": ToolSpec(
         name="task_start",
@@ -375,7 +375,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         ),
         available_to_child=False,
         available_to_parent=True,
-        approval=ToolApproval(requires_approval=True, key=_input_value_key("subject")),
+        approval=ToolApproval(),
     ),
     "task_show": ToolSpec(
         name="task_show",
@@ -395,7 +395,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         handler=lambda **kwargs: run_task_status(action="complete", note=kwargs.get("note")),
         available_to_child=False,
         available_to_parent=True,
-        approval=ToolApproval(requires_approval=True),
+        approval=ToolApproval(),
     ),
     "task_block": ToolSpec(
         name="task_block",
@@ -414,7 +414,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         ),
         available_to_child=False,
         available_to_parent=True,
-        approval=ToolApproval(requires_approval=True),
+        approval=ToolApproval(),
     ),
     "task_clear": ToolSpec(
         name="task_clear",
@@ -424,7 +424,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         handler=lambda **kwargs: run_task_status(action="clear"),
         available_to_child=False,
         available_to_parent=True,
-        approval=ToolApproval(requires_approval=True),
+        approval=ToolApproval(),
     ),
     "task_list": ToolSpec(
         name="task_list",
@@ -444,7 +444,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         handler=lambda **kwargs: run_task_status(action="switch", id=kwargs["id"]),
         available_to_child=False,
         available_to_parent=True,
-        approval=ToolApproval(requires_approval=True, key=_input_value_key("id")),
+        approval=ToolApproval(),
     ),
     "background_start": ToolSpec(
         name="background_start",
@@ -561,7 +561,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         ),
         category=ToolCategory.state,
         handler=lambda **kwargs: run_todo("set", kwargs["items"]),
-        approval=ToolApproval(requires_approval=True),
+        approval=ToolApproval(),
     ),
     "todo_show": ToolSpec(
         name="todo_show",
@@ -577,7 +577,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema({"index": {"type": "integer"}}, ["index"]),
         category=ToolCategory.state,
         handler=lambda **kwargs: run_todo("done", index=kwargs["index"]),
-        approval=ToolApproval(requires_approval=True, key=_input_value_key("index")),
+        approval=ToolApproval(),
     ),
     "todo_clear": ToolSpec(
         name="todo_clear",
@@ -585,7 +585,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema(),
         category=ToolCategory.state,
         handler=lambda **kwargs: run_todo("clear"),
-        approval=ToolApproval(requires_approval=True),
+        approval=ToolApproval(),
     ),
     "workspace": ToolSpec(
         name="workspace",

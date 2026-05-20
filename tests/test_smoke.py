@@ -3,9 +3,11 @@ import sys
 import tempfile
 import threading
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import agent
 import compact
 import transcript
 import tools
@@ -20,7 +22,7 @@ from result import Result
 from skills import load_skill
 from task import TaskStatusManager
 from todo import TODO_FILE, run_todo
-from tool_runtime import ApprovalFlow, CHILD_AGENT_POLICY, PARENT_AGENT_POLICY, PermissionPolicy, run_tool
+from tool_runtime import ApprovalFlow, CHILD_AGENT_POLICY, PARENT_AGENT_POLICY, PermissionPolicy, ToolRun, run_tool
 from tools import CHILD_TOOLS, PARENT_TOOLS, TOOL_SPECS, ToolCategory, run_list
 
 
@@ -169,20 +171,10 @@ def test_tool_schemas_match_handlers() -> None:
     assert parent_tool_names == {name for name, spec in TOOL_SPECS.items() if spec.available_to_parent}
     assert child_tool_names | parent_tool_names == spec_names
     assert approval_tool_names == {
-        "task",
-        "compact",
-        "task_start",
-        "task_complete",
-        "task_block",
-        "task_clear",
-        "task_switch",
         "background_start",
         "bash",
         "write",
         "edit",
-        "todo_set",
-        "todo_done",
-        "todo_clear",
     }
     assert "task" in handler_names
     assert "task_start" in handler_names
@@ -230,13 +222,26 @@ def test_tool_runtime_policy_and_control_signals() -> None:
     assert "Not allowed by policy" in not_allowed.result.stderr
 
     approval_required = run_tool(
-        "compact",
-        {},
-        PermissionPolicy(allow={"compact"}, deny=set()),
-        ApprovalFlow.require_confirmation({"compact"}),
+        "write",
+        {"path": "README.md", "content": "test"},
+        PermissionPolicy(allow={"write"}, deny=set()),
+        ApprovalFlow.require_confirmation({"write"}),
     )
     assert approval_required.result.exit_code == 1
     assert "Approval required" in approval_required.result.stderr
+
+
+def test_resolve_approval_approves_for_session() -> None:
+    approval = ApprovalFlow.require_confirmation({"write"})
+    tool_input = {"path": "demo.txt", "content": "hello"}
+
+    with patch("builtins.input", return_value="ys"), patch("agent.run_tool") as mocked_run_tool:
+        mocked_run_tool.return_value = ToolRun(Result.success("ok"))
+        tool_run = agent.resolve_approval("write", tool_input, approval)
+
+    assert tool_run.result.stdout == "ok"
+    assert approval.is_approved("write", tool_input)
+    mocked_run_tool.assert_called_once()
 
 
 def test_task_status_tool_registered() -> None:
