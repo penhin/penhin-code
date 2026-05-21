@@ -136,7 +136,7 @@ def tool_test_names() -> list[str]:
 
 
 def call_expected_tool(runtime, expected_tool: str):
-    from runtime import print_usage
+    from runtime import log_usage
 
     assert_registered_tool(expected_tool)
     messages = [
@@ -154,7 +154,7 @@ def call_expected_tool(runtime, expected_tool: str):
         tools=PARENT_TOOLS,
         max_tokens=256,
     )
-    print_usage("llm-tool-request", response)
+    log_usage("llm-tool-request", response)
 
     tool_uses = [block for block in response.content if getattr(block, "type", None) == "tool_use"]
     if len(tool_uses) != 1:
@@ -232,7 +232,7 @@ def test_llm_calls_requested_tool_and_finishes() -> None:
     if os.getenv("RUN_LLM_TOOL_FINAL_TEST") != "1":
         return
 
-    from runtime import get_runtime, init_runtime, print_usage
+    from runtime import get_runtime, init_runtime, log_usage
 
     init_runtime()
     runtime = get_runtime()
@@ -259,7 +259,7 @@ def test_llm_calls_requested_tool_and_finishes() -> None:
         tools=PARENT_TOOLS,
         max_tokens=256,
     )
-    print_usage("llm-tool-final", final_response)
+    log_usage("llm-tool-final", final_response)
 
     if final_response.stop_reason == "tool_use":
         raise AssertionError("expected final text after tool_result, got another tool_use")

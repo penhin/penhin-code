@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -9,7 +10,7 @@ from typing import Any
 from result import Result
 
 
-TASKS_DIR = Path(".tasks")
+TASKS_DIR = Path.cwd().resolve() / ".tasks"
 CURRENT_FILE = "current.json"
 
 
@@ -64,6 +65,7 @@ class TaskStatus:
 
 class TaskStatusManager:
     def __init__(self, tasks_dir: Path):
+        self._lock = threading.RLock()
         self.tasks_dir = tasks_dir
         self.tasks_dir.mkdir(exist_ok=True)
         self.current_file = self.tasks_dir / CURRENT_FILE
@@ -77,7 +79,10 @@ class TaskStatusManager:
         return max(ids) if ids else 0
 
     def _save(self, task: TaskStatus) -> None:
-        self._task_path(task.id).write_text(task.to_json(), encoding="utf-8")
+        path = self._task_path(task.id)
+        temp_path = path.with_name(f".{path.name}.{threading.get_ident()}.tmp")
+        temp_path.write_text(task.to_json(), encoding="utf-8")
+        temp_path.replace(path)
 
     def _load(self, task_id: int) -> TaskStatus:
         path = self._task_path(task_id)
@@ -89,10 +94,12 @@ class TaskStatusManager:
         if task_id is None:
             self.current_file.unlink(missing_ok=True)
             return
-        self.current_file.write_text(
+        temp_path = self.current_file.with_name(f".{CURRENT_FILE}.{threading.get_ident()}.tmp")
+        temp_path.write_text(
             json.dumps({"current_id": task_id}, ensure_ascii=False, indent=2),
-            encoding="utf-8",
+            encoding="utf-8"
         )
+        temp_path.replace(self.current_file)
 
     def _get_current_id(self) -> int | None:
         if not self.current_file.exists():
@@ -102,89 +109,98 @@ class TaskStatusManager:
         return int(current_id) if current_id is not None else None
 
     def start(self, subject: str, description: str = "", note: str = "") -> TaskStatus:
-        task = TaskStatus(
-            id=self._next_id,
-            subject=subject,
-            description=description,
-            note=note,
-            status="running",
-        )
-        self._save(task)
-        self._set_current_id(task.id)
-        self._next_id += 1
-        return task
+        with self._lock:
+            task = TaskStatus(
+                id=self._next_id,
+                subject=subject,
+                description=description,
+                note=note,
+                status="running",
+            )
+            self._save(task)
+            self._set_current_id(task.id)
+            self._next_id += 1
+            return task
 
     def start_background(self, subject: str, description: str = "", note: str = "") -> TaskStatus:
-        task = TaskStatus(
-            id=self._next_id,
-            subject=subject,
-            kind="background",
-            description=description,
-            note=note,
-            status="running",
-        )
-        self._save(task)
-        self._next_id += 1
-        return task
+        with self._lock:
+            task = TaskStatus(
+                id=self._next_id,
+                subject=subject,
+                kind="background",
+                description=description,
+                note=note,
+                status="running",
+            )
+            self._save(task)
+            self._next_id += 1
+            return task
 
     def show(self, id: int = None) -> TaskStatus | None:
-        if id is not None:
-            return self._load(id)
-        current_id = self._get_current_id()
-        if current_id is None:
-            return None
-        return self._load(current_id)
+        with self._lock:
+            if id is not None:
+                return self._load(id)
+            current_id = self._get_current_id()
+            if current_id is None:
+                return None
+            return self._load(current_id)
 
     def complete(self, note: str = None) -> TaskStatus:
-        task = self._require_current()
-        task.mark("completed", blocked_by=[], note=note)
-        self._save(task)
-        return task
+        with self._lock:
+            task = self._require_current()
+            task.mark("completed", blocked_by=[], note=note)
+            self._save(task)
+            return task
 
     def block(self, blocked_by: list[int] = None, note: str = None) -> TaskStatus:
-        task = self._require_current()
-        task.mark("blocked", blocked_by=blocked_by or [], note=note)
-        self._save(task)
-        return task
+        with self._lock:
+            task = self._require_current()
+            task.mark("blocked", blocked_by=blocked_by or [], note=note)
+            self._save(task)
+            return task
 
     def switch(self, id: int) -> TaskStatus | None:
-        if id is None:
-            return None
-        task = self._load(id)
-        self._set_current_id(id)
-        return task
+        with self._lock:
+            if id is None:
+                return None
+            task = self._load(id)
+            self._set_current_id(id)
+            return task
 
     def finish_background(self, id: int, status: str, result: str = "", error: str = "") -> TaskStatus:
-        task = self._load(id)
-        if task.kind != "background":
-            raise FileNotFoundError(f"Background task {id} not found")
-        task.status = status
-        task.result = result
-        task.error = error
-        task.updated_at = time.time_ns()
-        self._save(task)
-        return task
+        with self._lock:
+            task = self._load(id)
+            if task.kind != "background":
+                raise FileNotFoundError(f"Background task {id} not found")
+            task.status = status
+            task.result = result
+            task.error = error
+            task.updated_at = time.time_ns()
+            self._save(task)
+            return task
 
     def list(self, kind: str = None) -> list[dict[str, Any]]:
-        tasks: list[dict[str, Any]] = []
-        task_paths = sorted(
-            self.tasks_dir.glob("task_*.json"),
-            key=lambda path: int(path.stem.split("_")[1]),
-        )
-        for path in task_paths:
-            task_id = int(path.stem.split("_")[1])
-            task = self._load(task_id).to_dict()
-            if kind is not None and task["kind"] != kind:
-                continue
-            task.pop("description", None)
-            task.pop("note", None)
-            task.pop("result", None)
-            task.pop("error", None)
-            tasks.append(task)
-        return tasks
+        with self._lock:
+            tasks: list[dict[str, Any]] = []
+            task_paths = sorted(
+                self.tasks_dir.glob("task_*.json"),
+                key=lambda path: int(path.stem.split("_")[1]),
+            )
+            for path in task_paths:
+                task_id = int(path.stem.split("_")[1])
+                task = self._load(task_id).to_dict()
+                if kind is not None and task["kind"] != kind:
+                    continue
+                task.pop("description", None)
+                task.pop("note", None)
+                task.pop("result", None)
+                task.pop("error", None)
+                tasks.append(task)
+            return tasks
 
     def clear(self) -> None:
-        self._set_current_id(None)
+        with self._lock:
+            self._set_current_id(None)
 
     def _require_current(self) -> TaskStatus:
         task = self.show()

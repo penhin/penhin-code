@@ -14,9 +14,10 @@ from todo import run_todo
 from skills import load_skill
 from task import task_status
 
-WORKDIR = Path.cwd()
+WORKDIR = Path.cwd().resolve()
 IGNORED_PATH_PARTS = [".venv", ".git", "__pycache__", ".penhin_todos.json", ".transcripts", ".tasks", "skills"]
 BACKGROUND_THREAD_PREFIX = "background-task-"
+FILE_LOCK = threading.RLock()
 
 
 class ToolCategory(Enum):
@@ -118,6 +119,12 @@ def safe_path(path: str) -> Path:
     return resolved
 
 
+def atomic_write_text(path: Path, content: str) -> None:
+    temp_path = path.with_name(f".{path.name}.{threading.get_ident()}.tmp")
+    temp_path.write_text(content, encoding="utf-8")
+    temp_path.replace(path)
+
+
 def ignored_path_part(path: Path) -> str | None:
     try:
         relative_parts = path.resolve().relative_to(WORKDIR).parts
@@ -145,7 +152,7 @@ def run_bash(command: str) -> Result:
         result = subprocess.run(
             command,
             shell=True,
-            cwd=os.getcwd(),
+            cwd=WORKDIR,
             capture_output=True,
             text=True,
             timeout=30,
@@ -190,8 +197,9 @@ def run_write(path: str, content: str = None) -> Result:
         if content is None:
             return Result.failure("Error: content is required", code="missing_content")
         file_path = safe_path(path)
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_text(content, encoding="utf-8")
+        with FILE_LOCK:
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(file_path, content)
         return Result.success(
             f"Wrote {len(content)} bytes to {path}",
             data={"path": path, "bytes": len(content)},
@@ -235,16 +243,17 @@ def run_list(path: str = ".", limit: int = None) -> Result:
 def run_edit(path: str, old: str, new: str) -> Result:
     try:
         file_path = safe_path(path)
-        text = file_path.read_text(encoding="utf-8")
+        with FILE_LOCK:
+            text = file_path.read_text(encoding="utf-8")
 
-        count = text.count(old)
-        if count == 0:
-            return Result.failure("Error: old text not found", code="old_text_not_found")
-        if count > 1:
-            return Result.failure(f"Error: old text appears {count}", code="old_text_not_unique", count=count)
+            count = text.count(old)
+            if count == 0:
+                return Result.failure("Error: old text not found", code="old_text_not_found")
+            if count > 1:
+                return Result.failure(f"Error: old text appears {count}", code="old_text_not_unique", count=count)
 
-        updated = text.replace(old, new, 1)
-        file_path.write_text(updated, encoding="utf-8")
+            updated = text.replace(old, new, 1)
+            atomic_write_text(file_path, updated)
 
         return Result.success(f"Edited {path}", data={"path": path, "replacements": 1})
     except Exception as error:
@@ -311,7 +320,7 @@ def run_background_start(task: str) -> Result:
     thread = threading.Thread(
         target=finish_background_task,
         args=(background_task.id, task),
-        daemon=True,
+        daemon=False,
         name=f"{BACKGROUND_THREAD_PREFIX}{background_task.id}",
     )
     thread.start()
