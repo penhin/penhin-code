@@ -1,12 +1,16 @@
 import json
+import logging
 from typing import Any
 
 from compact import auto_compact_messages, micro_compact_text, should_auto_compact
 from prompt import MAIN_SYSTEM
-from runtime import get_runtime, print_usage
+from runtime import get_runtime, log_usage
 from tool_runtime import ApprovalFlow, PARENT_AGENT_POLICY, approval_key, run_tool
 from tools import PARENT_TOOLS
 from transcript import transcripts
+
+
+logger = logging.getLogger("penhin.agent")
 
 
 def format_tool_input(tool_input: dict[str, Any]) -> str:
@@ -38,9 +42,9 @@ def run_with_one_time_rejection(tool_name: str, tool_input: dict[str, Any], appr
 
 
 def resolve_approval(tool_name: str, tool_input: dict[str, Any], approval: ApprovalFlow):
-    print(f"[approval] tool: {tool_name}")
-    print(f"[approval] key: {approval_key(tool_name, tool_input)}")
-    print(format_tool_input(tool_input))
+    logger.info(f"[approval] tool: {tool_name}")
+    logger.info(f"[approval] key: {approval_key(tool_name, tool_input)}")
+    logger.info(format_tool_input(tool_input))
 
     reply = input("[approval] y=once, ys=session, n=reject [y/N] ").strip().lower()
     if reply == "y":
@@ -77,7 +81,7 @@ def agent_loop(messages: list[dict[str, Any]], approval: ApprovalFlow = None) ->
 
         messages.append({"role": "assistant", "content": response.content})
 
-        print_usage("main", response)
+        log_usage("main", response)
 
         if response.stop_reason != "tool_use":
             return
@@ -89,7 +93,7 @@ def agent_loop(messages: list[dict[str, Any]], approval: ApprovalFlow = None) ->
                 continue
 
             tool_name = block.name
-            print(f"$ AI use {tool_name}...")
+            logger.info(f"$ AI use {tool_name}...")
 
             tool_run = run_tool(
                 tool_name,
@@ -108,7 +112,7 @@ def agent_loop(messages: list[dict[str, Any]], approval: ApprovalFlow = None) ->
                 manual_compact = True
 
             output_text = output.to_json()
-            print(output_text)
+            logger.info(output_text)
 
             tool_results.append(
                 {
@@ -143,6 +147,6 @@ def print_last_text(messages: list[dict[str, Any]]) -> None:
     for block in content:
         if isinstance(block, dict):
             if block.get("type") == "text":
-                print(block.get("text", ""))
+                logger.info(block.get("text", ""))
         elif getattr(block, "type", None) == "text":
-            print(block.text)
+            logger.info(block.text)

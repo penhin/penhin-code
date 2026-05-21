@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 
 import sys
+import logging
 
 from agent import agent_loop, print_last_text, run_once
 from runtime import init_runtime
 from tool_runtime import ApprovalFlow, PARENT_AGENT_POLICY
 from transcript import transcripts
+
+
+logger = logging.getLogger("penhin.main")
 
 
 def main() -> None:
@@ -22,7 +26,7 @@ def main() -> None:
         try:
             user_input = input("penhin >> ").strip()
         except (EOFError, KeyboardInterrupt):
-            print()
+            logger.info("")
             break
 
         if user_input in {"", "q", "quit", "exit"}:

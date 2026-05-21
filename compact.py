@@ -1,8 +1,11 @@
 import json
+import logging
 from typing import Any
 from runtime import get_runtime
 from prompt import AUTO_COMPACT_SYSTEM
 from transcript import serialize_for_json, transcripts
+
+logger = logging.getLogger("penhin.compact")
 
 THRESHOLD = 50000
 MAX_CHARS = 50000
@@ -87,7 +90,7 @@ def auto_compact_messages(
 ) -> list[dict[str, Any]]:
     transcript_path = transcripts.save(messages)
 
-    print(f"[transcript saved: {transcript_path}]")
+    logger.info(f"[transcript saved: {transcript_path}]")
 
     conversation_text = compact_source_text(messages)
     try:

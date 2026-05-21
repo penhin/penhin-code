@@ -1,10 +1,14 @@
+import logging
 from typing import Any
 
 from prompt import SUBAGENT_FINAL_SYSTEM, SUBAGENT_SYSTEM
 from result import Result
 from tools import CHILD_TOOLS
 from tool_runtime import CHILD_AGENT_APPROVAL_FLOW, CHILD_AGENT_POLICY, run_tool
-from runtime import get_runtime, print_usage
+from runtime import get_runtime, log_usage
+
+
+logger = logging.getLogger("penhin.subagent")
 
 
 def extract_summary(content: Any) -> str:
@@ -24,7 +28,7 @@ def request_final_summary(runtime, sub_messages: list[dict[str, Any]]) -> str:
         messages=sub_messages,
         max_tokens=runtime.sub_max_tokens,
     )
-    print_usage("subagent-final", response)
+    log_usage("subagent-final", response)
     return extract_summary(response.content)
 
 
@@ -42,7 +46,7 @@ def run_subagent(task: str) -> Result:
         )
         sub_messages.append({"role": "assistant", "content": response.content})
         
-        print_usage("subagent", response)
+        log_usage("subagent", response)
         if response.stop_reason != "tool_use":
             return Result.success(extract_summary(response.content))
 
@@ -52,7 +56,7 @@ def run_subagent(task: str) -> Result:
                 continue
 
             tool_name = block.name
-            print(f"$ AI use {tool_name}...")
+            logger.info(f"$ AI use {tool_name}...")
 
             output = run_tool(
                 tool_name,
@@ -62,7 +66,7 @@ def run_subagent(task: str) -> Result:
             ).result
 
             output_text = output.to_json()
-            print(output_text)
+            logger.info(output_text)
 
             tool_results.append(
                 {
