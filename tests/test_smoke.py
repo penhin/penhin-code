@@ -77,6 +77,34 @@ def test_list_ignored_path_returns_hint() -> None:
     assert "load_skill" in result.stdout
 
 
+def test_bash_blocks_dangerous_commands() -> None:
+    assert tools.command_is_dangerous("echo ok") is None
+    assert tools.command_is_dangerous("git status") is None
+    assert tools.command_is_dangerous("rm -rf ./tmp") is None
+    assert tools.command_is_dangerous("sudo ls") == "sudo"
+    assert tools.command_is_dangerous("echo ok && reboot") == "reboot"
+    assert tools.command_is_dangerous("shutdown now") == "shutdown"
+    assert tools.command_is_dangerous("rm -rf /") == "rm"
+    assert tools.command_is_dangerous("rm -fr / ") == "rm"
+
+
+def test_atomic_write_cleans_temp_file_on_replace_failure() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = Path(tmpdir) / "target.txt"
+        temp_path = path.with_name(f".{path.name}.{threading.get_ident()}.tmp")
+
+        with patch.object(Path, "replace", side_effect=OSError("replace failed")):
+            try:
+                tools.atomic_write_text(path, "content")
+            except OSError:
+                pass
+            else:
+                raise AssertionError("expected replace failure")
+
+        assert not temp_path.exists()
+        assert not path.exists()
+
+
 def test_todo_flow() -> None:
     original = TODO_FILE.read_text(encoding="utf-8") if TODO_FILE.exists() else None
     try:
@@ -341,6 +369,37 @@ def test_background_start_rejects_nested_background_tasks() -> None:
     assert "cannot start nested background tasks" in results[0].stderr
 
 
+def test_background_start_uses_daemon_thread() -> None:
+    original_task_status = tools.task_status
+    created_threads = []
+
+    class FakeThread:
+        def __init__(self, target, args, daemon, name):
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+            self.name = name
+            self.started = False
+            created_threads.append(self)
+
+        def start(self):
+            self.started = True
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        try:
+            tools.task_status = TaskStatusManager(Path(tmpdir))
+            with patch.object(tools.threading, "Thread", FakeThread):
+                result = tools.run_background_start("summarize files")
+        finally:
+            tools.task_status = original_task_status
+
+    assert result.exit_code == 0
+    assert len(created_threads) == 1
+    assert created_threads[0].daemon is True
+    assert created_threads[0].started is True
+    assert created_threads[0].name.startswith("background-task-")
+
+
 def test_task_status_tool_handler() -> None:
     original_task_status = tools.task_status
 
@@ -552,6 +611,8 @@ def main() -> None:
     test_result_json()
     test_list_ignores_internal_files()
     test_list_ignored_path_returns_hint()
+    test_bash_blocks_dangerous_commands()
+    test_atomic_write_cleans_temp_file_on_replace_failure()
     test_todo_flow()
     test_todo_tool_handlers()
     test_workspace_tool()
@@ -566,6 +627,7 @@ def main() -> None:
     test_task_status_manager_list_and_switch()
     test_background_task_manager_flow()
     test_background_start_rejects_nested_background_tasks()
+    test_background_start_uses_daemon_thread()
     test_task_status_tool_handler()
     test_micro_compact_text()
     test_auto_compact_helpers()

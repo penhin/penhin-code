@@ -18,6 +18,8 @@ WORKDIR = Path.cwd().resolve()
 IGNORED_PATH_PARTS = [".venv", ".git", "__pycache__", ".penhin_todos.json", ".transcripts", ".tasks", "skills"]
 BACKGROUND_THREAD_PREFIX = "background-task-"
 FILE_LOCK = threading.RLock()
+DANGEROUS_COMMAND_NAMES = {"sudo", "shutdown", "reboot"}
+DANGEROUS_RM_ROOT = re.compile(r"(^|[;&|]\s*)rm\s+(-[A-Za-z]*[rf][A-Za-z]*\s+)+/(\s|$)")
 
 
 class ToolCategory(Enum):
@@ -107,6 +109,23 @@ def command_references_ignored_path(command: str) -> str | None:
     return None
 
 
+def command_uses_dangerous_name(command: str) -> str | None:
+    for name in DANGEROUS_COMMAND_NAMES:
+        pattern = rf"(^|[;&|]\s*){re.escape(name)}(\s|$)"
+        if re.search(pattern, command):
+            return name
+    return None
+
+
+def command_is_dangerous(command: str) -> str | None:
+    dangerous_name = command_uses_dangerous_name(command)
+    if dangerous_name:
+        return dangerous_name
+    if DANGEROUS_RM_ROOT.search(command):
+        return "rm"
+    return None
+
+
 def safe_path(path: str) -> Path:
     resolved = (WORKDIR / path).resolve()
 
@@ -121,8 +140,12 @@ def safe_path(path: str) -> Path:
 
 def atomic_write_text(path: Path, content: str) -> None:
     temp_path = path.with_name(f".{path.name}.{threading.get_ident()}.tmp")
-    temp_path.write_text(content, encoding="utf-8")
-    temp_path.replace(path)
+    try:
+        temp_path.write_text(content, encoding="utf-8")
+        temp_path.replace(path)
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
 
 
 def ignored_path_part(path: Path) -> str | None:
@@ -138,9 +161,13 @@ def ignored_path_part(path: Path) -> str | None:
 
 
 def run_bash(command: str) -> Result:
-    blocked = ["rm -rf /", "sudo", "shutdown", "reboot"]
-    if any(text in command for text in blocked):
-        return Result.failure("Error: blocked dangerous command", code="blocked_command")
+    dangerous_command = command_is_dangerous(command)
+    if dangerous_command:
+        return Result.failure(
+            f"Error: blocked dangerous command: {dangerous_command}",
+            code="blocked_command",
+            command=dangerous_command,
+        )
     ignored_part = command_references_ignored_path(command)
     if ignored_part:
         return Result.failure(
@@ -320,7 +347,7 @@ def run_background_start(task: str) -> Result:
     thread = threading.Thread(
         target=finish_background_task,
         args=(background_task.id, task),
-        daemon=False,
+        daemon=True,
         name=f"{BACKGROUND_THREAD_PREFIX}{background_task.id}",
     )
     thread.start()
