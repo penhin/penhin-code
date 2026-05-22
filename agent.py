@@ -112,7 +112,6 @@ def agent_loop(messages: list[dict[str, Any]], approval: ApprovalFlow = None) ->
                 manual_compact = True
 
             output_text = output.to_json()
-            logger.info(output_text)
 
             tool_results.append(
                 {

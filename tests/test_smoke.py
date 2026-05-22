@@ -1,4 +1,6 @@
+import io
 import json
+import logging
 import sys
 import tempfile
 import threading
@@ -9,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import agent
 import compact
+import tool_runtime
 import transcript
 import tools
 from compact import (
@@ -257,6 +260,90 @@ def test_tool_runtime_policy_and_control_signals() -> None:
     )
     assert approval_required.result.exit_code == 1
     assert "Approval required" in approval_required.result.stderr
+
+
+def test_tool_runtime_input_summary_hides_sensitive_values() -> None:
+    summary = tool_runtime.input_summary(
+        {
+            "path": "agent.py",
+            "content": "secret content",
+            "command": "echo secret",
+            "unknown": "hidden",
+        }
+    )
+
+    assert "path:agent.py" in summary
+    assert "content:sha256:" in summary
+    assert "command:sha256:" in summary
+    assert "unknown:<hidden>" in summary
+    assert "secret content" not in summary
+    assert "echo secret" not in summary
+
+
+def test_tool_runtime_logs_result_status() -> None:
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    logger = logging.getLogger("penhin.tool")
+    original_level = logger.level
+    original_propagate = logger.propagate
+
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    logger.addHandler(handler)
+    try:
+        with patch.object(
+            tool_runtime,
+            "execute_tool",
+            return_value=ToolRun(Result.failure("broken", code="tool_error")),
+        ):
+            result = run_tool("workspace", {}, PermissionPolicy(allow={"workspace"}, deny=set()))
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(original_level)
+        logger.propagate = original_propagate
+
+    output = stream.getvalue()
+    assert result.result.exit_code == 1
+    assert "[tool] start call_id=tool-" in output
+    assert "name=workspace input=<none>" in output
+    assert "status=error" in output
+    assert "duration_ms=" in output
+    assert "code=tool_error" in output
+
+
+def test_tool_runtime_logs_input_summary() -> None:
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    logger = logging.getLogger("penhin.tool")
+    original_level = logger.level
+    original_propagate = logger.propagate
+
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    logger.addHandler(handler)
+    try:
+        with patch.object(
+            tool_runtime,
+            "execute_tool",
+            return_value=ToolRun(Result.success("ok")),
+        ):
+            result = run_tool(
+                "write",
+                {"path": "agent.py", "content": "secret content"},
+                PermissionPolicy(allow={"write"}, deny=set()),
+                ApprovalFlow.preapproved({"write"}),
+            )
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(original_level)
+        logger.propagate = original_propagate
+
+    output = stream.getvalue()
+    assert result.result.exit_code == 0
+    assert "[tool] start call_id=tool-" in output
+    assert "input=content:sha256:" in output
+    assert "path:agent.py" in output
+    assert "secret content" not in output
 
 
 def test_resolve_approval_approves_for_session() -> None:
@@ -622,6 +709,9 @@ def main() -> None:
     test_tool_specs_have_one_category()
     test_compact_tool_is_parent_only()
     test_tool_runtime_policy_and_control_signals()
+    test_tool_runtime_input_summary_hides_sensitive_values()
+    test_tool_runtime_logs_result_status()
+    test_tool_runtime_logs_input_summary()
     test_task_status_tool_registered()
     test_task_status_manager_flow()
     test_task_status_manager_list_and_switch()

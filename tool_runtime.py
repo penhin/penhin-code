@@ -1,9 +1,27 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import time
+import logging
+import itertools
+
 from dataclasses import dataclass, field
 
 from result import Result
 from tools import TOOL_SPECS, ToolCategory, ToolInput
+
+
+logger = logging.getLogger("penhin.tool")
+
+_TOOL_CALL_COUNTER = itertools.count(1)
+
+SAFE_INPUT_FIELDS = {"path", "name", "id", "index", "action", "limit", "line_numbers"}
+HASHED_INPUT_FIELDS = {"command", "content", "task", "description", "note", "old", "new", "items", "blocked_by"}
+
+
+def next_tool_call_id() -> str:
+    return f"tool-{next(_TOOL_CALL_COUNTER)}"
 
 
 @dataclass
@@ -132,6 +150,40 @@ def approval_key(tool_name: str, tool_input: ToolInput) -> str:
     return spec.approval.approval_key(tool_name, tool_input)
 
 
+def short_hash(value: object) -> str:
+    text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+
+
+def input_summary(tool_input: ToolInput) -> str:
+    if not tool_input:
+        return "<none>"
+
+    parts = []
+    for key in sorted(tool_input):
+        value = tool_input[key]
+        if key in SAFE_INPUT_FIELDS:
+            parts.append(f"{key}:{value}")
+        elif key in HASHED_INPUT_FIELDS:
+            parts.append(f"{key}:sha256:{short_hash(value)}")
+        else:
+            parts.append(f"{key}:<hidden>")
+    return ",".join(parts)
+
+
+def log_tool_start(tool_id: str, tool_name: str, tool_input: ToolInput) -> None:
+    logger.info(f"[tool] start call_id={tool_id} name={tool_name} input={input_summary(tool_input)}")
+
+
+def log_tool_done(tool_id: str, tool_name: str, result: Result, duration_ms: float) -> None:
+    if result.ok:
+        logger.info(f"[tool] done call_id={tool_id} name={tool_name} status=ok duration_ms={duration_ms:.2f}")
+        return
+
+    code = result.meta.get("code", "unknown")
+    logger.error(f"[tool] done call_id={tool_id} name={tool_name} status=error duration_ms={duration_ms:.2f} code={code}")
+
+
 def check_tool_access(
     tool_name: str,
     tool_input: ToolInput,
@@ -196,4 +248,15 @@ def run_tool(
     if not access.allowed:
         return ToolRun(access.result)
 
-    return execute_tool(tool_name, tool_input)
+    call_id = next_tool_call_id()
+    log_tool_start(call_id, tool_name, tool_input)
+    start = time.perf_counter()
+    tool_run = execute_tool(tool_name, tool_input)
+
+    result = tool_run.result
+
+    end = time.perf_counter()
+    duration = (end - start) * 1000
+    log_tool_done(call_id, tool_name, result, duration)
+
+    return tool_run

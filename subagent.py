@@ -66,7 +66,6 @@ def run_subagent(task: str) -> Result:
             ).result
 
             output_text = output.to_json()
-            logger.info(output_text)
 
             tool_results.append(
                 {
