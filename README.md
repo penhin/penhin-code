@@ -9,15 +9,18 @@
 - 一个 CLI 循环
 - 一条真实 LLM 调用路径
 - 一组结构化工具
-- todo、task status、skills、subagent、compact 和 transcript 的最小 harness 能力
+- 默认恢复最近会话，也可显式新开会话
+- todo、task status、skills、subagent、compact、transcript 和工具观测日志的最小 harness 能力
 
 ### 项目结构
 
 ```text
-main.py              CLI 入口和 agent loop
-runtime.py           LLM client、模型配置和 usage 打印
+main.py              CLI 入口、会话恢复和交互循环
+runtime.py           LLM client、模型配置、logging 配置和 usage 打印
+tool_runtime.py      工具权限、审批、执行和观测日志
 tools.py             工具 schema、工具 handler、文件/命令工具实现
 result.py            统一的工具返回结果对象
+atomic_io.py         内部状态文件的原子写入和 JSON/JSONL helper
 todo.py              todo 工具和持久化状态逻辑
 task.py              当前主任务状态机
 skills.py            skills 描述加载和完整 skill 内容读取
@@ -77,6 +80,18 @@ cp .env.example .env
 python main.py
 ```
 
+默认会尝试恢复 `.transcripts/` 里的最近会话。需要干净开始时：
+
+```bash
+python main.py --new
+```
+
+一次性执行任务：
+
+```bash
+python main.py --once "summarize this project"
+```
+
 可以输入：
 
 ```text
@@ -85,7 +100,7 @@ list files in this directory
 
 ### 预期结果
 
-你会看到 `penhin >>` 提示符。输入任务后，模型会按需调用工具，终端会打印工具名和结构化结果，最后模型给出文本回答。
+你会看到 `penhin >>` 提示符。启动时会显示当前 session 是恢复还是新建；输入任务后，模型会按需调用工具，终端会打印工具名、call id、输入摘要、耗时和结果规模，最后模型给出文本回答。
 
 ### 测试
 
@@ -93,7 +108,7 @@ list files in this directory
 .venv/bin/python tests/test_smoke.py
 ```
 
-测试不需要真实 LLM API，会覆盖工具注册、todo、task status、transcript 和 compact 的离线行为。
+测试不需要真实 LLM API，会覆盖工具注册、IO helper、todo、task status、transcript、session resume、tool runtime 日志和 compact 的离线行为。
 
 ---
 
@@ -106,15 +121,18 @@ The current version includes:
 - one CLI loop
 - one real LLM call path
 - a small set of structured tools
-- minimal harness capabilities for todo, task status, skills, subagents, compaction, and transcripts
+- default latest-session resume, with an explicit new-session flag
+- minimal harness capabilities for todo, task status, skills, subagents, compaction, transcripts, and tool observability
 
 ### Project Structure
 
 ```text
-main.py              CLI entrypoint and agent loop
-runtime.py           LLM client, model config, and usage printing
+main.py              CLI entrypoint, session resume, and interactive loop
+runtime.py           LLM client, model config, logging setup, and usage printing
+tool_runtime.py      tool policy, approval, execution, and observability logs
 tools.py             tool schemas, tool handlers, file/command tools
 result.py            shared tool result object
+atomic_io.py         atomic writes and JSON/JSONL helpers for internal state
 todo.py              todo tool and persistent todo state
 task.py              current high-level task state machine
 skills.py            skill description loader and full skill reader
@@ -174,6 +192,18 @@ Then edit `.env` and set `ANTHROPIC_API_KEY` and `MODEL_ID`.
 python main.py
 ```
 
+By default, the CLI tries to resume the latest session from `.transcripts/`. To start clean:
+
+```bash
+python main.py --new
+```
+
+To run one task and exit:
+
+```bash
+python main.py --once "summarize this project"
+```
+
 Try:
 
 ```text
@@ -182,7 +212,7 @@ list files in this directory
 
 ### Expected Result
 
-You should see the `penhin >>` prompt. After you enter a task, the model may call tools, the terminal will print the tool name and structured result, and then the model will answer in text.
+You should see the `penhin >>` prompt. Startup logs show whether the session was resumed or created fresh. After you enter a task, the model may call tools; the terminal logs tool name, call id, input summary, duration, and result size before the model answers in text.
 
 ### Testing
 
@@ -190,4 +220,4 @@ You should see the `penhin >>` prompt. After you enter a task, the model may cal
 .venv/bin/python tests/test_smoke.py
 ```
 
-The tests do not require a real LLM API. They cover offline behavior for tool registration, todo, task status, transcripts, and compaction.
+The tests do not require a real LLM API. They cover offline behavior for tool registration, IO helpers, todo, task status, transcripts, session resume, tool runtime logs, and compaction.

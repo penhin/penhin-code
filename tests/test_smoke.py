@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import agent
 import atomic_io
 import compact
+import main as main_module
 import tool_runtime
 import transcript
 import tools
@@ -772,6 +773,34 @@ def test_transcript_read_rejects_unsafe_paths() -> None:
             assert "escapes transcript directory" in str(error)
 
 
+def test_load_initial_messages_new_session_flag() -> None:
+    assert main_module.load_initial_messages(resume=False) == []
+
+
+def test_load_initial_messages_without_history() -> None:
+    original_transcripts = main_module.transcripts
+    with tempfile.TemporaryDirectory() as tmpdir:
+        try:
+            main_module.transcripts = transcript.TranscriptStore(Path(tmpdir))
+            assert main_module.load_initial_messages(resume=True) == []
+        finally:
+            main_module.transcripts = original_transcripts
+
+
+def test_load_initial_messages_resumes_latest_transcript() -> None:
+    original_transcripts = main_module.transcripts
+    with tempfile.TemporaryDirectory() as tmpdir:
+        try:
+            store = transcript.TranscriptStore(Path(tmpdir))
+            messages = [{"role": "user", "content": "hello"}]
+            store.save(messages)
+            main_module.transcripts = store
+
+            assert main_module.load_initial_messages(resume=True) == messages
+        finally:
+            main_module.transcripts = original_transcripts
+
+
 def test_auto_compact_falls_back_when_summary_fails() -> None:
     class FailingRuntime:
         def call_llm_once(self, **kwargs):
@@ -836,6 +865,9 @@ def main() -> None:
     test_compact_source_text_keeps_head_and_tail()
     test_save_transcript_writes_jsonl()
     test_transcript_read_rejects_unsafe_paths()
+    test_load_initial_messages_new_session_flag()
+    test_load_initial_messages_without_history()
+    test_load_initial_messages_resumes_latest_transcript()
     test_auto_compact_falls_back_when_summary_fails()
     print("ok")
 
