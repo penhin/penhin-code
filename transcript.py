@@ -1,8 +1,9 @@
-import json
 import time
 from typing import Any
 
 from pathlib import Path
+
+from atomic_io import read_jsonl, write_jsonl_atomic
 
 
 TRANSCRIPT_DIR = Path(".transcripts")
@@ -30,10 +31,10 @@ class TranscriptStore:
     def save(self, messages: list[Any]) -> Path:
         self.transcript_dir.mkdir(exist_ok=True)
         transcript_path = self.transcript_dir / f"transcript_{time.time_ns()}.jsonl"
-        with open(transcript_path, "w") as f:
-            for msg in messages:
-                f.write(json.dumps(serialize_for_json(msg), ensure_ascii=False) + "\n")
-
+        write_jsonl_atomic(
+            transcript_path,
+            [serialize_for_json(msg) for msg in messages],
+        )
         return transcript_path
     
     def latest(self) -> Path | None:
@@ -51,11 +52,7 @@ class TranscriptStore:
         if resolved.suffix != ".jsonl":
             raise ValueError(f"Transcript path must be a .jsonl file: {path}")
 
-        return [
-            json.loads(line)
-            for line in path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
+        return read_jsonl(resolved)
 
 
 transcripts = TranscriptStore(TRANSCRIPT_DIR)

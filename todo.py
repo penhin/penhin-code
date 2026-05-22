@@ -1,7 +1,7 @@
-import json
 from typing import Any
 from pathlib import Path
 
+from atomic_io import read_json, write_json_atomic
 from result import Result
 
 
@@ -17,13 +17,10 @@ class TodoManager:
         if not self.todo_file.exists():
             self.todos = []
             return
-        self.todos = json.loads(self.todo_file.read_text("utf-8"))
+        self.todos = read_json(self.todo_file)
 
     def save(self) -> None:
-        self.todo_file.write_text(
-            json.dumps(self.todos, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        write_json_atomic(self.todo_file, self.todos)
 
     def format(self) -> str:
         if not self.todos:

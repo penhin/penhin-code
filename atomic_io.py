@@ -22,3 +22,19 @@ def read_json(path: Path) -> Any:
 
 def write_json_atomic(path: Path, data: Any) -> None:
     atomic_write_text(path, json.dumps(data, ensure_ascii=False, indent=2))
+
+
+def read_jsonl(path: Path) -> list[Any]:
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def write_jsonl_atomic(path: Path, items: list[Any]) -> None:
+    lines = [
+        json.dumps(item, ensure_ascii=False)
+        for item in items
+    ]
+    atomic_write_text(path, "\n".join(lines) + ("\n" if lines else ""))

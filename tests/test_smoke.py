@@ -132,6 +132,16 @@ def test_atomic_json_round_trip() -> None:
         assert atomic_io.read_json(path) == data
 
 
+def test_atomic_jsonl_round_trip() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = Path(tmpdir) / "data.jsonl"
+        items = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "hi"}]
+
+        atomic_io.write_jsonl_atomic(path, items)
+
+        assert atomic_io.read_jsonl(path) == items
+
+
 def test_todo_flow() -> None:
     original = TODO_FILE.read_text(encoding="utf-8") if TODO_FILE.exists() else None
     try:
@@ -798,6 +808,7 @@ def main() -> None:
     test_bash_blocks_dangerous_commands()
     test_atomic_write_cleans_temp_file_on_replace_failure()
     test_atomic_json_round_trip()
+    test_atomic_jsonl_round_trip()
     test_todo_flow()
     test_todo_tool_handlers()
     test_workspace_tool()
