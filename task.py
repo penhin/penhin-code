@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from atomic_io import read_json, write_json_atomic
 from result import Result
 
 
@@ -80,31 +81,24 @@ class TaskStatusManager:
 
     def _save(self, task: TaskStatus) -> None:
         path = self._task_path(task.id)
-        temp_path = path.with_name(f".{path.name}.{threading.get_ident()}.tmp")
-        temp_path.write_text(task.to_json(), encoding="utf-8")
-        temp_path.replace(path)
+        write_json_atomic(path, task.to_dict())
 
     def _load(self, task_id: int) -> TaskStatus:
         path = self._task_path(task_id)
         if not path.exists():
             raise FileNotFoundError(f"Task {task_id} not found")
-        return TaskStatus.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        return TaskStatus.from_dict(read_json(path))
 
     def _set_current_id(self, task_id: int | None) -> None:
         if task_id is None:
             self.current_file.unlink(missing_ok=True)
             return
-        temp_path = self.current_file.with_name(f".{CURRENT_FILE}.{threading.get_ident()}.tmp")
-        temp_path.write_text(
-            json.dumps({"current_id": task_id}, ensure_ascii=False, indent=2),
-            encoding="utf-8"
-        )
-        temp_path.replace(self.current_file)
+        write_json_atomic(self.current_file, {"current_id": task_id})
 
     def _get_current_id(self) -> int | None:
         if not self.current_file.exists():
             return None
-        data = json.loads(self.current_file.read_text(encoding="utf-8"))
+        data = read_json(self.current_file)
         current_id = data.get("current_id")
         return int(current_id) if current_id is not None else None
 

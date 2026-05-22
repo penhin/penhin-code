@@ -83,5 +83,13 @@ class Result:
             "stderr": self._truncate(self.stderr),
         }
 
+    def summary(self) -> dict[str, Any]:
+        return {
+            "stdout_chars": len(self.stdout),
+            "stderr_chars": len(self.stderr),
+            "data_type": type(self.data).__name__ if self.data is not None else "none",
+            "meta_keys": sorted(self.meta),
+        }
+
     def to_json(self) -> str:
         return json.dumps(self._to_dict(), ensure_ascii=False, indent=2)

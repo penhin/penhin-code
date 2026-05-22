@@ -13,6 +13,7 @@ from tools import TOOL_SPECS, ToolCategory, ToolInput
 
 
 logger = logging.getLogger("penhin.tool")
+logger.addHandler(logging.NullHandler())
 
 _TOOL_CALL_COUNTER = itertools.count(1)
 
@@ -175,13 +176,36 @@ def log_tool_start(tool_id: str, tool_name: str, tool_input: ToolInput) -> None:
     logger.info(f"[tool] start call_id={tool_id} name={tool_name} input={input_summary(tool_input)}")
 
 
+def format_result_summary(result: Result) -> str:
+    summary = result.summary()
+    return " ".join(
+        f"{key}={json.dumps(value, ensure_ascii=False, sort_keys=True)}"
+        for key, value in summary.items()
+    )
+
+
 def log_tool_done(tool_id: str, tool_name: str, result: Result, duration_ms: float) -> None:
+    result_summary = format_result_summary(result)
     if result.ok:
-        logger.info(f"[tool] done call_id={tool_id} name={tool_name} status=ok duration_ms={duration_ms:.2f}")
+        logger.info(
+            f"[tool] done call_id={tool_id} name={tool_name} "
+            f"status=ok duration_ms={duration_ms:.2f} {result_summary}"
+        )
         return
 
     code = result.meta.get("code", "unknown")
-    logger.error(f"[tool] done call_id={tool_id} name={tool_name} status=error duration_ms={duration_ms:.2f} code={code}")
+    logger.error(
+        f"[tool] done call_id={tool_id} name={tool_name} "
+        f"status=error duration_ms={duration_ms:.2f} code={code} {result_summary}"
+    )
+
+
+def log_tool_blocked(tool_id: str, tool_name: str, tool_input: ToolInput, result: Result) -> None:
+    code = result.meta.get("code", "unknown")
+    logger.warning(
+        f"[tool] blocked call_id={tool_id} name={tool_name} "
+        f"input={input_summary(tool_input)} code={code} {format_result_summary(result)}"
+    )
 
 
 def check_tool_access(
@@ -240,6 +264,10 @@ def run_tool(
     approval = approval or default_approval_flow(policy)
 
     access = check_tool_access(tool_name, tool_input, policy, approval)
+    if access.result is not None:
+        call_id = next_tool_call_id()
+        log_tool_blocked(call_id, tool_name, tool_input, access.result)
+
     if access.approval_required:
         return ToolRun(
             result=access.result,

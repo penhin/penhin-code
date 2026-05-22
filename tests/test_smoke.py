@@ -10,6 +10,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import agent
+import atomic_io
 import compact
 import tool_runtime
 import transcript
@@ -60,6 +61,19 @@ def test_result_json() -> None:
     assert failed_data["meta"]["code"] == "test_error"
 
 
+def test_result_summary_reports_sizes_without_content() -> None:
+    result = Result.success("secret output", data={"value": 1}, cached=True)
+    summary = result.summary()
+
+    assert summary == {
+        "stdout_chars": len("secret output"),
+        "stderr_chars": 0,
+        "data_type": "dict",
+        "meta_keys": ["cached"],
+    }
+    assert "secret output" not in json.dumps(summary)
+
+
 def test_list_ignores_internal_files() -> None:
     output = run_list(".").stdout
     paths = output.splitlines()
@@ -98,7 +112,7 @@ def test_atomic_write_cleans_temp_file_on_replace_failure() -> None:
 
         with patch.object(Path, "replace", side_effect=OSError("replace failed")):
             try:
-                tools.atomic_write_text(path, "content")
+                atomic_io.atomic_write_text(path, "content")
             except OSError:
                 pass
             else:
@@ -106,6 +120,16 @@ def test_atomic_write_cleans_temp_file_on_replace_failure() -> None:
 
         assert not temp_path.exists()
         assert not path.exists()
+
+
+def test_atomic_json_round_trip() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = Path(tmpdir) / "data.json"
+        data = {"name": "penhin", "items": [1, 2]}
+
+        atomic_io.write_json_atomic(path, data)
+
+        assert atomic_io.read_json(path) == data
 
 
 def test_todo_flow() -> None:
@@ -309,6 +333,10 @@ def test_tool_runtime_logs_result_status() -> None:
     assert "status=error" in output
     assert "duration_ms=" in output
     assert "code=tool_error" in output
+    assert "stdout_chars=0" in output
+    assert "stderr_chars=6" in output
+    assert 'data_type="none"' in output
+    assert 'meta_keys=["code"]' in output
 
 
 def test_tool_runtime_logs_input_summary() -> None:
@@ -343,6 +371,39 @@ def test_tool_runtime_logs_input_summary() -> None:
     assert "[tool] start call_id=tool-" in output
     assert "input=content:sha256:" in output
     assert "path:agent.py" in output
+    assert "secret content" not in output
+
+
+def test_tool_runtime_logs_blocked_access() -> None:
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    logger = logging.getLogger("penhin.tool")
+    original_level = logger.level
+    original_propagate = logger.propagate
+
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    logger.addHandler(handler)
+    try:
+        result = run_tool(
+            "write",
+            {"path": "agent.py", "content": "secret content"},
+            PermissionPolicy(allow={"write"}, deny=set()),
+            ApprovalFlow.require_confirmation({"write"}),
+        )
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(original_level)
+        logger.propagate = original_propagate
+
+    output = stream.getvalue()
+    assert result.approval_required is True
+    assert result.result.exit_code == 1
+    assert "[tool] blocked call_id=tool-" in output
+    assert "name=write" in output
+    assert "code=tool_approval_required" in output
+    assert "path:agent.py" in output
+    assert "content:sha256:" in output
     assert "secret content" not in output
 
 
@@ -401,6 +462,41 @@ def test_task_status_manager_flow() -> None:
     assert completed.blocked_by == []
     assert completed.note == "done"
     assert cleared is None
+
+
+def test_task_status_write_cleans_temp_file_on_failure() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        manager = TaskStatusManager(Path(tmpdir))
+        task = manager.start("build task system")
+        path = manager._task_path(task.id)
+        temp_path = path.with_name(f".{path.name}.{threading.get_ident()}.tmp")
+        task.note = "updated"
+
+        with patch.object(Path, "replace", side_effect=OSError("replace failed")):
+            try:
+                manager._save(task)
+            except OSError:
+                pass
+            else:
+                raise AssertionError("expected replace failure")
+
+        assert not temp_path.exists()
+
+
+def test_task_status_current_write_cleans_temp_file_on_failure() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        manager = TaskStatusManager(Path(tmpdir))
+        temp_path = manager.current_file.with_name(f".current.json.{threading.get_ident()}.tmp")
+
+        with patch.object(Path, "replace", side_effect=OSError("replace failed")):
+            try:
+                manager._set_current_id(1)
+            except OSError:
+                pass
+            else:
+                raise AssertionError("expected replace failure")
+
+        assert not temp_path.exists()
 
 
 def test_task_status_manager_list_and_switch() -> None:
@@ -696,10 +792,12 @@ def test_auto_compact_falls_back_when_summary_fails() -> None:
 
 def main() -> None:
     test_result_json()
+    test_result_summary_reports_sizes_without_content()
     test_list_ignores_internal_files()
     test_list_ignored_path_returns_hint()
     test_bash_blocks_dangerous_commands()
     test_atomic_write_cleans_temp_file_on_replace_failure()
+    test_atomic_json_round_trip()
     test_todo_flow()
     test_todo_tool_handlers()
     test_workspace_tool()
@@ -712,8 +810,11 @@ def main() -> None:
     test_tool_runtime_input_summary_hides_sensitive_values()
     test_tool_runtime_logs_result_status()
     test_tool_runtime_logs_input_summary()
+    test_tool_runtime_logs_blocked_access()
     test_task_status_tool_registered()
     test_task_status_manager_flow()
+    test_task_status_write_cleans_temp_file_on_failure()
+    test_task_status_current_write_cleans_temp_file_on_failure()
     test_task_status_manager_list_and_switch()
     test_background_task_manager_flow()
     test_background_start_rejects_nested_background_tasks()

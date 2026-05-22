@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 from dataclasses import dataclass, field
 
+from atomic_io import atomic_write_text
 from result import Result
 from todo import run_todo
 from skills import load_skill
@@ -136,16 +137,6 @@ def safe_path(path: str) -> Path:
         raise ValueError(f"Path is inside blocked directory: {path}")
 
     return resolved
-
-
-def atomic_write_text(path: Path, content: str) -> None:
-    temp_path = path.with_name(f".{path.name}.{threading.get_ident()}.tmp")
-    try:
-        temp_path.write_text(content, encoding="utf-8")
-        temp_path.replace(path)
-    except Exception:
-        temp_path.unlink(missing_ok=True)
-        raise
 
 
 def ignored_path_part(path: Path) -> str | None:
