@@ -1,12 +1,18 @@
+from __future__ import annotations
+
 import time
+import re
+import json
 from typing import Any
 
 from pathlib import Path
+from dataclasses import dataclass
 
 from atomic_io import read_jsonl, write_jsonl_atomic
 
 
 TRANSCRIPT_DIR = Path(".transcripts")
+COMPACT_TRANSCRIPT_RE = re.compile(r"^\[Conversation compressed\. Transcript: (?P<path>[^\]]+)\]")
 
 
 def serialize_for_json(value: Any) -> Any:
@@ -24,6 +30,122 @@ def serialize_for_json(value: Any) -> Any:
     }
 
 
+@dataclass(frozen=True)
+class SessionSummary:
+    id: str
+    path: Path
+    updated_at: float
+    message_count: int
+    first_user: str
+
+
+@dataclass(frozen=True)
+class SessionInspect:
+    id: str
+    path: Path
+    message_count: int
+    role_counts: dict[str, int]
+    first_user: str
+    last_assistant: str
+
+
+def summarize_content(content: Any, limit: int = 80) -> str:
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, list):
+        text_parts = []
+        for item in content:
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                text_parts.append(item["text"])
+            elif isinstance(item, str):
+                text_parts.append(item)
+        text = " ".join(text_parts)
+    else:
+        text = str(content) if content is not None else ""
+
+    collapsed = " ".join(text.split())
+    if len(collapsed) <= limit:
+        return collapsed
+    return collapsed[: limit - 3] + "..."
+
+
+def is_synthetic_user_message(message: dict[str, Any]) -> bool:
+    content = message.get("content")
+
+    if isinstance(content, str):
+        return content.startswith("[Conversation compressed.")
+
+    if isinstance(content, list):
+        return any(
+            isinstance(item, dict) and item.get("type") == "tool_result"
+            for item in content
+        )
+
+    return False
+
+
+def first_message_summary(messages: list[dict[str, Any]], role: str) -> str:
+    for message in messages:
+        if role == "user" and is_synthetic_user_message(message):
+            continue
+        if message.get("role") == role:
+            return summarize_content(message.get("content"))    
+    return ""
+
+
+def last_message_summary(messages: list[dict[str, Any]], role: str) -> str:
+    for message in reversed(messages):
+        if message.get("role") == role:
+            return summarize_content(message.get("content"))
+    return ""
+
+
+def session_id_from_path(path: Path) -> str:
+    if path.name.startswith("transcript_"):
+        return path.stem.removeprefix("transcript_")
+    return path.stem
+
+
+def normalize_session_ref(session_ref: str) -> str:
+    name = Path(session_ref).name
+    if name.endswith(".jsonl"):
+        name = Path(name).stem
+    if name.startswith("transcript_"):
+        name = name.removeprefix("transcript_")
+    return name
+
+
+def compact_transcript_ref(message: dict[str, Any]) -> str | None:
+    content = message.get("content")
+    if not isinstance(content, str):
+        return None
+
+    match = COMPACT_TRANSCRIPT_RE.match(content)
+    if match is None:
+        return None
+    return match.group("path")
+
+
+def serialized_message(message: Any) -> str:
+    return json_dumps_for_compare(serialize_for_json(message))
+
+
+def json_dumps_for_compare(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def merge_message_history(base: list[Any], tail: list[Any]) -> list[Any]:
+    base_keys = [serialized_message(message) for message in base]
+    tail_keys = [serialized_message(message) for message in tail]
+    max_overlap = min(len(base_keys), len(tail_keys))
+
+    for overlap in range(max_overlap, 0, -1):
+        if base_keys[-overlap:] == tail_keys[:overlap]:
+            return base + tail[overlap:]
+
+    return base + tail
+
+
 class TranscriptStore:
     def __init__(self, transcript_dir: Path):
         self.transcript_dir = transcript_dir
@@ -31,11 +153,29 @@ class TranscriptStore:
     def save(self, messages: list[Any]) -> Path:
         self.transcript_dir.mkdir(exist_ok=True)
         transcript_path = self.transcript_dir / f"transcript_{time.time_ns()}.jsonl"
+        messages = self.expand_compacted_history(messages)
         write_jsonl_atomic(
             transcript_path,
             [serialize_for_json(msg) for msg in messages],
         )
         return transcript_path
+
+    def expand_compacted_history(self, messages: list[Any]) -> list[Any]:
+        if not messages:
+            return messages
+        if not isinstance(messages[0], dict):
+            return messages
+
+        previous_ref = compact_transcript_ref(messages[0])
+        if previous_ref is None:
+            return messages
+
+        try:
+            previous_messages = self.read(Path(previous_ref))
+        except Exception:
+            return messages
+
+        return merge_message_history(previous_messages, messages[1:])
     
     def latest(self) -> Path | None:
         if not self.transcript_dir.exists():
@@ -43,6 +183,82 @@ class TranscriptStore:
 
         paths = sorted(self.transcript_dir.glob("transcript_*.jsonl"))
         return paths[-1] if paths else None
+
+    def list(self) -> list[SessionSummary]:
+        if not self.transcript_dir.exists():
+            return []
+
+        summaries = []
+        for path in sorted(self.transcript_dir.glob("transcript_*.jsonl")):
+            try:
+                messages = self.read(path)
+            except Exception:
+                continue
+
+            summaries.append(
+                SessionSummary(
+                    id=session_id_from_path(path),
+                    path=path,
+                    updated_at=path.stat().st_mtime,
+                    message_count=len(messages),
+                    first_user=first_message_summary(messages, "user"),
+                )
+            )
+        return summaries
+
+    def inspect(self, session_ref: str) -> SessionInspect:
+        path = self.resolve_session_ref(session_ref)
+        messages = self.read(path)
+        role_counts: dict[str, int] = {}
+        for message in messages:
+            role = str(message.get("role", "unknown"))
+            role_counts[role] = role_counts.get(role, 0) + 1
+
+        return SessionInspect(
+            id=session_id_from_path(path),
+            path=path,
+            message_count=len(messages),
+            role_counts=role_counts,
+            first_user=first_message_summary(messages, "user"),
+            last_assistant=last_message_summary(messages, "assistant"),
+        )
+
+    def resolve_session_ref(self, session_ref: str) -> Path:
+        raw_path = Path(session_ref)
+        candidates = [
+            raw_path,
+            self.transcript_dir / raw_path,
+            self.transcript_dir / f"transcript_{session_ref}.jsonl",
+        ]
+
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+
+        prefix_match = self.resolve_session_prefix(session_ref)
+        if prefix_match is not None:
+            return prefix_match
+
+        raise FileNotFoundError(f"Session not found: {session_ref}")
+
+    def resolve_session_prefix(self, session_ref: str) -> Path | None:
+        if not self.transcript_dir.exists():
+            return None
+
+        normalized = normalize_session_ref(session_ref)
+        if not normalized:
+            return None
+
+        matches = [
+            path
+            for path in self.transcript_dir.glob("transcript_*.jsonl")
+            if session_id_from_path(path).startswith(normalized)
+        ]
+        if not matches:
+            return None
+
+        matches.sort(key=lambda path: (len(session_id_from_path(path)), path.stat().st_mtime), reverse=True)
+        return matches[0]
 
     def read(self, path: Path) -> list[dict[str, Any]]:
         resolved = path.resolve()
