@@ -27,7 +27,7 @@ skills.py            skills 描述加载和完整 skill 内容读取
 subagent.py          子 agent loop
 compact.py           micro / auto compact 逻辑
 transcript.py        transcript 保存和读取
-tests/test_smoke.py  离线 smoke 测试
+tests/               按领域拆分的离线测试，test_smoke.py 是总入口
 requirements.txt     Python 依赖
 .env.example         环境变量示例
 ```
@@ -108,7 +108,7 @@ list files in this directory
 .venv/bin/python tests/test_smoke.py
 ```
 
-测试不需要真实 LLM API，会覆盖工具注册、IO helper、todo、task status、transcript、session resume、tool runtime 日志和 compact 的离线行为。
+测试不需要真实 LLM API，会覆盖工具注册、IO helper、todo、task status、transcript、session resume、tool runtime 日志和 compact 的离线行为。`tests/test_smoke.py` 会调用拆分后的各领域测试。
 
 ---
 
@@ -139,7 +139,7 @@ skills.py            skill description loader and full skill reader
 subagent.py          subagent loop
 compact.py           micro / auto compaction logic
 transcript.py        transcript save/read support
-tests/test_smoke.py  offline smoke tests
+tests/               split offline tests; test_smoke.py is the aggregate runner
 requirements.txt     Python dependencies
 .env.example         environment variable example
 ```
@@ -220,4 +220,4 @@ You should see the `penhin >>` prompt. Startup logs show whether the session was
 .venv/bin/python tests/test_smoke.py
 ```
 
-The tests do not require a real LLM API. They cover offline behavior for tool registration, IO helpers, todo, task status, transcripts, session resume, tool runtime logs, and compaction.
+The tests do not require a real LLM API. They cover offline behavior for tool registration, IO helpers, todo, task status, transcripts, session resume, tool runtime logs, and compaction. `tests/test_smoke.py` runs the split domain tests.
