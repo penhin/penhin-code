@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 
 import sys
-import logging
 import time
+import logging
+import argparse
 
+from pathlib import Path
 from runtime import init_runtime
 from transcript import transcripts
 from agent import agent_loop, print_last_text, run_once
@@ -13,27 +15,41 @@ from tool_runtime import ApprovalFlow, PARENT_AGENT_POLICY
 logger = logging.getLogger("penhin.main")
 
 
-def has_flag(*names: str) -> bool:
-    return any(name in sys.argv[1:] for name in names)
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    
+    parser.add_argument("--once", "-o", nargs="+")
+    parser.add_argument("--sessions", "-s", action="store_true")
+    parser.add_argument("--new", "-n", action="store_true")
+    parser.add_argument("--inspect-session", "-i")
+    parser.add_argument("--resume", "-r")
+    return parser.parse_args(argv)
 
 
 def main() -> None:
-    if len(sys.argv) >= 2 and sys.argv[1] in {"--sessions", "-s"}:
+    args = parse_args()
+
+    if args.sessions:
         print_session_list()
         return
 
-    if len(sys.argv) >= 3 and sys.argv[1] in {"--inspect-session", "-i"}:
-        print_session_inspect(sys.argv[2])
+    if args.inspect_session:
+        print_session_inspect(args.inspect_session)
         return
 
     init_runtime()
 
-    if len(sys.argv) >= 3 and sys.argv[1] in {"--once", "-o"}:
-        run_once(" ".join(sys.argv[2:]))
+    if args.once:
+        run_once(" ".join(args.once))
         return
+    
+    if args.new:
+        messages = load_initial_messages(resume=False)
+    elif args.resume:
+        messages = load_initial_messages(resume=True, session_ref=args.resume)
+    else:
+        messages = load_initial_messages(resume=True)
 
-    new_session = has_flag("--new", "-n")
-    messages = load_initial_messages(resume=not new_session)
     approval = ApprovalFlow.require_confirmation(PARENT_AGENT_POLICY.allow)
 
     while True:
@@ -52,17 +68,20 @@ def main() -> None:
         print_last_text(messages)
 
 
-def load_initial_messages(resume: bool) -> list[dict]:
+def load_initial_messages(resume: bool, session_ref: Path | str | None = None) -> list[dict]:
     if not resume:
         logger.info("[session] new reason=flag")
         return []
 
-    history_file = transcripts.latest()
-    if not history_file:
-        logger.info("[session] new reason=no_history")
-        return []
-
     try:
+        if session_ref is None:
+            history_file = transcripts.latest()
+            if history_file is None:
+                logger.info("[session] new reason=no_history")
+                return []
+        else:
+            history_file = transcripts.resolve_session_ref(str(session_ref))
+
         messages = transcripts.read(history_file)
         logger.info(f"[session] resumed {history_file}")
         return messages
@@ -73,19 +92,23 @@ def load_initial_messages(resume: bool) -> list[dict]:
 
 
 def print_session_list() -> None:
-    sessions = transcripts.list()
+    sessions = sorted(
+        transcripts.list(),
+        key=lambda session: session.updated_at,
+        reverse=True
+    )
     if not sessions:
         print("No sessions found.")
         return
 
-    print("id | updated | messages | first user")
+    print("id | updated | msgs | request")
     for session in sessions:
         updated = time.strftime(
             "%Y-%m-%d %H:%M:%S",
             time.localtime(session.updated_at),
         )
         first_user = session.first_user or "-"
-        print(f"{session.id} | {updated} | {session.message_count} | {first_user}")
+        print(f"{session.id[:12]} | {updated} | {session.message_count} | {first_user}")
 
 
 def print_session_inspect(session_ref: str) -> None:
