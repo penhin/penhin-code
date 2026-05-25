@@ -100,6 +100,30 @@ def test_save_session_messages_updates_existing_session() -> None:
         assert len(list(Path(tmpdir).glob("transcript_*.jsonl"))) == 1
 
 
+def test_print_session_list_marks_latest() -> None:
+    original_transcripts = main_module.transcripts
+    output = StringIO()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        try:
+            store = transcript.TranscriptStore(Path(tmpdir))
+            store.save([{"role": "user", "content": "first"}])
+            latest_path = store.save([{"role": "user", "content": "latest"}])
+            latest_id = transcript.session_id_from_path(latest_path)[:12]
+            main_module.transcripts = store
+
+            with contextlib.redirect_stdout(output):
+                main_module.print_session_list()
+        finally:
+            main_module.transcripts = original_transcripts
+
+    lines = output.getvalue().splitlines()
+    assert lines[0] == "mark | id | updated | msgs | request"
+    marked_lines = [line for line in lines[1:] if line.startswith("* | ")]
+    assert len(marked_lines) == 1
+    assert latest_id in marked_lines[0]
+
+
 def run_all() -> None:
     test_parse_session_args()
     test_parse_help_command()
@@ -109,6 +133,7 @@ def run_all() -> None:
     test_load_initial_messages_resumes_specific_session()
     test_load_initial_session_returns_resumed_path()
     test_save_session_messages_updates_existing_session()
+    test_print_session_list_marks_latest()
 
 
 if __name__ == "__main__":

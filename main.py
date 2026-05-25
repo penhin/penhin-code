@@ -83,14 +83,16 @@ def print_session_list() -> None:
         print("No sessions found.")
         return
 
-    print("id | updated | msgs | request")
+    latest_path = transcripts.latest()
+    print("mark | id | updated | msgs | request")
     for session in sessions:
         updated = time.strftime(
             "%Y-%m-%d %H:%M:%S",
             time.localtime(session.updated_at),
         )
         first_user = session.first_user or "-"
-        print(f"{session.id[:12]} | {updated} | {session.message_count} | {first_user}")
+        mark = "*" if latest_path is not None and session.path == latest_path else " "
+        print(f"{mark} | {session.id[:12]} | {updated} | {session.message_count} | {first_user}")
 
 
 def print_session_inspect(session_ref: str) -> None:
