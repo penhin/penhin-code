@@ -3,12 +3,16 @@ from __future__ import annotations
 import time
 import re
 import json
+import logging
 from typing import Any
 
 from pathlib import Path
 from dataclasses import dataclass
 
 from atomic_io import read_jsonl, write_jsonl_atomic
+
+
+logger = logging.getLogger("penhin.transcript")
 
 
 TRANSCRIPT_DIR = Path(".transcripts")
@@ -159,6 +163,15 @@ class TranscriptStore:
             [serialize_for_json(msg) for msg in messages],
         )
         return transcript_path
+    
+    def save_to(self, path: Path, messages: list[Any]) -> Path:
+        self.transcript_dir.mkdir(exist_ok=True)
+        messages = self.expand_compacted_history(messages)
+        write_jsonl_atomic(
+            path,
+            [serialize_for_json(msg) for msg in messages],
+        )
+        return path
 
     def expand_compacted_history(self, messages: list[Any]) -> list[Any]:
         if not messages:
@@ -177,12 +190,59 @@ class TranscriptStore:
 
         return merge_message_history(previous_messages, messages[1:])
     
+    def resolve_session_ref(self, session_ref: str) -> Path:
+        raw_path = Path(session_ref)
+        candidates = [
+            raw_path,
+            self.transcript_dir / raw_path,
+            self.transcript_dir / f"transcript_{session_ref}.jsonl",
+        ]
+
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+
+        prefix_match = self.resolve_session_prefix(session_ref)
+        if prefix_match is not None:
+            return prefix_match
+
+        raise FileNotFoundError(f"Session not found: {session_ref}")
+
+    def resolve_session_prefix(self, session_ref: str) -> Path | None:
+        if not self.transcript_dir.exists():
+            return None
+
+        normalized = normalize_session_ref(session_ref)
+        if not normalized:
+            return None
+
+        matches = [
+            path
+            for path in self.transcript_dir.glob("transcript_*.jsonl")
+            if session_id_from_path(path).startswith(normalized)
+        ]
+        if not matches:
+            return None
+
+        matches.sort(key=lambda path: (len(session_id_from_path(path)), path.stat().st_mtime), reverse=True)
+        return matches[0]
+    
     def latest(self) -> Path | None:
         if not self.transcript_dir.exists():
             return None
 
         paths = sorted(self.transcript_dir.glob("transcript_*.jsonl"))
         return paths[-1] if paths else None
+    
+    def read(self, path: Path) -> list[dict[str, Any]]:
+        resolved = path.resolve()
+        base = self.transcript_dir.resolve()
+        if not resolved.is_relative_to(base):
+            raise ValueError(f"Transcript path escapes transcript directory: {path}")
+        if resolved.suffix != ".jsonl":
+            raise ValueError(f"Transcript path must be a .jsonl file: {path}")
+
+        return read_jsonl(resolved)
 
     def list(self) -> list[SessionSummary]:
         if not self.transcript_dir.exists():
@@ -222,53 +282,37 @@ class TranscriptStore:
             first_user=first_message_summary(messages, "user"),
             last_assistant=last_message_summary(messages, "assistant"),
         )
+    
+    def load_session(
+        self,
+        resume: bool,
+        session_ref: Path | str | None = None,
+    ) -> tuple[list[dict], Path | None]:
+        if not resume:
+            logger.info("[session] new reason=flag")
+            return [], None
 
-    def resolve_session_ref(self, session_ref: str) -> Path:
-        raw_path = Path(session_ref)
-        candidates = [
-            raw_path,
-            self.transcript_dir / raw_path,
-            self.transcript_dir / f"transcript_{session_ref}.jsonl",
-        ]
+        try:
+            if session_ref is None:
+                history_file = self.latest()
+                if history_file is None:
+                    logger.info("[session] new reason=no_history")
+                    return [], None
+            else:
+                history_file = self.resolve_session_ref(str(session_ref))
 
-        for candidate in candidates:
-            if candidate.exists():
-                return candidate
-
-        prefix_match = self.resolve_session_prefix(session_ref)
-        if prefix_match is not None:
-            return prefix_match
-
-        raise FileNotFoundError(f"Session not found: {session_ref}")
-
-    def resolve_session_prefix(self, session_ref: str) -> Path | None:
-        if not self.transcript_dir.exists():
-            return None
-
-        normalized = normalize_session_ref(session_ref)
-        if not normalized:
-            return None
-
-        matches = [
-            path
-            for path in self.transcript_dir.glob("transcript_*.jsonl")
-            if session_id_from_path(path).startswith(normalized)
-        ]
-        if not matches:
-            return None
-
-        matches.sort(key=lambda path: (len(session_id_from_path(path)), path.stat().st_mtime), reverse=True)
-        return matches[0]
-
-    def read(self, path: Path) -> list[dict[str, Any]]:
-        resolved = path.resolve()
-        base = self.transcript_dir.resolve()
-        if not resolved.is_relative_to(base):
-            raise ValueError(f"Transcript path escapes transcript directory: {path}")
-        if resolved.suffix != ".jsonl":
-            raise ValueError(f"Transcript path must be a .jsonl file: {path}")
-
-        return read_jsonl(resolved)
+            messages = self.read(history_file)
+            logger.info(f"[session] resumed {history_file}")
+            return messages, history_file
+        except Exception as error:
+            logger.warning(f"[session] resume failed: {error}")
+            logger.info("[session] new reason=resume_failed")
+            return [], None
+        
+    def save_session(self, session_path: Path | None, messages: list[dict]) -> Path:
+        if session_path is None:
+            return self.save(messages)
+        return self.save_to(session_path, messages)
 
 
 transcripts = TranscriptStore(TRANSCRIPT_DIR)
