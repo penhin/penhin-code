@@ -12,7 +12,7 @@ from result import Result
 from tools import TOOL_SPECS, ToolCategory, ToolInput
 
 
-logger = logging.getLogger("penhin.tool")
+logger = logging.getLogger("penhin.tool_runtime")
 logger.addHandler(logging.NullHandler())
 
 _TOOL_CALL_COUNTER = itertools.count(1)
@@ -156,6 +156,12 @@ def short_hash(value: object) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
 
 
+def value_size(value: object) -> int:
+    if isinstance(value, str):
+        return len(value)
+    return len(json.dumps(value, ensure_ascii=False, sort_keys=True))
+
+
 def input_summary(tool_input: ToolInput) -> str:
     if not tool_input:
         return "<none>"
@@ -164,12 +170,13 @@ def input_summary(tool_input: ToolInput) -> str:
     for key in sorted(tool_input):
         value = tool_input[key]
         if key in SAFE_INPUT_FIELDS:
-            parts.append(f"{key}:{value}")
+            parts.append(f"{key}={json.dumps(value, ensure_ascii=False)}")
         elif key in HASHED_INPUT_FIELDS:
-            parts.append(f"{key}:sha256:{short_hash(value)}")
+            parts.append(f"{key}_sha={json.dumps(short_hash(value))}")
+            parts.append(f"{key}_chars={value_size(value)}")
         else:
-            parts.append(f"{key}:<hidden>")
-    return ",".join(parts)
+            parts.append(f"{key}=<hidden:{type(value).__name__}>")
+    return " ".join(parts)
 
 
 def log_tool_start(tool_id: str, tool_name: str, tool_input: ToolInput) -> None:
@@ -184,26 +191,39 @@ def format_result_summary(result: Result) -> str:
     )
 
 
-def log_tool_done(tool_id: str, tool_name: str, result: Result, duration_ms: float) -> None:
+def log_tool_done(tool_id: str, tool_name: str, tool_run: ToolRun, duration_ms: float) -> None:
+    result = tool_run.result
     result_summary = format_result_summary(result)
+    flags = (
+        f"manual_compact={json.dumps(tool_run.manual_compact)} "
+        f"approval_required={json.dumps(tool_run.approval_required)}"
+    )
     if result.ok:
         logger.info(
             f"[tool] done call_id={tool_id} name={tool_name} "
-            f"status=ok duration_ms={duration_ms:.2f} {result_summary}"
+            f"status=ok duration_ms={duration_ms:.2f} {flags} {result_summary}"
         )
         return
 
     code = result.meta.get("code", "unknown")
     logger.error(
         f"[tool] done call_id={tool_id} name={tool_name} "
-        f"status=error duration_ms={duration_ms:.2f} code={code} {result_summary}"
+        f"status=error duration_ms={duration_ms:.2f} code={code} {flags} {result_summary}"
     )
 
 
-def log_tool_blocked(tool_id: str, tool_name: str, tool_input: ToolInput, result: Result) -> None:
+def log_tool_blocked(
+    tool_id: str,
+    tool_name: str,
+    tool_input: ToolInput,
+    result: Result,
+    duration_ms: float,
+    status: str,
+) -> None:
     code = result.meta.get("code", "unknown")
     logger.warning(
         f"[tool] blocked call_id={tool_id} name={tool_name} "
+        f"status={status} duration_ms={duration_ms:.2f} "
         f"input={input_summary(tool_input)} code={code} {format_result_summary(result)}"
     )
 
@@ -236,8 +256,29 @@ def check_tool_access(
     return ToolAccess()
 
 
+def validate_tool_input(tool_name: str, tool_input: ToolInput) -> Result | None:
+    spec = TOOL_SPECS.get(tool_name)
+    required = spec.input_schema.get("required", [])
+    
+    missing = [
+        name for name in required
+        if name not in tool_input
+    ]
+    
+    if missing:
+        return Result.failure(
+            f"Missing required input: {', '.join(missing)}",
+            code="invalid_tool_input",
+            missing=missing
+        )
+    return None
+
 def execute_tool(tool_name: str, tool_input: ToolInput) -> ToolRun:
     spec = TOOL_SPECS[tool_name]
+
+    invalid = validate_tool_input(tool_name, tool_input)
+    if invalid:
+        return ToolRun(invalid)
 
     if spec.handler is None:
         if tool_name == "compact":
@@ -263,28 +304,41 @@ def run_tool(
 ) -> ToolRun:
     approval = approval or default_approval_flow(policy)
 
+    call_id = next_tool_call_id()
+    start = time.perf_counter()
     access = check_tool_access(tool_name, tool_input, policy, approval)
-    if access.result is not None:
-        call_id = next_tool_call_id()
-        log_tool_blocked(call_id, tool_name, tool_input, access.result)
-
     if access.approval_required:
-        return ToolRun(
+        duration_ms = (time.perf_counter() - start) * 1000
+        tool_run = ToolRun(
             result=access.result,
             approval_required=True,
         )
+        log_tool_blocked(
+            call_id,
+            tool_name,
+            tool_input,
+            access.result,
+            duration_ms,
+            "approval_required",
+        )
+        return tool_run
     if not access.allowed:
-        return ToolRun(access.result)
+        duration_ms = (time.perf_counter() - start) * 1000
+        tool_run = ToolRun(access.result)
+        log_tool_blocked(
+            call_id,
+            tool_name,
+            tool_input,
+            access.result,
+            duration_ms,
+            "blocked",
+        )
+        return tool_run
 
-    call_id = next_tool_call_id()
     log_tool_start(call_id, tool_name, tool_input)
-    start = time.perf_counter()
     tool_run = execute_tool(tool_name, tool_input)
 
-    result = tool_run.result
-
-    end = time.perf_counter()
-    duration = (end - start) * 1000
-    log_tool_done(call_id, tool_name, result, duration)
+    duration_ms = (time.perf_counter() - start) * 1000
+    log_tool_done(call_id, tool_name, tool_run, duration_ms)
 
     return tool_run

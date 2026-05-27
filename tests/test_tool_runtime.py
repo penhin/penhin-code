@@ -59,22 +59,25 @@ def test_tool_runtime_input_summary_hides_sensitive_values() -> None:
             "path": "agent.py",
             "content": "secret content",
             "command": "echo secret",
-            "unknown": "hidden",
+            "unknown": {"hidden": True},
         }
     )
 
-    assert "path:agent.py" in summary
-    assert "content:sha256:" in summary
-    assert "command:sha256:" in summary
-    assert "unknown:<hidden>" in summary
+    assert 'path="agent.py"' in summary
+    assert 'content_sha="' in summary
+    assert "content_chars=14" in summary
+    assert 'command_sha="' in summary
+    assert "command_chars=11" in summary
+    assert "unknown=<hidden:dict>" in summary
     assert "secret content" not in summary
     assert "echo secret" not in summary
+    assert "True" not in summary
 
 
 def capture_tool_logs():
     stream = io.StringIO()
     handler = logging.StreamHandler(stream)
-    logger = logging.getLogger("penhin.tool")
+    logger = logging.getLogger("penhin.tool_runtime")
     original_level = logger.level
     original_propagate = logger.propagate
     logger.setLevel(logging.INFO)
@@ -108,6 +111,8 @@ def test_tool_runtime_logs_result_status() -> None:
     assert "status=error" in output
     assert "duration_ms=" in output
     assert "code=tool_error" in output
+    assert "manual_compact=false" in output
+    assert "approval_required=false" in output
     assert "stdout_chars=0" in output
     assert "stderr_chars=6" in output
     assert 'data_type="none"' in output
@@ -134,8 +139,12 @@ def test_tool_runtime_logs_input_summary() -> None:
     output = stream.getvalue()
     assert result.result.exit_code == 0
     assert "[tool] start call_id=tool-" in output
-    assert "input=content:sha256:" in output
-    assert "path:agent.py" in output
+    assert "status=ok" in output
+    assert "manual_compact=false" in output
+    assert "approval_required=false" in output
+    assert 'input=content_sha="' in output
+    assert "content_chars=14" in output
+    assert 'path="agent.py"' in output
     assert "secret content" not in output
 
 
@@ -156,10 +165,46 @@ def test_tool_runtime_logs_blocked_access() -> None:
     assert result.result.exit_code == 1
     assert "[tool] blocked call_id=tool-" in output
     assert "name=write" in output
+    assert "status=approval_required" in output
+    assert "duration_ms=" in output
     assert "code=tool_approval_required" in output
-    assert "path:agent.py" in output
-    assert "content:sha256:" in output
+    assert 'path="agent.py"' in output
+    assert 'content_sha="' in output
+    assert "content_chars=14" in output
     assert "secret content" not in output
+
+
+def test_tool_runtime_logs_manual_compact_flag() -> None:
+    stream, handler, logger, original_level, original_propagate = capture_tool_logs()
+    try:
+        result = run_tool(
+            "compact",
+            {},
+            PermissionPolicy(allow={"compact"}, deny=set()),
+            ApprovalFlow.preapproved({"compact"}),
+        )
+    finally:
+        restore_tool_logs(handler, logger, original_level, original_propagate)
+
+    output = stream.getvalue()
+    assert result.manual_compact is True
+    assert result.result.exit_code == 0
+    assert "name=compact" in output
+    assert "manual_compact=true" in output
+    assert "approval_required=false" in output
+
+
+def test_tool_runtime_reports_missing_required_input() -> None:
+    result = run_tool(
+        "read",
+        {},
+        PermissionPolicy(allow={"read"}, deny=set()),
+    )
+
+    assert result.result.exit_code == 1
+    assert "Missing required input: path" in result.result.stderr
+    assert result.result.meta["code"] == "invalid_tool_input"
+    assert result.result.meta["missing"] == ["path"]
 
 
 def run_all() -> None:
@@ -168,6 +213,8 @@ def run_all() -> None:
     test_tool_runtime_logs_result_status()
     test_tool_runtime_logs_input_summary()
     test_tool_runtime_logs_blocked_access()
+    test_tool_runtime_logs_manual_compact_flag()
+    test_tool_runtime_reports_missing_required_input()
 
 
 if __name__ == "__main__":
