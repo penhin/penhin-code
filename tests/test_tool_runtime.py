@@ -207,6 +207,32 @@ def test_tool_runtime_reports_missing_required_input() -> None:
     assert result.result.meta["missing"] == ["path"]
 
 
+def test_tool_runtime_logs_unknown_input_fields_without_blocking() -> None:
+    stream, handler, logger, original_level, original_propagate = capture_tool_logs()
+    try:
+        with patch.object(
+            tool_runtime,
+            "execute_tool",
+            return_value=ToolRun(Result.success("ok")),
+        ):
+            result = run_tool(
+                "read",
+                {"path": "README.md", "extra": "value"},
+                PermissionPolicy(allow={"read"}, deny=set()),
+            )
+    finally:
+        restore_tool_logs(handler, logger, original_level, original_propagate)
+
+    output = stream.getvalue()
+    assert result.result.exit_code == 0
+    assert "[tool] unknown_input call_id=tool-" in output
+    assert "name=read" in output
+    assert 'fields=["extra"]' in output
+    assert "status=ok" in output
+    assert "extra=<hidden:str>" in output
+    assert "value" not in output
+
+
 def run_all() -> None:
     test_tool_runtime_policy_and_control_signals()
     test_tool_runtime_input_summary_hides_sensitive_values()
@@ -215,6 +241,7 @@ def run_all() -> None:
     test_tool_runtime_logs_blocked_access()
     test_tool_runtime_logs_manual_compact_flag()
     test_tool_runtime_reports_missing_required_input()
+    test_tool_runtime_logs_unknown_input_fields_without_blocking()
 
 
 if __name__ == "__main__":

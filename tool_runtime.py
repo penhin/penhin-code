@@ -256,6 +256,16 @@ def check_tool_access(
     return ToolAccess()
 
 
+def unknown_tool_input_fields(tool_name: str, tool_input: ToolInput) -> list[str]:
+    spec = TOOL_SPECS.get(tool_name)
+    if spec is None:
+        return []
+    
+    properties = spec.input_schema.get("properties", {})
+    allowed = set(properties)
+    return sorted(set(tool_input) - allowed)
+
+
 def validate_tool_input(tool_name: str, tool_input: ToolInput) -> Result | None:
     spec = TOOL_SPECS.get(tool_name)
     required = spec.input_schema.get("required", [])
@@ -272,6 +282,7 @@ def validate_tool_input(tool_name: str, tool_input: ToolInput) -> Result | None:
             missing=missing
         )
     return None
+
 
 def execute_tool(tool_name: str, tool_input: ToolInput) -> ToolRun:
     spec = TOOL_SPECS[tool_name]
@@ -307,6 +318,7 @@ def run_tool(
     call_id = next_tool_call_id()
     start = time.perf_counter()
     access = check_tool_access(tool_name, tool_input, policy, approval)
+
     if access.approval_required:
         duration_ms = (time.perf_counter() - start) * 1000
         tool_run = ToolRun(
@@ -322,6 +334,7 @@ def run_tool(
             "approval_required",
         )
         return tool_run
+
     if not access.allowed:
         duration_ms = (time.perf_counter() - start) * 1000
         tool_run = ToolRun(access.result)
@@ -334,6 +347,13 @@ def run_tool(
             "blocked",
         )
         return tool_run
+
+    unknown_fields = unknown_tool_input_fields(tool_name, tool_input)
+    if unknown_fields:
+        logger.warning(
+            f"[tool] unknown_input call_id={call_id} "
+            f"name={tool_name} fields={json.dumps(unknown_fields, ensure_ascii=False)}"
+        )
 
     log_tool_start(call_id, tool_name, tool_input)
     tool_run = execute_tool(tool_name, tool_input)
