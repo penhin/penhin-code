@@ -207,6 +207,34 @@ def test_tool_runtime_reports_missing_required_input() -> None:
     assert result.result.meta["missing"] == ["path"]
 
 
+def test_tool_runtime_reports_invalid_input_type() -> None:
+    path_result = run_tool(
+        "read",
+        {"path": 123},
+        PermissionPolicy(allow={"read"}, deny=set()),
+    )
+
+    assert path_result.result.exit_code == 1
+    assert "Invalid input type: path expected string" in path_result.result.stderr
+    assert path_result.result.meta["code"] == "invalid_tool_input"
+    assert path_result.result.meta["field"] == "path"
+    assert path_result.result.meta["expected"] == "string"
+    assert path_result.result.meta["actual"] == "int"
+
+    limit_result = run_tool(
+        "read",
+        {"path": "README.md", "limit": True},
+        PermissionPolicy(allow={"read"}, deny=set()),
+    )
+
+    assert limit_result.result.exit_code == 1
+    assert "Invalid input type: limit expected integer" in limit_result.result.stderr
+    assert limit_result.result.meta["code"] == "invalid_tool_input"
+    assert limit_result.result.meta["field"] == "limit"
+    assert limit_result.result.meta["expected"] == "integer"
+    assert limit_result.result.meta["actual"] == "bool"
+
+
 def test_tool_runtime_logs_unknown_input_fields_without_blocking() -> None:
     stream, handler, logger, original_level, original_propagate = capture_tool_logs()
     try:
@@ -241,6 +269,7 @@ def run_all() -> None:
     test_tool_runtime_logs_blocked_access()
     test_tool_runtime_logs_manual_compact_flag()
     test_tool_runtime_reports_missing_required_input()
+    test_tool_runtime_reports_invalid_input_type()
     test_tool_runtime_logs_unknown_input_fields_without_blocking()
 
 

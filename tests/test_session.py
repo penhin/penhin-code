@@ -124,6 +124,41 @@ def test_print_session_list_marks_latest() -> None:
     assert latest_id in marked_lines[0]
 
 
+def test_session_inspect_counts_tool_results() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = transcript.TranscriptStore(Path(tmpdir))
+        messages = [
+            {"role": "user", "content": "read a file"},
+            {"role": "assistant", "content": "I will read it"},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tool-1",
+                        "content": '{"ok": true, "exit_code": 0}',
+                    },
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tool-2",
+                        "content": '{"ok": false, "exit_code": 1}',
+                    },
+                ],
+            },
+            {"role": "user", "content": "now summarize"},
+            {"role": "assistant", "content": "done"},
+        ]
+        session_path = store.save(messages)
+
+        inspected = store.inspect(transcript.session_id_from_path(session_path))
+
+        assert inspected.first_user == "read a file"
+        assert inspected.last_user == "now summarize"
+        assert inspected.last_assistant == "done"
+        assert inspected.tool_result_count == 2
+        assert inspected.failed_tool_result_count == 1
+
+
 def run_all() -> None:
     test_parse_session_args()
     test_parse_help_command()
@@ -134,6 +169,7 @@ def run_all() -> None:
     test_load_initial_session_returns_resumed_path()
     test_save_session_messages_updates_existing_session()
     test_print_session_list_marks_latest()
+    test_session_inspect_counts_tool_results()
 
 
 if __name__ == "__main__":

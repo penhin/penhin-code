@@ -50,7 +50,10 @@ class SessionInspect:
     message_count: int
     role_counts: dict[str, int]
     first_user: str
+    last_user: str
     last_assistant: str
+    tool_result_count: int
+    failed_tool_result_count: int
 
 
 def summarize_content(content: Any, limit: int = 80) -> str:
@@ -99,9 +102,39 @@ def first_message_summary(messages: list[dict[str, Any]], role: str) -> str:
 
 def last_message_summary(messages: list[dict[str, Any]], role: str) -> str:
     for message in reversed(messages):
+        if role == "user" and is_synthetic_user_message(message):
+            continue
         if message.get("role") == role:
             return summarize_content(message.get("content"))
     return ""
+
+
+def iter_tool_results(messages: list[dict[str, Any]]):
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "tool_result":
+                yield item
+
+
+def tool_result_failed(tool_result: dict[str, Any]) -> bool:
+    if tool_result.get("is_error") is True:
+        return True
+
+    content = tool_result.get("content")
+    if not isinstance(content, str):
+        return False
+
+    try:
+        result = json.loads(content)
+    except json.JSONDecodeError:
+        return False
+
+    if result.get("ok") is False:
+        return True
+    return result.get("exit_code", 0) != 0
 
 
 def session_id_from_path(path: Path) -> str:
@@ -273,6 +306,7 @@ class TranscriptStore:
         for message in messages:
             role = str(message.get("role", "unknown"))
             role_counts[role] = role_counts.get(role, 0) + 1
+        tool_results = list(iter_tool_results(messages))
 
         return SessionInspect(
             id=session_id_from_path(path),
@@ -280,7 +314,13 @@ class TranscriptStore:
             message_count=len(messages),
             role_counts=role_counts,
             first_user=first_message_summary(messages, "user"),
+            last_user=last_message_summary(messages, "user"),
             last_assistant=last_message_summary(messages, "assistant"),
+            tool_result_count=len(tool_results),
+            failed_tool_result_count=sum(
+                1 for tool_result in tool_results
+                if tool_result_failed(tool_result)
+            ),
         )
     
     def load_session(

@@ -20,6 +20,15 @@ _TOOL_CALL_COUNTER = itertools.count(1)
 SAFE_INPUT_FIELDS = {"path", "name", "id", "index", "action", "limit", "line_numbers"}
 HASHED_INPUT_FIELDS = {"command", "content", "task", "description", "note", "old", "new", "items", "blocked_by"}
 
+TYPE_CHECKS = {
+    "string": lambda value: isinstance(value, str),
+    "integer": lambda value: isinstance(value, int) and not isinstance(value, bool),
+    "number": lambda value: isinstance(value, int | float) and not isinstance(value, bool),
+    "boolean": lambda value: isinstance(value, bool),
+    "array": lambda value: isinstance(value, list),
+    "object": lambda value: isinstance(value, dict),
+}
+
 
 def next_tool_call_id() -> str:
     return f"tool-{next(_TOOL_CALL_COUNTER)}"
@@ -71,16 +80,6 @@ class ToolRun:
     result: Result
     manual_compact: bool = False
     approval_required: bool = False
-
-
-@dataclass
-class ToolAccess:
-    result: Result | None = None
-    approval_required: bool = False
-
-    @property
-    def allowed(self) -> bool:
-        return self.result is None and not self.approval_required
 
 
 def tool_names_for(scope: str) -> set[str]:
@@ -233,27 +232,27 @@ def check_tool_access(
     tool_input: ToolInput,
     policy: PermissionPolicy,
     approval: ApprovalFlow,
-) -> ToolAccess:
+) -> ToolRun | None:
     if tool_name in policy.deny:
-        return ToolAccess(Result.failure(f"Denied by policy: {tool_name}", code="tool_denied"))
+        return ToolRun(Result.failure(f"Denied by policy: {tool_name}", code="tool_denied"))
 
     spec = TOOL_SPECS.get(tool_name)
     if spec is None:
-        return ToolAccess(Result.failure(f"Unknown tool: {tool_name}", code="unknown_tool"))
+        return ToolRun(Result.failure(f"Unknown tool: {tool_name}", code="unknown_tool"))
 
     if tool_name not in policy.allow:
-        return ToolAccess(Result.failure(f"Not allowed by policy: {tool_name}", code="tool_not_allowed"))
+        return ToolRun(Result.failure(f"Not allowed by policy: {tool_name}", code="tool_not_allowed"))
 
     if approval.is_rejected(tool_name, tool_input):
-        return ToolAccess(Result.failure(f"Approval rejected for tool: {tool_name}", code="tool_approval_rejected"))
+        return ToolRun(Result.failure(f"Approval rejected for tool: {tool_name}", code="tool_approval_rejected"))
 
     if spec.approval.requires_approval and not approval.is_approved(tool_name, tool_input):
-        return ToolAccess(
+        return ToolRun(
             Result.failure(f"Approval required for tool: {tool_name}", code="tool_approval_required"),
             approval_required=True,
         )
 
-    return ToolAccess()
+    return None
 
 
 def unknown_tool_input_fields(tool_name: str, tool_input: ToolInput) -> list[str]:
@@ -268,6 +267,7 @@ def unknown_tool_input_fields(tool_name: str, tool_input: ToolInput) -> list[str
 
 def validate_tool_input(tool_name: str, tool_input: ToolInput) -> Result | None:
     spec = TOOL_SPECS.get(tool_name)
+    properties = spec.input_schema.get("properties", {})
     required = spec.input_schema.get("required", [])
     
     missing = [
@@ -281,6 +281,27 @@ def validate_tool_input(tool_name: str, tool_input: ToolInput) -> Result | None:
             code="invalid_tool_input",
             missing=missing
         )
+        
+    for name, value in tool_input.items():
+        field_schema = properties.get(name)
+        if field_schema is None:
+            continue
+
+        expected = field_schema.get("type")
+        checker = TYPE_CHECKS.get(expected)
+        
+        if checker is None:
+            continue
+
+        if not checker(value):
+            return Result.failure(
+                f"Invalid input type: {name} expected {expected}",
+                code="invalid_tool_input",
+                field=name,
+                expected=expected,
+                actual=type(value).__name__,
+            )
+
     return None
 
 
@@ -317,36 +338,19 @@ def run_tool(
 
     call_id = next_tool_call_id()
     start = time.perf_counter()
-    access = check_tool_access(tool_name, tool_input, policy, approval)
+    access_run = check_tool_access(tool_name, tool_input, policy, approval)
 
-    if access.approval_required:
+    if access_run is not None:
         duration_ms = (time.perf_counter() - start) * 1000
-        tool_run = ToolRun(
-            result=access.result,
-            approval_required=True,
-        )
         log_tool_blocked(
             call_id,
             tool_name,
             tool_input,
-            access.result,
+            access_run.result,
             duration_ms,
-            "approval_required",
+            "approval_required" if access_run.approval_required else "blocked",
         )
-        return tool_run
-
-    if not access.allowed:
-        duration_ms = (time.perf_counter() - start) * 1000
-        tool_run = ToolRun(access.result)
-        log_tool_blocked(
-            call_id,
-            tool_name,
-            tool_input,
-            access.result,
-            duration_ms,
-            "blocked",
-        )
-        return tool_run
+        return access_run
 
     unknown_fields = unknown_tool_input_fields(tool_name, tool_input)
     if unknown_fields:

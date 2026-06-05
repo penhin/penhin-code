@@ -111,7 +111,10 @@ def print_session_inspect(session_ref: str) -> None:
     print(f"messages: {session.message_count}")
     print(f"roles: {role_counts or '-'}")
     print(f"first_user: {session.first_user or '-'}")
+    print(f"last_user: {session.last_user or '-'}")
     print(f"last_assistant: {session.last_assistant or '-'}")
+    print(f"tool_results: {session.tool_result_count}")
+    print(f"failed_tool_results: {session.failed_tool_result_count}")
 
 
 if __name__ == "__main__":
