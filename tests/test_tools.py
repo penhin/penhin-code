@@ -49,11 +49,16 @@ def test_workspace_tool() -> None:
     data = json.loads(result.stdout)
     result_data = json.loads(result.to_json())["data"]
     assert "cwd" in data
+    assert "git_branch" in data
+    assert isinstance(data["dirty_files_count"], int) or data["dirty_files_count"] is None
+    assert data["has_agents_md"] is True
+    assert data["test_command_hint"] == ".venv/bin/python tests/test_smoke.py"
     assert ".venv" in data["ignored"]
     assert ".penhin_todos.json" in data["ignored"]
     assert "workspace" in data["tools"]
     assert "task" in data["tools"]
     assert result_data["cwd"] == data["cwd"]
+    assert result_data["dirty_files_count"] == data["dirty_files_count"]
 
 
 def test_skill_loader() -> None:

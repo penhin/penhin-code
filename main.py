@@ -9,6 +9,7 @@ from runtime import init_runtime
 from transcript import transcripts
 from agent import agent_loop, print_last_text, run_once
 from tool_runtime import ApprovalFlow, PARENT_AGENT_POLICY
+from tools import workspace_info
 
 
 logger = logging.getLogger("penhin.main")
@@ -19,6 +20,20 @@ def non_negative_int(value: str) -> int:
     if number < 0:
         raise argparse.ArgumentTypeError("must be non-negative")
     return number
+
+
+def workspace_summary_line(info: dict[str, object] | None = None) -> str:
+    info = workspace_info() if info is None else info
+    dirty = info.get("dirty_files_count")
+    if dirty is None:
+        dirty = "unknown"
+    agents = str(bool(info.get("has_agents_md"))).lower()
+    return (
+        f"[workspace] branch={info.get('git_branch', '-')} "
+        f"dirty={dirty} "
+        f"test={info.get('test_command_hint', '-')} "
+        f"agents={agents}"
+    )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -51,6 +66,7 @@ def main() -> None:
         return
 
     init_runtime()
+    logger.info(workspace_summary_line())
 
     if args.once:
         run_once(" ".join(args.once))

@@ -38,6 +38,24 @@ def test_parse_help_command() -> None:
     assert "--once" in help_text
 
 
+def test_workspace_summary_line() -> None:
+    line = main_module.workspace_summary_line(
+        {
+            "git_branch": "main",
+            "dirty_files_count": 2,
+            "test_command_hint": ".venv/bin/python tests/test_smoke.py",
+            "has_agents_md": True,
+        }
+    )
+
+    assert line == (
+        "[workspace] branch=main "
+        "dirty=2 "
+        "test=.venv/bin/python tests/test_smoke.py "
+        "agents=true"
+    )
+
+
 def test_load_initial_messages_new_session_flag() -> None:
     store = transcript.TranscriptStore(Path(tempfile.mkdtemp()))
 
@@ -184,6 +202,7 @@ def test_session_inspect_counts_tool_results() -> None:
 def run_all() -> None:
     test_parse_session_args()
     test_parse_help_command()
+    test_workspace_summary_line()
     test_load_initial_messages_new_session_flag()
     test_load_initial_messages_without_history()
     test_load_initial_messages_resumes_latest_transcript()

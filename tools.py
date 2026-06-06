@@ -345,12 +345,62 @@ def run_background_start(task: str) -> Result:
     return Result.success(background_task.to_json(), data=background_task.to_dict())
 
 
-def run_workspace() -> Result:
-    info = {
+def run_git(args: list[str]) -> subprocess.CompletedProcess[str] | None:
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=WORKDIR,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+    if result.returncode != 0:
+        return None
+    return result
+
+
+def git_branch_name() -> str:
+    result = run_git(["branch", "--show-current"])
+    if result is None:
+        return "-"
+    return result.stdout.strip() or "-"
+
+
+def git_dirty_files_count() -> int | None:
+    result = run_git(["status", "--short"])
+    if result is None:
+        return None
+    return len([
+        line for line in result.stdout.splitlines()
+        if line.strip()
+    ])
+
+
+def test_command_hint() -> str:
+    if (WORKDIR / "tests" / "test_smoke.py").exists():
+        return ".venv/bin/python tests/test_smoke.py"
+    if (WORKDIR / "pytest.ini").exists() or (WORKDIR / "pyproject.toml").exists():
+        return "pytest"
+    return "-"
+
+
+def workspace_info() -> dict[str, object]:
+    return {
         "cwd": str(WORKDIR),
+        "git_branch": git_branch_name(),
+        "dirty_files_count": git_dirty_files_count(),
+        "has_agents_md": (WORKDIR / "AGENTS.md").exists(),
         "ignored": IGNORED_PATH_PARTS,
+        "test_command_hint": test_command_hint(),
         "tools": [tool["name"] for tool in PARENT_TOOLS],
     }
+
+
+def run_workspace() -> Result:
+    info = workspace_info()
     return Result.success(json.dumps(info, ensure_ascii=False, indent=2), data=info)
 
 def object_schema(properties: ToolSchema | None = None, required: list[str] | None = None) -> ToolSchema:
