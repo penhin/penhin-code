@@ -115,6 +115,9 @@ def print_session_inspect(session_ref: str) -> None:
     print(f"last_assistant: {session.last_assistant or '-'}")
     print(f"tool_results: {session.tool_result_count}")
     print(f"failed_tool_results: {session.failed_tool_result_count}")
+    print("events:")
+    for event in session.recent_events:
+        print(f"- {event}")
 
 
 if __name__ == "__main__":

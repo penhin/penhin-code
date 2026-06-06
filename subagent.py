@@ -70,6 +70,7 @@ def run_subagent(task: str) -> Result:
             tool_results.append(
                 {
                     "type": "tool_result",
+                    "tool_name": tool_name,
                     "tool_use_id": block.id,
                     "content": output_text,
                 }

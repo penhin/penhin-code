@@ -54,6 +54,7 @@ class SessionInspect:
     last_assistant: str
     tool_result_count: int
     failed_tool_result_count: int
+    recent_events: list[str]
 
 
 def summarize_content(content: Any, limit: int = 80) -> str:
@@ -135,6 +136,51 @@ def tool_result_failed(tool_result: dict[str, Any]) -> bool:
     if result.get("ok") is False:
         return True
     return result.get("exit_code", 0) != 0
+
+
+def tool_result_error_code(tool_result: dict[str, Any]) -> str:
+    content = tool_result.get("content")
+    if not isinstance(content, str):
+        return "-"
+
+    try:
+        result = json.loads(content)
+    except json.JSONDecodeError:
+        return "-"
+
+    meta = result.get("meta")
+    if not isinstance(meta, dict):
+        return "-"
+
+    code = meta.get("code")
+    if not isinstance(code, str) or not code:
+        return "-"
+    return code
+
+
+def session_event_timeline(messages: list[dict[str, Any]], limit: int = 8) -> list[str]:
+    events = []
+    for message in messages:
+        role = message.get("role")
+        content = message.get("content")
+
+        if role == "user" and is_synthetic_user_message(message):
+            for tool_result in iter_tool_results([message]):
+                status = "error" if tool_result_failed(tool_result) else "ok"
+                tool_use_id = tool_result.get("tool_use_id", "-")
+                tool_name = tool_result.get("tool_name", "-")
+                event = f"tool_result | {status} | {tool_name} | {tool_use_id}"
+                if status == "error":
+                    event = f"{event} | {tool_result_error_code(tool_result)}"
+                events.append(event)
+            continue
+
+        if role in {"user", "assistant"}:
+            summary = summarize_content(content)
+            if summary:
+                events.append(f"{role} | {summary}")
+
+    return events[-limit:]
 
 
 def session_id_from_path(path: Path) -> str:
@@ -321,6 +367,7 @@ class TranscriptStore:
                 1 for tool_result in tool_results
                 if tool_result_failed(tool_result)
             ),
+            recent_events=session_event_timeline(messages),
         )
     
     def load_session(

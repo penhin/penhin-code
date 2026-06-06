@@ -116,6 +116,7 @@ def agent_loop(messages: list[dict[str, Any]], approval: ApprovalFlow = None) ->
             tool_results.append(
                 {
                     "type": "tool_result",
+                    "tool_name": tool_name,
                     "tool_use_id": block.id,
                     "content": output_text,
                 }

@@ -136,12 +136,14 @@ def test_session_inspect_counts_tool_results() -> None:
                     {
                         "type": "tool_result",
                         "tool_use_id": "tool-1",
+                        "tool_name": "read",
                         "content": '{"ok": true, "exit_code": 0}',
                     },
                     {
                         "type": "tool_result",
                         "tool_use_id": "tool-2",
-                        "content": '{"ok": false, "exit_code": 1}',
+                        "tool_name": "write",
+                        "content": '{"ok": false, "exit_code": 1, "meta": {"code": "invalid_tool_input"}}',
                     },
                 ],
             },
@@ -157,6 +159,14 @@ def test_session_inspect_counts_tool_results() -> None:
         assert inspected.last_assistant == "done"
         assert inspected.tool_result_count == 2
         assert inspected.failed_tool_result_count == 1
+        assert inspected.recent_events == [
+            "user | read a file",
+            "assistant | I will read it",
+            "tool_result | ok | read | tool-1",
+            "tool_result | error | write | tool-2 | invalid_tool_input",
+            "user | now summarize",
+            "assistant | done",
+        ]
 
 
 def run_all() -> None:
