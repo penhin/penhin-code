@@ -54,6 +54,7 @@ class SessionInspect:
     last_assistant: str
     tool_result_count: int
     failed_tool_result_count: int
+    event_count: int
     recent_events: list[str]
 
 
@@ -158,7 +159,7 @@ def tool_result_error_code(tool_result: dict[str, Any]) -> str:
     return code
 
 
-def session_event_timeline(messages: list[dict[str, Any]], limit: int = 8) -> list[str]:
+def session_event_timeline(messages: list[dict[str, Any]], limit: int | None = 8) -> list[str]:
     events = []
     for message in messages:
         role = message.get("role")
@@ -180,6 +181,10 @@ def session_event_timeline(messages: list[dict[str, Any]], limit: int = 8) -> li
             if summary:
                 events.append(f"{role} | {summary}")
 
+    if limit is None:
+        return events
+    if limit <= 0:
+        return []
     return events[-limit:]
 
 
@@ -345,7 +350,7 @@ class TranscriptStore:
             )
         return summaries
 
-    def inspect(self, session_ref: str) -> SessionInspect:
+    def inspect(self, session_ref: str, event_limit: int = 8) -> SessionInspect:
         path = self.resolve_session_ref(session_ref)
         messages = self.read(path)
         role_counts: dict[str, int] = {}
@@ -353,6 +358,7 @@ class TranscriptStore:
             role = str(message.get("role", "unknown"))
             role_counts[role] = role_counts.get(role, 0) + 1
         tool_results = list(iter_tool_results(messages))
+        events = session_event_timeline(messages, limit=None)
 
         return SessionInspect(
             id=session_id_from_path(path),
@@ -367,7 +373,8 @@ class TranscriptStore:
                 1 for tool_result in tool_results
                 if tool_result_failed(tool_result)
             ),
-            recent_events=session_event_timeline(messages),
+            event_count=len(events),
+            recent_events=session_event_timeline(messages, limit=event_limit),
         )
     
     def load_session(

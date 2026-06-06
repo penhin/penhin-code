@@ -12,10 +12,11 @@ import transcript
 
 
 def test_parse_session_args() -> None:
-    inspect_args = main_module.parse_args(["-i", "177909"])
+    inspect_args = main_module.parse_args(["-i", "177909", "-e", "3"])
     once_args = main_module.parse_args(["-o", "hello", "world"])
 
     assert inspect_args.inspect_session == "177909"
+    assert inspect_args.events == 3
     assert once_args.once == ["hello", "world"]
 
 
@@ -32,6 +33,7 @@ def test_parse_help_command() -> None:
     help_text = output.getvalue()
     assert "--sessions" in help_text
     assert "--inspect-session" in help_text
+    assert "--events" in help_text
     assert "--resume" in help_text
     assert "--once" in help_text
 
@@ -159,10 +161,20 @@ def test_session_inspect_counts_tool_results() -> None:
         assert inspected.last_assistant == "done"
         assert inspected.tool_result_count == 2
         assert inspected.failed_tool_result_count == 1
+        assert inspected.event_count == 6
         assert inspected.recent_events == [
             "user | read a file",
             "assistant | I will read it",
             "tool_result | ok | read | tool-1",
+            "tool_result | error | write | tool-2 | invalid_tool_input",
+            "user | now summarize",
+            "assistant | done",
+        ]
+
+        limited = store.inspect(transcript.session_id_from_path(session_path), event_limit=3)
+
+        assert limited.event_count == 6
+        assert limited.recent_events == [
             "tool_result | error | write | tool-2 | invalid_tool_input",
             "user | now summarize",
             "assistant | done",

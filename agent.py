@@ -3,7 +3,7 @@ import logging
 from typing import Any
 
 from compact import auto_compact_messages, micro_compact_text, should_auto_compact
-from prompt import MAIN_SYSTEM
+from prompt import build_main_system
 from runtime import get_runtime, log_usage
 from tool_runtime import ApprovalFlow, PARENT_AGENT_POLICY, approval_key, run_tool
 from tools import PARENT_TOOLS
@@ -73,7 +73,7 @@ def agent_loop(messages: list[dict[str, Any]], approval: ApprovalFlow = None) ->
             messages[:] = auto_compact_messages(messages)
 
         response = runtime.call_with_retry(
-            system=MAIN_SYSTEM,
+            system=build_main_system(),
             messages=messages,
             tools=PARENT_TOOLS,
             max_tokens=runtime.max_tokens,

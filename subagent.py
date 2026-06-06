@@ -1,7 +1,7 @@
 import logging
 from typing import Any
 
-from prompt import SUBAGENT_FINAL_SYSTEM, SUBAGENT_SYSTEM
+from prompt import build_subagent_final_system, build_subagent_system
 from result import Result
 from tools import CHILD_TOOLS
 from tool_runtime import CHILD_AGENT_APPROVAL_FLOW, CHILD_AGENT_POLICY, run_tool
@@ -24,7 +24,7 @@ def extract_summary(content: Any) -> str:
 
 def request_final_summary(runtime, sub_messages: list[dict[str, Any]]) -> str:
     response = runtime.call_with_retry(
-        system=SUBAGENT_FINAL_SYSTEM,
+        system=build_subagent_final_system(),
         messages=sub_messages,
         max_tokens=runtime.sub_max_tokens,
     )
@@ -39,7 +39,7 @@ def run_subagent(task: str) -> Result:
     
     for _ in range(0, runtime.sub_max_turns):
         response = runtime.call_with_retry(
-            system=SUBAGENT_SYSTEM,
+            system=build_subagent_system(),
             messages=sub_messages,
             tools=CHILD_TOOLS,
             max_tokens=runtime.sub_max_tokens

@@ -7,6 +7,7 @@ from tests import (
     test_agent,
     test_atomic_io,
     test_compact,
+    test_prompt,
     test_result,
     test_session,
     test_task,
@@ -26,6 +27,7 @@ def main() -> None:
     test_agent.run_all()
     test_task.run_all()
     test_compact.run_all()
+    test_prompt.run_all()
     test_transcript.run_all()
     test_session.run_all()
     print("ok")

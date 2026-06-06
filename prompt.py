@@ -1,6 +1,31 @@
 import os
 
+from pathlib import Path
 from skills import load_skill
+
+
+USER_PROMPT_PATH = Path("AGENTS.md")
+
+
+def append_project_instructions(system: str) -> str:
+    if not USER_PROMPT_PATH.exists():
+        return system
+    return system + "\n\n# Project Instructions\n\n" + USER_PROMPT_PATH.read_text(encoding="utf-8")
+
+
+def build_main_system() -> str:
+    return append_project_instructions(MAIN_SYSTEM)
+
+
+def build_subagent_system() -> str:
+    return append_project_instructions(SUBAGENT_SYSTEM)
+
+
+def build_subagent_final_system() -> str:
+    return append_project_instructions(SUBAGENT_SYSTEM) + (
+        "\n\n"
+        "The tool budget is exhausted. Use the available tool results and return the final concise summary now."
+    )
 
 
 MAIN_SYSTEM = (
@@ -24,14 +49,10 @@ MAIN_SYSTEM = (
 SUBAGENT_SYSTEM = (
     "You are a focused subagent. "
     "Complete the assigned task independently and return a concise summary. "
+    "Follow project instructions, but keep the assigned task narrow and do not expand scope. "
     "Tool results are JSON with ok/message/data/error/meta fields; prefer data for structured facts and error for failures. "
 )
 
-
-SUBAGENT_FINAL_SYSTEM = (
-    SUBAGENT_SYSTEM
-    + "The tool budget is exhausted. Use the available tool results and return the final concise summary now."
-)
 
 AUTO_COMPACT_SYSTEM = (
     "You summarize coding-agent conversation history into a compact "

@@ -14,6 +14,13 @@ from tool_runtime import ApprovalFlow, PARENT_AGENT_POLICY
 logger = logging.getLogger("penhin.main")
 
 
+def non_negative_int(value: str) -> int:
+    number = int(value)
+    if number < 0:
+        raise argparse.ArgumentTypeError("must be non-negative")
+    return number
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args = sys.argv[1:] if argv is None else argv
     if args == ["help"]:
@@ -27,6 +34,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--sessions", "-s", action="store_true", help="list saved sessions")
     parser.add_argument("--new", "-n", action="store_true", help="start without resuming history")
     parser.add_argument("--inspect-session", "-i", metavar="ID", help="show details for a session")
+    parser.add_argument("--events", "-e", type=non_negative_int, default=8, metavar="N", help="number of inspect events to show")
     parser.add_argument("--resume", "-r", metavar="ID", help="resume a specific session")
     return parser.parse_args(args)
 
@@ -39,7 +47,7 @@ def main() -> None:
         return
 
     if args.inspect_session:
-        print_session_inspect(args.inspect_session)
+        print_session_inspect(args.inspect_session, event_limit=args.events)
         return
 
     init_runtime()
@@ -95,9 +103,9 @@ def print_session_list() -> None:
         print(f"{mark} | {session.id[:12]} | {updated} | {session.message_count} | {first_user}")
 
 
-def print_session_inspect(session_ref: str) -> None:
+def print_session_inspect(session_ref: str, event_limit: int = 8) -> None:
     try:
-        session = transcripts.inspect(session_ref)
+        session = transcripts.inspect(session_ref, event_limit=event_limit)
     except Exception as error:
         print(f"Session inspect failed: {error}")
         sys.exit(1)
@@ -115,7 +123,7 @@ def print_session_inspect(session_ref: str) -> None:
     print(f"last_assistant: {session.last_assistant or '-'}")
     print(f"tool_results: {session.tool_result_count}")
     print(f"failed_tool_results: {session.failed_tool_result_count}")
-    print("events:")
+    print(f"events: {len(session.recent_events)} of {session.event_count}")
     for event in session.recent_events:
         print(f"- {event}")
 
