@@ -4,6 +4,10 @@ from typing import Callable
 from tools import workspace_info
 import ui
 
+try:
+    import readline
+except ImportError:
+    readline = None
 
 @dataclass(frozen=True)
 class LocalCommand:
@@ -36,6 +40,30 @@ def handle_workspace_command(args: list[str]):
 def handle_help_command(args: list[str]):
     for command in LOCAL_COMMANDS.values():
         ui.print_info(f"{command.name} {command.description}")
+
+
+def complete_local_command(text: str, state: int) -> str | None:
+    matches = [
+        name for name in LOCAL_COMMANDS
+        if name.startswith(text)
+    ]
+
+    if state < len(matches):
+        return matches[state]
+    return None
+
+
+def setup_command_completion() -> None:
+    if readline is None:
+        return
+
+    readline.set_completer(complete_local_command)
+    if hasattr(readline, "set_completer_delims"):
+        readline.set_completer_delims(" \t\n")
+    if "libedit" in (readline.__doc__ or ""):
+        readline.parse_and_bind("bind ^I rl_complete")
+    else:
+        readline.parse_and_bind("tab: complete")
 
     
 LOCAL_COMMANDS = {

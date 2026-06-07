@@ -9,7 +9,7 @@ from runtime import init_runtime
 from transcript import transcripts
 from agent import agent_loop, print_last_text, run_once
 from tool_runtime import ApprovalFlow, PARENT_AGENT_POLICY
-from commands import handle_local_command
+from commands import handle_local_command, setup_command_completion
 from tools import workspace_info
 from ui import prompt_input
 
@@ -81,6 +81,7 @@ def main() -> None:
     else:
         messages, session_path = transcripts.load_session(resume=True)
 
+    setup_command_completion()
     approval = ApprovalFlow.require_confirmation(PARENT_AGENT_POLICY.allow)
 
     while True:
