@@ -9,7 +9,9 @@ from runtime import init_runtime
 from transcript import transcripts
 from agent import agent_loop, print_last_text, run_once
 from tool_runtime import ApprovalFlow, PARENT_AGENT_POLICY
+from commands import handle_local_command
 from tools import workspace_info
+from ui import prompt_input
 
 
 logger = logging.getLogger("penhin.main")
@@ -83,7 +85,12 @@ def main() -> None:
 
     while True:
         try:
-            user_input = input("penhin >> ").strip()
+            user_input = prompt_input().strip()
+            
+            if user_input.startswith("/"):
+                handled = handle_local_command(user_input)
+                if handled:
+                    continue
         except (EOFError, KeyboardInterrupt):
             logger.info("")
             break

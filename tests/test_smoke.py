@@ -6,6 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tests import (
     test_agent,
     test_atomic_io,
+    test_commands,
     test_compact,
     test_prompt,
     test_result,
@@ -23,6 +24,7 @@ def main() -> None:
     test_atomic_io.run_all()
     test_todo.run_all()
     test_tools.run_all()
+    test_commands.run_all()
     test_tool_runtime.run_all()
     test_agent.run_all()
     test_task.run_all()
