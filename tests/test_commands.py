@@ -43,11 +43,6 @@ def test_complete_local_command_matches_prefix() -> None:
     assert commands.complete_local_command("/workspace", 1) is None
 
 
-def test_setup_command_completion_skips_without_readline() -> None:
-    with patch.object(commands, "readline", None):
-        commands.setup_command_completion()
-
-
 def test_setup_command_completion_registers_completer() -> None:
     class FakeReadline:
         __doc__ = ""
@@ -82,7 +77,6 @@ def run_all() -> None:
     test_handle_local_command_shows_workspace()
     test_handle_local_command_reports_unknown_command()
     test_complete_local_command_matches_prefix()
-    test_setup_command_completion_skips_without_readline()
     test_setup_command_completion_registers_completer()
 
 

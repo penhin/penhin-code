@@ -1,13 +1,10 @@
+import readline
+import ui
+
 from dataclasses import dataclass
 from typing import Callable
 
 from tools import workspace_info
-import ui
-
-try:
-    import readline
-except ImportError:
-    readline = None
 
 @dataclass(frozen=True)
 class LocalCommand:
@@ -54,9 +51,6 @@ def complete_local_command(text: str, state: int) -> str | None:
 
 
 def setup_command_completion() -> None:
-    if readline is None:
-        return
-
     readline.set_completer(complete_local_command)
     if hasattr(readline, "set_completer_delims"):
         readline.set_completer_delims(" \t\n")
