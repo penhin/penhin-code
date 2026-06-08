@@ -2,6 +2,7 @@
 .venv/
 __pycache__/
 *.py[cod]
+tests/
 AGENTS.md
 
 .penhin_todos.json
