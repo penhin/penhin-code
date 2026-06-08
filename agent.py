@@ -2,7 +2,7 @@ import json
 import logging
 from typing import Any
 
-from compact import auto_compact_messages, micro_compact_text, should_auto_compact
+from context import RunContext
 from prompt import build_main_system
 from runtime import get_runtime, log_usage
 from tool_runtime import ApprovalFlow, PARENT_AGENT_POLICY, approval_key, run_tool
@@ -62,24 +62,21 @@ def resolve_approval(tool_name: str, tool_input: dict[str, Any], approval: Appro
     return run_with_one_time_rejection(tool_name, tool_input, approval)
 
 
-def agent_loop(messages: list[dict[str, Any]], approval: ApprovalFlow = None) -> None:
+def agent_loop(context: RunContext) -> None:
     runtime = get_runtime()
 
-    approval = approval or ApprovalFlow.require_confirmation(PARENT_AGENT_POLICY.allow)
-
     while True:
-        micro_compact_text(messages)
-        if should_auto_compact(messages):
-            messages[:] = auto_compact_messages(messages)
+        context.micro_compact()
+        context.auto_compact_if_needed()
 
         response = runtime.call_with_retry(
             system=build_main_system(),
-            messages=messages,
+            messages=context.messages,
             tools=PARENT_TOOLS,
             max_tokens=runtime.max_tokens,
         )
 
-        messages.append({"role": "assistant", "content": response.content})
+        context.add_assistant_message(response.content)
 
         log_usage("main", response)
 
@@ -99,13 +96,13 @@ def agent_loop(messages: list[dict[str, Any]], approval: ApprovalFlow = None) ->
                 tool_name,
                 block.input,
                 PARENT_AGENT_POLICY,
-                approval,
+                context.approval,
             )
 
             output = tool_run.result
 
             if tool_run.approval_required:
-                tool_run = resolve_approval(tool_name, block.input, approval)
+                tool_run = resolve_approval(tool_name, block.input, context.approval)
                 output = tool_run.result
 
             if tool_run.manual_compact:
@@ -125,18 +122,21 @@ def agent_loop(messages: list[dict[str, Any]], approval: ApprovalFlow = None) ->
         if not tool_results:
             return
 
-        messages.append({"role": "user", "content": tool_results})
+        context.add_tool_results(tool_results)
 
         if manual_compact:
-            messages[:] = auto_compact_messages(messages)
+            context.force_auto_compact()
 
 
 def run_once(query: str) -> None:
-    messages = [{"role": "user", "content": query}]
     approval = ApprovalFlow.require_confirmation(PARENT_AGENT_POLICY.allow)
-    agent_loop(messages, approval)
-    transcripts.save(messages)
-    print_last_text(messages)
+    context = RunContext(
+        messages=[{"role": "user", "content": query}],
+        approval=approval,
+    )
+    agent_loop(context)
+    transcripts.save(context.messages)
+    print_last_text(context.messages)
 
 
 def print_last_text(messages: list[dict[str, Any]]) -> None:
