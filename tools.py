@@ -312,6 +312,34 @@ def run_task(task: str) -> Result:
     return run_subagent(task)
 
 
+def run_task_start(
+    subject: str,
+    description: str = "",
+    note: str = None,
+    plan: list[str] = None,
+) -> Result:
+    result = run_task_status(
+        action="start",
+        subject=subject,
+        description=description,
+        note=note,
+    )
+
+    if not result.ok:
+        return result
+
+    if plan:
+        todo_result = run_todo("set", plan)
+        if not todo_result.ok:
+            return Result.failure(
+                f"Task started, but plan setup failed: {todo_result.stderr}",
+                code="task_plan_failed",
+                data=result.data,
+            )
+
+    return result
+
+
 def run_task_status(**kwargs) -> Result:
     return task_status(**kwargs)
 
@@ -403,6 +431,7 @@ def run_workspace() -> Result:
     info = workspace_info()
     return Result.success(json.dumps(info, ensure_ascii=False, indent=2), data=info)
 
+
 def object_schema(properties: ToolSchema | None = None, required: list[str] | None = None) -> ToolSchema:
     return {
         "type": "object",
@@ -440,15 +469,16 @@ TOOL_SPECS: dict[str, ToolSpec] = {
                 "subject": {"type": "string"},
                 "description": {"type": "string"},
                 "note": {"type": "string"},
+                "plan": {"type": "array", "items": {"type": "string"}},
             },
             ["subject"],
         ),
         category=ToolCategory.state,
-        handler=lambda **kwargs: run_task_status(
-            action="start",
+        handler=lambda **kwargs: run_task_start(
             subject=kwargs["subject"],
             description=kwargs.get("description", ""),
             note=kwargs.get("note"),
+            plan=kwargs.get("plan"),
         ),
         available_to_child=False,
         available_to_parent=True,
