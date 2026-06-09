@@ -1,8 +1,9 @@
 import json
 import logging
 from typing import Any
-from runtime import get_runtime
+
 from prompt import AUTO_COMPACT_SYSTEM
+from runtime import get_runtime
 from transcript import serialize_for_json, transcripts
 
 logger = logging.getLogger("penhin.compact")

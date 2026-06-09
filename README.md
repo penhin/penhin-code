@@ -18,7 +18,7 @@
 main.py              CLI 入口、会话恢复和交互循环
 runtime.py           LLM client、模型配置、logging 配置和 usage 打印
 tool_runtime.py      工具权限、审批、执行和观测日志
-tools.py             工具 schema、工具 handler、文件/命令工具实现
+tools/               工具 schema、工具 handler、文件/命令工具实现
 result.py            统一的工具返回结果对象
 atomic_io.py         内部状态文件的原子写入和 JSON/JSONL helper
 todo.py              todo 工具和持久化状态逻辑
@@ -130,7 +130,7 @@ The current version includes:
 main.py              CLI entrypoint, session resume, and interactive loop
 runtime.py           LLM client, model config, logging setup, and usage printing
 tool_runtime.py      tool policy, approval, execution, and observability logs
-tools.py             tool schemas, tool handlers, file/command tools
+tools/               tool schemas, tool handlers, file/command tools
 result.py            shared tool result object
 atomic_io.py         atomic writes and JSON/JSONL helpers for internal state
 todo.py              todo tool and persistent todo state

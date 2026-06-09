@@ -1,8 +1,8 @@
 import readline
-import ui
-
 from dataclasses import dataclass
 from typing import Callable
+
+import ui
 
 from tools import workspace_info
 

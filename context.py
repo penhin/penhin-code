@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
 from pathlib import Path
 from dataclasses import dataclass
+from typing import Any
 
 from compact import auto_compact_messages, micro_compact_text, should_auto_compact
 from tool_runtime import ApprovalFlow

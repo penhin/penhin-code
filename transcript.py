@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import time
 import re
+import time
 import json
 import logging
-from typing import Any
-
 from pathlib import Path
 from dataclasses import dataclass
+from typing import Any
 
 from atomic_io import read_jsonl, write_jsonl_atomic
 

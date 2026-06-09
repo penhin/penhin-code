@@ -5,14 +5,14 @@ import time
 import logging
 import argparse
 
+from ui import prompt_input
+from context import RunContext
+from tools import workspace_info
 from runtime import init_runtime
 from transcript import transcripts
 from agent import agent_loop, print_last_text, run_once
-from tool_runtime import ApprovalFlow, PARENT_AGENT_POLICY
 from commands import handle_local_command, setup_command_completion
-from context import RunContext
-from tools import workspace_info
-from ui import prompt_input
+from tool_runtime import ApprovalFlow, PARENT_AGENT_POLICY
 
 
 logger = logging.getLogger("penhin.main")
