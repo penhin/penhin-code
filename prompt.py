@@ -28,6 +28,17 @@ def build_subagent_final_system() -> str:
     )
 
 
+TASK_WORKFLOW = (
+    "\n\nTask workflow:\n"
+    "- For non-trivial coding tasks, start or update the tracked task before making changes.\n"
+    "- Prefer task_start with a short subject and a 2-5 item plan when beginning a new task.\n"
+    "- Treat task_start(plan=[...]) as the primary way to create the initial todo list.\n"
+    "- Use todo_done as steps are completed, and keep todos focused on executable steps.\n"
+    "- Use task_complete when the requested work is done, or task_block when progress is blocked.\n"
+    "- Do not create tasks or todos for simple questions, tiny lookups, or one-step responses."
+)
+
+
 MAIN_SYSTEM = (
     f"You are Penhin Code, a tiny coding agent running in {os.getcwd()}. "
     "Use task_start/task_show/task_complete/task_block/task_clear/task_list/task_switch to track the high-level task state. "
@@ -41,6 +52,7 @@ MAIN_SYSTEM = (
     "Prefer structured tools over ad hoc shell commands for file operations. "
     "Tool results are JSON with ok/message/data/error/meta fields; prefer data for structured facts and error for failures. "
     "Ignore .venv, .git, __pycache__, skills, and internal state files."
+    f"{TASK_WORKFLOW}"
     "\n\nAvailable skills:\n"
     f"{load_skill.get_descriptions()}"
 )
