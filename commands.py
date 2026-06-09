@@ -4,7 +4,8 @@ from typing import Callable
 
 import ui
 
-from tools import workspace_info
+from tools.registry import tool_names
+from tools.workspace import workspace_info
 
 @dataclass(frozen=True)
 class LocalCommand:
@@ -31,7 +32,7 @@ def handle_local_command(text: str) -> bool:
 
     
 def handle_workspace_command(args: list[str]):
-    ui.print_json(workspace_info())
+    ui.print_json(workspace_info(tool_names()))
 
 
 def handle_help_command(args: list[str]):

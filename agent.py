@@ -3,16 +3,15 @@ import logging
 from typing import Any
 
 from context import RunContext
-from tools import PARENT_TOOLS
+from tools.registry import PARENT_TOOLS
 from prompt import build_main_system
 from transcript import transcripts
 from runtime import get_runtime, log_usage
+from message_flow import ToolResults, execute_tool_blocks, extract_text
 from tool_runtime import ApprovalFlow, PARENT_AGENT_POLICY, approval_key, run_tool
 
 
 logger = logging.getLogger("penhin.agent")
-
-ToolResults = list[dict[str, Any]]
 
 
 def format_tool_input(tool_input: dict[str, Any]) -> str:
@@ -88,41 +87,12 @@ def should_continue_with_tools(response) -> bool:
 
 
 def execute_tool_uses(context: RunContext, response) -> tuple[ToolResults, bool]:
-    tool_results = []
-    manual_compact = False
-    for block in response.content:
-        if block.type != "tool_use":
-            continue
-
-        tool_name = block.name
-        logger.info(f"$ AI use {tool_name}...")
-
-        tool_run = run_tool(
-            tool_name,
-            block.input,
-            PARENT_AGENT_POLICY,
-            context.approval,
-        )
-
-        output = tool_run.result
-
-        if tool_run.approval_required:
-            tool_run = resolve_approval(tool_name, block.input, context.approval)
-            output = tool_run.result
-
-        if tool_run.manual_compact:
-            manual_compact = True
-
-        tool_results.append(
-            {
-                "type": "tool_result",
-                "tool_name": tool_name,
-                "tool_use_id": block.id,
-                "content": output.to_json(),
-            }
-        )
-
-    return tool_results, manual_compact
+    return execute_tool_blocks(
+        response.content,
+        PARENT_AGENT_POLICY,
+        context.approval,
+        approval_resolver=resolve_approval,
+    )
 
 
 def record_tool_results(context: RunContext, tool_results: ToolResults, manual_compact: bool) -> None:
@@ -165,13 +135,6 @@ def run_once(query: str) -> None:
 
 
 def print_last_text(messages: list[dict[str, Any]]) -> None:
-    content = messages[-1]["content"]
-    if not isinstance(content, list):
-        return
-
-    for block in content:
-        if isinstance(block, dict):
-            if block.get("type") == "text":
-                logger.info(block.get("text", ""))
-        elif getattr(block, "type", None) == "text":
-            logger.info(block.text)
+    text = extract_text(messages[-1]["content"])
+    if text:
+        logger.info(text)

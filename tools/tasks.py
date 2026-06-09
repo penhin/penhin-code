@@ -15,8 +15,15 @@ def run_task(task: str) -> Result:
     return run_subagent(task)
 
 
-def run_task_status(**kwargs) -> Result:
-    return task_status(**kwargs)
+def current_running_task() -> dict[str, Any] | None:
+    result = task_status(action="show")
+    if not result.ok or result.data is None:
+        return None
+    if result.data.get("kind") != "main":
+        return None
+    if result.data.get("status") != "running":
+        return None
+    return result.data
 
 
 def run_task_start(
@@ -25,7 +32,15 @@ def run_task_start(
     note: str = None,
     plan: list[str] = None,
 ) -> Result:
-    result = run_task_status(
+    current = current_running_task()
+    if current is not None:
+        return Result.failure(
+            "Error: current task is still running; complete, block, or clear it before starting a new task",
+            code="task_already_running",
+            data={"current_task": current},
+        )
+
+    result = task_status(
         action="start",
         subject=subject,
         description=description,
@@ -48,7 +63,7 @@ def run_task_start(
 
 
 def run_task_show(id: int = None) -> Result:
-    result = run_task_status(action="show", id=id)
+    result = task_status(action="show", id=id)
     if not result.ok or result.data is None:
         return result
 
@@ -80,7 +95,7 @@ def todo_summary(todos: list[dict[str, Any]]) -> dict[str, int]:
 
 def run_task_complete(note: str = None) -> Result:
     todos = current_todos()
-    result = run_task_status(action="complete", note=note)
+    result = task_status(action="complete", note=note)
     if not result.ok:
         return result
 

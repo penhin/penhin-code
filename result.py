@@ -78,9 +78,6 @@ class Result:
             "data": self._truncate_value(self.data),
             "error": self._truncate(self.error),
             "meta": self._truncate_value(self.meta),
-            "exit_code": self.exit_code,
-            "stdout": self._truncate(self.stdout),
-            "stderr": self._truncate(self.stderr),
         }
 
     def summary(self) -> dict[str, Any]:

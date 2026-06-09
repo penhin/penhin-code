@@ -9,7 +9,8 @@ import itertools
 from dataclasses import dataclass, field
 
 from result import Result
-from tools import TOOL_SPECS, ToolCategory, ToolInput
+from tools.registry import TOOL_SPECS
+from tools.types import ToolCategory, ToolInput
 
 
 logger = logging.getLogger("penhin.tool_runtime")

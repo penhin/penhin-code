@@ -1,5 +1,4 @@
 import json
-import sys
 import hashlib
 from typing import Any
 
@@ -10,10 +9,7 @@ from . import tasks as task_tools
 from .shell import run_bash
 from .workspace import run_workspace
 from .files import run_edit, run_list, run_read, run_search, run_write
-from .tasks import (
-    run_task,
-)
-from .types import ApprovalKey, ToolApproval, ToolCategory, ToolInput, ToolSchema, ToolSpec, tool_schema
+from .types import ApprovalKey, ToolApproval, ToolCategory, ToolSchema, ToolSpec, tool_schema
 
 
 def _short_digest(value: Any) -> str:
@@ -33,44 +29,13 @@ def object_schema(properties: ToolSchema | None = None, required: list[str] | No
     }
 
 
-def _sync_task_status() -> None:
-    facade = sys.modules.get("tools")
-    if facade is not None and hasattr(facade, "task_status"):
-        task_tools.task_status = facade.task_status
-
-
-def _run_task_status(**kwargs):
-    _sync_task_status()
-    return task_tools.run_task_status(**kwargs)
-
-
-def _run_task_start(**kwargs):
-    _sync_task_status()
-    return task_tools.run_task_start(**kwargs)
-
-
-def _run_task_show(**kwargs):
-    _sync_task_status()
-    return task_tools.run_task_show(**kwargs)
-
-
-def _run_task_complete(**kwargs):
-    _sync_task_status()
-    return task_tools.run_task_complete(**kwargs)
-
-
-def _run_background_start(task: str):
-    _sync_task_status()
-    return task_tools.run_background_start(task)
-
-
 TOOL_SPECS: dict[str, ToolSpec] = {
     "task": ToolSpec(
         name="task",
         description="Spawn a subagent with fresh context. It shares the filesystem but not conversation history.",
         input_schema=object_schema({"task": {"type": "string"}}, ["task"]),
         category=ToolCategory.agent,
-        handler=lambda **kwargs: run_task(kwargs["task"]),
+        handler=lambda **kwargs: task_tools.run_task(kwargs["task"]),
         available_to_child=False,
         available_to_parent=True,
         approval=ToolApproval(),
@@ -98,7 +63,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
             ["subject"],
         ),
         category=ToolCategory.state,
-        handler=lambda **kwargs: _run_task_start(
+        handler=lambda **kwargs: task_tools.run_task_start(
             subject=kwargs["subject"],
             description=kwargs.get("description", ""),
             note=kwargs.get("note"),
@@ -113,7 +78,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         description="Show the current high-level task state.",
         input_schema=object_schema({"id": {"type": "integer"}}),
         category=ToolCategory.state,
-        handler=lambda **kwargs: _run_task_show(id=kwargs.get("id")),
+        handler=lambda **kwargs: task_tools.run_task_show(id=kwargs.get("id")),
         available_to_child=False,
         available_to_parent=True,
         approval=ToolApproval(),
@@ -123,7 +88,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         description="Mark the current high-level task as completed.",
         input_schema=object_schema({"note": {"type": "string"}}),
         category=ToolCategory.state,
-        handler=lambda **kwargs: _run_task_complete(note=kwargs.get("note")),
+        handler=lambda **kwargs: task_tools.run_task_complete(note=kwargs.get("note")),
         available_to_child=False,
         available_to_parent=True,
         approval=ToolApproval(),
@@ -138,7 +103,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
             }
         ),
         category=ToolCategory.state,
-        handler=lambda **kwargs: _run_task_status(
+        handler=lambda **kwargs: task_tools.task_status(
             action="block",
             blocked_by=kwargs.get("blocked_by"),
             note=kwargs.get("note"),
@@ -152,7 +117,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         description="Clear the current high-level task pointer.",
         input_schema=object_schema(),
         category=ToolCategory.state,
-        handler=lambda **kwargs: _run_task_status(action="clear"),
+        handler=lambda **kwargs: task_tools.task_status(action="clear"),
         available_to_child=False,
         available_to_parent=True,
         approval=ToolApproval(),
@@ -162,7 +127,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         description="List all high-level task states.",
         input_schema=object_schema(),
         category=ToolCategory.state,
-        handler=lambda **kwargs: _run_task_status(action="list"),
+        handler=lambda **kwargs: task_tools.task_status(action="list"),
         available_to_child=False,
         available_to_parent=True,
         approval=ToolApproval(),
@@ -172,7 +137,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         description="Switch the current high-level task pointer.",
         input_schema=object_schema({"id": {"type": "integer"}}, ["id"]),
         category=ToolCategory.state,
-        handler=lambda **kwargs: _run_task_status(action="switch", id=kwargs["id"]),
+        handler=lambda **kwargs: task_tools.task_status(action="switch", id=kwargs["id"]),
         available_to_child=False,
         available_to_parent=True,
         approval=ToolApproval(),
@@ -182,7 +147,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         description="Start a focused background task and return immediately with its task id.",
         input_schema=object_schema({"task": {"type": "string"}}, ["task"]),
         category=ToolCategory.agent,
-        handler=lambda **kwargs: _run_background_start(kwargs["task"]),
+        handler=lambda **kwargs: task_tools.run_background_start(kwargs["task"]),
         available_to_child=False,
         available_to_parent=True,
         approval=ToolApproval(requires_approval=True, key=lambda tool_input: _short_digest(tool_input.get("task", ""))),
@@ -192,7 +157,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         description="Show all background tasks and their current statuses.",
         input_schema=object_schema(),
         category=ToolCategory.state,
-        handler=lambda **kwargs: _run_task_status(action="background_list"),
+        handler=lambda **kwargs: task_tools.task_status(action="background_list"),
         available_to_child=False,
         available_to_parent=True,
         approval=ToolApproval(),
@@ -202,7 +167,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         description="Show one background task with its result or error.",
         input_schema=object_schema({"id": {"type": "integer"}}, ["id"]),
         category=ToolCategory.state,
-        handler=lambda **kwargs: _run_task_status(action="background_show", id=kwargs["id"]),
+        handler=lambda **kwargs: task_tools.task_status(action="background_show", id=kwargs["id"]),
         available_to_child=False,
         available_to_parent=True,
         approval=ToolApproval(),
@@ -339,3 +304,11 @@ TOOL_SPECS: dict[str, ToolSpec] = {
 
 CHILD_TOOLS = [tool_schema(spec) for spec in TOOL_SPECS.values() if spec.available_to_child]
 PARENT_TOOLS = [tool_schema(spec) for spec in TOOL_SPECS.values() if spec.available_to_parent]
+
+
+def tool_description_lines(tools: list[ToolSchema] = PARENT_TOOLS) -> list[str]:
+    return [f"- {tool['name']}: {tool['description']}" for tool in tools]
+
+
+def tool_names(tools: list[ToolSchema] = PARENT_TOOLS) -> list[str]:
+    return [tool["name"] for tool in tools]

@@ -2,6 +2,7 @@ import os
 
 from pathlib import Path
 from skills import load_skill
+from tools.registry import tool_description_lines
 
 
 USER_PROMPT_PATH = Path("AGENTS.md")
@@ -30,10 +31,12 @@ def build_subagent_final_system() -> str:
 
 TASK_WORKFLOW = (
     "\n\nTask workflow:\n"
-    "- For non-trivial coding tasks, start or update the tracked task before making changes.\n"
-    "- Prefer task_start with a short subject and a 2-5 item plan when beginning a new task.\n"
+    "- For non-trivial user requests, start or update the tracked task before making changes.\n"
+    "- Use task_start only when beginning a new user-level task, with a short subject and a 2-5 item plan.\n"
     "- Treat task_start(plan=[...]) as the primary way to create the initial todo list.\n"
+    "- Do not use task_start for internal workflow steps, retries, status checks, or tool failures.\n"
     "- Use todo_done as steps are completed, and keep todos focused on executable steps.\n"
+    "- If a tool is rejected and progress cannot continue, use task_block with a short note instead of starting a new task.\n"
     "- Use task_complete when the requested work is done, or task_block when progress is blocked.\n"
     "- Do not create tasks or todos for simple questions, tiny lookups, or one-step responses."
 )
@@ -41,18 +44,13 @@ TASK_WORKFLOW = (
 
 MAIN_SYSTEM = (
     f"You are Penhin Code, a tiny coding agent running in {os.getcwd()}. "
-    "Use task_start/task_show/task_complete/task_block/task_clear/task_list/task_switch to track the high-level task state. "
-    "Use background_start/background_list/background_show for focused tasks that can run while the main conversation continues. "
-    "Use todo_set/todo_show/todo_done/todo_clear to plan and track multi-step tasks before making changes. "
-    "Use task to delegate focused subtasks that benefit from fresh context. "
-    "Use list/search/read/edit/write/workspace for file operations. "
-    "Use load_skill when a listed skill is relevant and you need its full instructions. "
-    "Use compact when context is getting long, tool results are noisy, or before switching tasks. "
-    "Use bash only for running commands, tests, or inspecting runtime behavior. "
+    "Use the available tools according to their descriptions. "
     "Prefer structured tools over ad hoc shell commands for file operations. "
     "Tool results are JSON with ok/message/data/error/meta fields; prefer data for structured facts and error for failures. "
     "Ignore .venv, .git, __pycache__, skills, and internal state files."
     f"{TASK_WORKFLOW}"
+    "\n\nAvailable tools:\n"
+    f"{chr(10).join(tool_description_lines())}"
     "\n\nAvailable skills:\n"
     f"{load_skill.get_descriptions()}"
 )

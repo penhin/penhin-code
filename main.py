@@ -7,7 +7,8 @@ import argparse
 
 from ui import prompt_input
 from context import RunContext
-from tools import workspace_info
+from tools.registry import tool_names
+from tools.workspace import workspace_info
 from runtime import init_runtime
 from transcript import transcripts
 from agent import agent_loop, print_last_text, run_once
@@ -26,7 +27,7 @@ def non_negative_int(value: str) -> int:
 
 
 def workspace_summary_line(info: dict[str, object] | None = None) -> str:
-    info = workspace_info() if info is None else info
+    info = workspace_info(tool_names()) if info is None else info
     dirty = info.get("dirty_files_count")
     if dirty is None:
         dirty = "unknown"

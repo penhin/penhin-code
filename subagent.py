@@ -1,25 +1,14 @@
 import logging
-from typing import Any
 
 from prompt import build_subagent_final_system, build_subagent_system
 from result import Result
-from tools import CHILD_TOOLS
+from tools.registry import CHILD_TOOLS
 from runtime import get_runtime, log_usage
-from tool_runtime import CHILD_AGENT_APPROVAL_FLOW, CHILD_AGENT_POLICY, run_tool
+from message_flow import execute_tool_blocks, extract_text
+from tool_runtime import CHILD_AGENT_APPROVAL_FLOW, CHILD_AGENT_POLICY
 
 
 logger = logging.getLogger("penhin.subagent")
-
-
-def extract_summary(content: Any) -> str:
-    parts = []
-    for block in content:
-        if isinstance(block, dict):
-            if block.get("type") == "text":
-                parts.append(block.get("text", ""))
-        elif getattr(block, "type", None) == "text":
-            parts.append(block.text)
-    return ("\n".join(parts)) or "(no summary)"
 
 
 def request_final_summary(runtime, sub_messages: list[dict[str, Any]]) -> str:
@@ -29,7 +18,7 @@ def request_final_summary(runtime, sub_messages: list[dict[str, Any]]) -> str:
         max_tokens=runtime.sub_max_tokens,
     )
     log_usage("subagent-final", response)
-    return extract_summary(response.content)
+    return extract_text(response.content, default="(no summary)")
 
 
 def run_subagent(task: str) -> Result:
@@ -48,36 +37,16 @@ def run_subagent(task: str) -> Result:
         
         log_usage("subagent", response)
         if response.stop_reason != "tool_use":
-            return Result.success(extract_summary(response.content))
+            return Result.success(extract_text(response.content, default="(no summary)"))
 
-        tool_results = []
-        for block in response.content:
-            if block.type != "tool_use":
-                continue
-
-            tool_name = block.name
-            logger.info(f"$ AI use {tool_name}...")
-
-            output = run_tool(
-                tool_name,
-                block.input,
-                CHILD_AGENT_POLICY,
-                CHILD_AGENT_APPROVAL_FLOW,
-            ).result
-
-            output_text = output.to_json()
-
-            tool_results.append(
-                {
-                    "type": "tool_result",
-                    "tool_name": tool_name,
-                    "tool_use_id": block.id,
-                    "content": output_text,
-                }
-            )
+        tool_results, _ = execute_tool_blocks(
+            response.content,
+            CHILD_AGENT_POLICY,
+            CHILD_AGENT_APPROVAL_FLOW,
+        )
 
         if not tool_results:
-            return Result.success(extract_summary(response.content))
+            return Result.success(extract_text(response.content, default="(no summary)"))
 
         sub_messages.append({"role": "user", "content": tool_results})
     

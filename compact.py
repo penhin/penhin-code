@@ -5,22 +5,16 @@ from typing import Any
 from prompt import AUTO_COMPACT_SYSTEM
 from runtime import get_runtime
 from transcript import serialize_for_json, transcripts
+from message_flow import block_get
 
 logger = logging.getLogger("penhin.compact")
 
 THRESHOLD = 50000
-MAX_CHARS = 50000
 SUMMARY_HEAD_CHARS = 40000
 SUMMARY_TAIL_CHARS = 40000
 KEEP_RECENT = 3
 KEEP_LAST_MESSAGES = 8
 PRESERVE_RESULT_TOOLS = {"todo_set", "todo_show", "todo_done", "todo_clear", "load_skill", "read"}
-
-
-def block_get(block: Any, key: str, default: Any = None) -> Any:
-    if isinstance(block, dict):
-        return block.get(key, default)
-    return getattr(block, key, default)
 
 
 def compact_source_text(messages: list[dict[str, Any]]) -> str:
