@@ -64,9 +64,9 @@ def run_bash(command: str) -> Result:
     except OSError as error:
         return Result.failure(f"Error: {error}", code="os_error")
     return Result(
-        result.returncode,
-        result.stdout,
-        result.stderr,
+        ok=result.returncode == 0,
+        message=result.stdout,
+        error=result.stderr,
         data={
             "command": command,
             "returncode": result.returncode,

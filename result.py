@@ -18,20 +18,16 @@ class Result:
 
     def __init__(
         self,
-        exit_code: int = 0,
-        stdout: str = "",
-        stderr: str = "",
-        *,
-        ok: bool | None = None,
-        message: str | None = None,
+        ok: bool = True,
+        message: str = "",
         data: Any = None,
-        error: str | None = None,
+        error: str = "",
         meta: dict[str, Any] | None = None,
     ):
-        self.ok = (exit_code == 0) if ok is None else ok
-        self.message = stdout if message is None else message
+        self.ok = ok
+        self.message = message
         self.data = data
-        self.error = stderr if error is None else error
+        self.error = error
         self.meta = {} if meta is None else meta
 
     @classmethod
@@ -44,18 +40,6 @@ class Result:
         if code is not None:
             result_meta["code"] = code
         return cls(ok=False, error=error, data=data, meta=result_meta)
-
-    @property
-    def exit_code(self) -> int:
-        return 0 if self.ok else 1
-
-    @property
-    def stdout(self) -> str:
-        return self.message
-
-    @property
-    def stderr(self) -> str:
-        return self.error
 
     def _truncate(self, text: str) -> str:
         if len(text) <= MAX_RESULT_CHARS:
@@ -82,8 +66,8 @@ class Result:
 
     def summary(self) -> dict[str, Any]:
         return {
-            "stdout_chars": len(self.stdout),
-            "stderr_chars": len(self.stderr),
+            "message_chars": len(self.message),
+            "error_chars": len(self.error),
             "data_type": type(self.data).__name__ if self.data is not None else "none",
             "meta_keys": sorted(self.meta),
         }

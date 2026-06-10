@@ -54,7 +54,7 @@ def run_task_start(
         todo_result = run_todo("set", plan)
         if not todo_result.ok:
             return Result.failure(
-                f"Task started, but plan setup failed: {todo_result.stderr}",
+                f"Task started, but plan setup failed: {todo_result.error}",
                 code="task_plan_failed",
                 data=result.data,
             )
@@ -114,8 +114,8 @@ def finish_background_task(task_id: int, task: str) -> None:
         from subagent import run_subagent
 
         result = run_subagent(task)
-        status = "completed" if result.exit_code == 0 else "failed"
-        task_status.finish_background(task_id, status, result.stdout, result.stderr)
+        status = "completed" if result.ok else "failed"
+        task_status.finish_background(task_id, status, result.message, result.error)
     except Exception as error:
         task_status.finish_background(task_id, "failed", error=str(error))
 

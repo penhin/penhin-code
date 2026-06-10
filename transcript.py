@@ -133,8 +133,11 @@ def tool_result_failed(tool_result: dict[str, Any]) -> bool:
     except json.JSONDecodeError:
         return False
 
-    if result.get("ok") is False:
-        return True
+    ok = result.get("ok")
+    if isinstance(ok, bool):
+        return not ok
+
+    # Backward compatibility for transcripts written before Result JSON used ok/error.
     return result.get("exit_code", 0) != 0
 
 
