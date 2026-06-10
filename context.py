@@ -5,12 +5,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from compact import auto_compact_messages, micro_compact_text, should_auto_compact
-from tool_runtime import ApprovalFlow
+from tool_runtime import ApprovalFlow, PermissionPolicy
 
 
 @dataclass
 class RunContext:
     messages: list[dict[str, Any]]
+    policy: PermissionPolicy
     approval: ApprovalFlow
     session_path: Path | None = None
 

@@ -8,7 +8,7 @@ from prompt import build_main_system
 from transcript import transcripts
 from runtime import get_runtime, log_usage
 from message_flow import ToolResults, execute_tool_blocks, extract_text
-from tool_runtime import ApprovalFlow, PARENT_AGENT_POLICY, approval_key, run_tool
+from tool_runtime import ApprovalFlow, PermissionPolicy, approval_key, run_tool
 
 
 logger = logging.getLogger("penhin.agent")
@@ -20,47 +20,62 @@ def format_tool_input(tool_input: dict[str, Any]) -> str:
     return json.dumps(tool_input, ensure_ascii=False, indent=2)
 
 
-def run_with_one_time_approval(tool_name: str, tool_input: dict[str, Any], approval: ApprovalFlow):
+def run_with_one_time_approval(
+    tool_name: str,
+    tool_input: dict[str, Any],
+    policy: PermissionPolicy,
+    approval: ApprovalFlow,
+):
     one_time_approval = approval.copy()
     one_time_approval.approve(tool_name, tool_input)
     return run_tool(
         tool_name,
         tool_input,
-        PARENT_AGENT_POLICY,
+        policy,
         one_time_approval,
     )
 
 
-def run_with_one_time_rejection(tool_name: str, tool_input: dict[str, Any], approval: ApprovalFlow):
+def run_with_one_time_rejection(
+    tool_name: str,
+    tool_input: dict[str, Any],
+    policy: PermissionPolicy,
+    approval: ApprovalFlow,
+):
     one_time_rejection = approval.copy()
     one_time_rejection.reject(tool_name, tool_input)
     return run_tool(
         tool_name,
         tool_input,
-        PARENT_AGENT_POLICY,
+        policy,
         one_time_rejection,
     )
 
 
-def resolve_approval(tool_name: str, tool_input: dict[str, Any], approval: ApprovalFlow):
+def resolve_approval(
+    tool_name: str,
+    tool_input: dict[str, Any],
+    policy: PermissionPolicy,
+    approval: ApprovalFlow,
+):
     logger.info(f"[approval] tool: {tool_name}")
     logger.info(f"[approval] key: {approval_key(tool_name, tool_input)}")
     logger.info(format_tool_input(tool_input))
 
     reply = input("[approval] y=once, ys=session, n=reject [y/N] ").strip().lower()
     if reply == "y":
-        return run_with_one_time_approval(tool_name, tool_input, approval)
+        return run_with_one_time_approval(tool_name, tool_input, policy, approval)
 
     if reply == "ys":
         approval.approve(tool_name, tool_input)
         return run_tool(
             tool_name,
             tool_input,
-            PARENT_AGENT_POLICY,
+            policy,
             approval,
         )
 
-    return run_with_one_time_rejection(tool_name, tool_input, approval)
+    return run_with_one_time_rejection(tool_name, tool_input, policy, approval)
 
 
 def compact_context_for_llm(context: RunContext) -> None:
@@ -89,7 +104,7 @@ def should_continue_with_tools(response) -> bool:
 def execute_tool_uses(context: RunContext, response) -> tuple[ToolResults, bool]:
     return execute_tool_blocks(
         response.content,
-        PARENT_AGENT_POLICY,
+        context.policy,
         context.approval,
         approval_resolver=resolve_approval,
     )
@@ -124,9 +139,13 @@ def agent_loop(context: RunContext) -> None:
 
 
 def run_once(query: str) -> None:
-    approval = ApprovalFlow.require_confirmation(PARENT_AGENT_POLICY.allow)
+    from config import get_permission_mode
+    from permissions import permission_setup
+
+    policy, approval = permission_setup(get_permission_mode())
     context = RunContext(
         messages=[{"role": "user", "content": query}],
+        policy=policy,
         approval=approval,
     )
     agent_loop(context)

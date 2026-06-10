@@ -1,4 +1,5 @@
 anthropic>=0.25.0
 python-dotenv>=1.0.0
+prompt_toolkit>=3.0.52
 pyyaml>=6.0
 rich>=13.7.0

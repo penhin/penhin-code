@@ -7,13 +7,14 @@ import argparse
 
 from ui import prompt_input
 from context import RunContext
+from config import get_permission_mode
+from permissions import permission_setup
 from tools.registry import tool_names
 from tools.workspace import workspace_info
 from runtime import init_runtime
 from transcript import transcripts
 from agent import agent_loop, print_last_text, run_once
 from commands import handle_local_command, setup_command_completion
-from tool_runtime import ApprovalFlow, PARENT_AGENT_POLICY
 
 
 logger = logging.getLogger("penhin.main")
@@ -83,20 +84,27 @@ def main() -> None:
     else:
         messages, session_path = transcripts.load_session(resume=True)
 
-    setup_command_completion()
-    approval = ApprovalFlow.require_confirmation(PARENT_AGENT_POLICY.allow)
+    command_completer = setup_command_completion()
+    permission_mode = get_permission_mode()
+    try:
+        policy, approval = permission_setup(permission_mode)
+    except ValueError:
+        permission_mode = "default"
+        policy, approval = permission_setup(permission_mode)
+    logger.info(f"[permission] mode={permission_mode}")
     context = RunContext(
         messages=messages,
+        policy=policy,
         approval=approval,
         session_path=session_path,
     )
 
     while True:
         try:
-            user_input = prompt_input().strip()
+            user_input = prompt_input(completer=command_completer).strip()
             
             if user_input.startswith("/"):
-                handled = handle_local_command(user_input)
+                handled = handle_local_command(user_input, context)
                 if handled:
                     continue
         except (EOFError, KeyboardInterrupt):

@@ -5,7 +5,7 @@ from tool_runtime import ApprovalFlow, PermissionPolicy, ToolRun, run_tool
 
 
 ToolResults = list[dict[str, Any]]
-ApprovalResolver = Callable[[str, dict[str, Any], ApprovalFlow], ToolRun]
+ApprovalResolver = Callable[[str, dict[str, Any], PermissionPolicy, ApprovalFlow], ToolRun]
 
 logger = logging.getLogger("penhin.message_flow")
 
@@ -59,7 +59,7 @@ def execute_tool_blocks(
 
         tool_run = run_tool(tool_name, tool_input, policy, approval)
         if tool_run.approval_required and approval_resolver is not None:
-            tool_run = approval_resolver(tool_name, tool_input, approval)
+            tool_run = approval_resolver(tool_name, tool_input, policy, approval)
 
         if tool_run.manual_compact:
             manual_compact = True
