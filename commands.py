@@ -7,7 +7,7 @@ import ui
 
 from config import get_permission_mode, set_permission_mode
 from context import RunContext
-from permissions import PERMISSION_MODES, permission_setup
+from permissions import PERMISSION_MODES, PermissionMode, permission_setup, transition_mode
 from tools.registry import tool_names
 from tools.workspace import workspace_info
 
@@ -53,8 +53,14 @@ def handle_permission_command(args: list[str], context: RunContext | None = None
     mode = args[0]
     if mode not in PERMISSION_MODES:
         ui.print_error(f"Unknown permission mode: {mode}")
-        ui.print_info("Available modes: default, auto-review, full-access")
+        ui.print_info("Available modes: default, auto-review, full-access, plan")
         return
+
+    # Use state machine when context is available (plan mode needs save/restore).
+    if context is not None:
+        current = PermissionMode(get_permission_mode())
+        target = PermissionMode(mode)
+        transition_mode(current, target, context)
 
     set_permission_mode(mode)
     policy, approval = permission_setup(mode)

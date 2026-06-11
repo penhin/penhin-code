@@ -5,8 +5,9 @@ from typing import Any
 from atomic_io import atomic_write_text
 
 
-CONFIG_DIR = Path(".penhin")
+CONFIG_DIR = Path.home() / ".penhin"
 CONFIG_FILE = CONFIG_DIR / "config.json"
+ENV_FILE = CONFIG_DIR / ".env"
 DEFAULT_CONFIG = {"permission_mode": "default"}
 
 

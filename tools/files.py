@@ -1,3 +1,5 @@
+import concurrent.futures
+import os
 import threading
 from pathlib import Path
 
@@ -110,7 +112,7 @@ def run_edit(path: str, old: str, new: str) -> Result:
             if count == 0:
                 return Result.failure("Error: old text not found", code="old_text_not_found")
             if count > 1:
-                return Result.failure(f"Error: old text appears {count}", code="old_text_not_unique", count=count)
+                return Result.failure(f"Error: old text appears {count} times", code="old_text_not_unique", count=count)
 
             updated = text.replace(old, new, 1)
             atomic_write_text(file_path, updated)
@@ -120,27 +122,45 @@ def run_edit(path: str, old: str, new: str) -> Result:
         return Result.failure(f"Error: {error}", code="edit_error")
 
 
-def run_search(query: str, path: str = ".", limit: int = None) -> Result:
+def _search_file(query: str, file_path: Path, workdir: Path) -> list[str]:
+    """Search a single file. Extracted for ThreadPoolExecutor."""
+    try:
+        text = file_path.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError):
+        return []
+
+    rel_path = file_path.relative_to(workdir)
+    matches = []
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        if query in line:
+            matches.append(f"{rel_path}:{line_number}:{line}")
+    return matches
+
+
+def run_search(query: str, path: str = ".", limit: int = None, timeout: int = 30) -> Result:
     try:
         file_path = safe_path(path)
-        results = []
+        all_files = list(iter_workspace_files(file_path))
+        if not all_files:
+            return Result.success(
+                "", data={"query": query, "path": path, "matches": [], "limit": limit}, count=0
+            )
 
-        for child in iter_workspace_files(file_path):
-            if limit and len(results) >= limit:
-                results.append("... (limit reached)")
-                break
-
+        results: list[str] = []
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(os.cpu_count() or 1, 8)
+        ) as executor:
+            futures = {executor.submit(_search_file, query, f, WORKDIR): f for f in all_files}
             try:
-                text = child.read_text(encoding="utf-8")
-            except UnicodeDecodeError:
-                continue
-            for line_number, line in enumerate(text.splitlines(), start=1):
-                if query in line:
-                    relative = child.relative_to(WORKDIR)
-                    results.append(f"{relative}:{line_number}:{line}")
+                for future in concurrent.futures.as_completed(futures, timeout=timeout):
+                    matches = future.result()
+                    results.extend(matches)
                     if limit and len(results) >= limit:
                         break
+            except concurrent.futures.TimeoutError:
+                pass  # return partial results
 
+        results = results[:limit] if limit else results
         return Result.success(
             "\n".join(results),
             data={"query": query, "path": path, "matches": results, "limit": limit},

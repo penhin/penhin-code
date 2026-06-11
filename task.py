@@ -49,14 +49,6 @@ class TaskStatus:
             updated_at=int(data.get("updated_at", time.time_ns())),
         )
 
-    def mark(self, status: str, blocked_by: list[int] = None, note: str = None) -> None:
-        self.status = status
-        if blocked_by is not None:
-            self.blocked_by = sorted(set(blocked_by))
-        if note is not None:
-            self.note = note
-        self.updated_at = time.time_ns()
-
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
@@ -142,23 +134,12 @@ class TaskStatusManager:
     def complete(self, note: str = None) -> TaskStatus:
         with self._lock:
             task = self._require_current()
-            task.mark("completed", blocked_by=[], note=note)
+            task.status = "completed"
+            if note is not None:
+                task.note = note
+            task.updated_at = time.time_ns()
             self._save(task)
-            return task
-
-    def block(self, blocked_by: list[int] = None, note: str = None) -> TaskStatus:
-        with self._lock:
-            task = self._require_current()
-            task.mark("blocked", blocked_by=blocked_by or [], note=note)
-            self._save(task)
-            return task
-
-    def switch(self, id: int) -> TaskStatus | None:
-        with self._lock:
-            if id is None:
-                return None
-            task = self._load(id)
-            self._set_current_id(id)
+            self._set_current_id(None)
             return task
 
     def finish_background(self, id: int, status: str, result: str = "", error: str = "") -> TaskStatus:
@@ -173,17 +154,12 @@ class TaskStatusManager:
             self._save(task)
             return task
 
-    def list(self, kind: str = None) -> list[dict[str, Any]]:
+    def _list_background(self) -> list[dict[str, Any]]:
         with self._lock:
             tasks: list[dict[str, Any]] = []
-            task_paths = sorted(
-                self.tasks_dir.glob("task_*.json"),
-                key=lambda path: int(path.stem.split("_")[1]),
-            )
-            for path in task_paths:
-                task_id = int(path.stem.split("_")[1])
-                task = self._load(task_id).to_dict()
-                if kind is not None and task["kind"] != kind:
+            for path in sorted(self.tasks_dir.glob("task_*.json"), key=lambda p: int(p.stem.split("_")[1])):
+                task = self._load(int(path.stem.split("_")[1])).to_dict()
+                if task["kind"] != "background":
                     continue
                 task.pop("description", None)
                 task.pop("note", None)
@@ -191,10 +167,6 @@ class TaskStatusManager:
                 task.pop("error", None)
                 tasks.append(task)
             return tasks
-
-    def clear(self) -> None:
-        with self._lock:
-            self._set_current_id(None)
 
     def _require_current(self) -> TaskStatus:
         task = self.show()
@@ -209,7 +181,6 @@ class TaskStatusManager:
         subject: str = None,
         description: str = "",
         note: str = None,
-        blocked_by: list[int] = None,
     ) -> Result:
         try:
             if action == "start":
@@ -228,24 +199,8 @@ class TaskStatusManager:
                 task = self.complete(note)
                 return Result.success(task.to_json(), data=task.to_dict(), action=action)
 
-            if action == "block":
-                task = self.block(blocked_by, note)
-                return Result.success(task.to_json(), data=task.to_dict(), action=action)
-
-            if action == "clear":
-                self.clear()
-                return Result.success("Cleared current task", data={"current_id": None}, action=action)
-
-            if action == "list":
-                tasks = self.list()
-                return Result.success(json.dumps(tasks, ensure_ascii=False, indent=2), data=tasks, action=action)
-
-            if action == "switch":
-                task = self.switch(id)
-                return Result.success(task.to_json(), data=task.to_dict(), action=action)
-
             if action == "background_list":
-                tasks = self.list(kind="background")
+                tasks = self._list_background()
                 return Result.success(json.dumps(tasks, ensure_ascii=False, indent=2), data=tasks, action=action)
 
             if action == "background_show":

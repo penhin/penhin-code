@@ -80,8 +80,7 @@ TASK_WORKFLOW_SECTION = (
     "- Treat task_start(plan=[...]) as the primary way to create the initial todo list.\n"
     "- Do not use task_start for internal workflow steps, retries, status checks, or tool failures.\n"
     "- Use todo_done as steps are completed, and keep todos focused on executable steps.\n"
-    "- If a tool is rejected and progress cannot continue, use task_block with a short note instead of starting a new task.\n"
-    "- Use task_complete when the requested work is done, or task_block when progress is blocked.\n"
+    "- Use task_complete when the requested work is done.\n"
     "- Do not create tasks or todos for simple questions, tiny lookups, or one-step responses."
 )
 

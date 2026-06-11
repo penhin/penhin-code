@@ -33,6 +33,7 @@ requirements.txt     Python 依赖
 .env.example         环境变量示例
 ```
 
+`~/.penhin/config.json` 和 `~/.penhin/.env` 是用户级配置，不随工作区移动。`~/.penhin/.env` 用于 `ANTHROPIC_API_KEY`、`MODEL_ID` 等环境变量。
 `.penhin_todos.json`、`.tasks/` 和 `.transcripts/` 是本地运行状态，会被文件工具和 git 忽略。
 
 ### 当前工具
@@ -70,10 +71,11 @@ bash           运行命令、测试或观察运行时行为
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
+mkdir -p ~/.penhin
+cp .env.example ~/.penhin/.env
 ```
 
-然后编辑 `.env`，设置 `ANTHROPIC_API_KEY` 和 `MODEL_ID`。
+然后编辑 `~/.penhin/.env`，设置 `ANTHROPIC_API_KEY` 和 `MODEL_ID`。项目根目录的 `.env` 仍作为兼容 fallback 被读取。
 
 ### 运行
 
@@ -146,6 +148,7 @@ requirements.txt     Python dependencies
 .env.example         environment variable example
 ```
 
+`~/.penhin/config.json` and `~/.penhin/.env` are user-level config and do not move with the workspace. Use `~/.penhin/.env` for `ANTHROPIC_API_KEY`, `MODEL_ID`, and similar environment variables.
 `.penhin_todos.json`, `.tasks/`, and `.transcripts/` are local runtime state. They are ignored by file tools and git.
 
 ### Current Tools
@@ -183,10 +186,11 @@ bash           run commands, tests, or inspect runtime behavior
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
+mkdir -p ~/.penhin
+cp .env.example ~/.penhin/.env
 ```
 
-Then edit `.env` and set `ANTHROPIC_API_KEY` and `MODEL_ID`.
+Then edit `~/.penhin/.env` and set `ANTHROPIC_API_KEY` and `MODEL_ID`. A project-root `.env` is still read as a compatibility fallback.
 
 ### Run
 

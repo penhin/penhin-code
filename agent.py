@@ -108,6 +108,7 @@ def execute_tool_uses(context: RunContext, response) -> tuple[ToolResults, bool]
         context.policy,
         context.approval,
         approval_resolver=resolve_approval,
+        context=context,
     )
 
 

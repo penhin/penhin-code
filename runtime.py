@@ -8,6 +8,8 @@ from typing import Any
 from anthropic import Anthropic, APIConnectionError, APIError, RateLimitError
 from dotenv import load_dotenv
 
+from config import ENV_FILE
+
 
 runtime = None
 logger = logging.getLogger("penhin.runtime")
@@ -110,11 +112,12 @@ def init_runtime() -> None:
     setup_logging()
 
     global runtime
-    load_dotenv()
+    load_dotenv(ENV_FILE, override=False)
+    load_dotenv(".env", override=False)
 
     missing_env = [name for name in ("ANTHROPIC_API_KEY", "MODEL_ID") if not os.getenv(name)]
     if missing_env:
-        logger.error(f"Please configure {', '.join(missing_env)} in .env")
+        logger.error(f"Please configure {', '.join(missing_env)} in {ENV_FILE} or .env")
         sys.exit(1)
 
     client = Anthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"))

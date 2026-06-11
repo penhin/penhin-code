@@ -14,6 +14,7 @@ class RunContext:
     policy: PermissionPolicy
     approval: ApprovalFlow
     session_path: Path | None = None
+    pre_plan_mode: str | None = None
 
     def add_user_message(self, content: Any) -> None:
         self.messages.append({"role": "user", "content": content})

@@ -1,7 +1,12 @@
+from __future__ import annotations
+
 import logging
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from tool_runtime import ApprovalFlow, PermissionPolicy, ToolRun, run_tool
+
+if TYPE_CHECKING:
+    from context import RunContext
 
 
 ToolResults = list[dict[str, Any]]
@@ -41,6 +46,7 @@ def execute_tool_blocks(
     policy: PermissionPolicy,
     approval: ApprovalFlow,
     approval_resolver: ApprovalResolver | None = None,
+    context: RunContext | None = None,
 ) -> tuple[ToolResults, bool]:
     tool_results = []
     manual_compact = False
@@ -57,7 +63,7 @@ def execute_tool_blocks(
         tool_use_id = block_get(block, "id")
         logger.info(f"$ AI use {tool_name}...")
 
-        tool_run = run_tool(tool_name, tool_input, policy, approval)
+        tool_run = run_tool(tool_name, tool_input, policy, approval, context=context)
         if tool_run.approval_required and approval_resolver is not None:
             tool_run = approval_resolver(tool_name, tool_input, policy, approval)
 

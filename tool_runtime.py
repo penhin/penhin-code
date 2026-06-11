@@ -7,8 +7,12 @@ import hashlib
 import itertools
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from result import Result
+
+if TYPE_CHECKING:
+    from context import RunContext
 from tools.registry import TOOL_SPECS
 from tools.types import ToolCategory, ToolInput
 
@@ -306,7 +310,11 @@ def validate_tool_input(tool_name: str, tool_input: ToolInput) -> Result | None:
     return None
 
 
-def execute_tool(tool_name: str, tool_input: ToolInput) -> ToolRun:
+def execute_tool(
+    tool_name: str,
+    tool_input: ToolInput,
+    context: RunContext | None = None,
+) -> ToolRun:
     spec = TOOL_SPECS[tool_name]
 
     invalid = validate_tool_input(tool_name, tool_input)
@@ -319,6 +327,19 @@ def execute_tool(tool_name: str, tool_input: ToolInput) -> ToolRun:
                 result=Result.success("Compacting conversation history now"),
                 manual_compact=True,
             )
+        if tool_name == "enter_plan":
+            if context is None:
+                return ToolRun(Result.failure("No context available for enter_plan", code="no_context"))
+            from .tools.plan_mode import run_enter_plan
+            return ToolRun(Result.success(run_enter_plan(context)))
+        if tool_name == "exit_plan":
+            if context is None:
+                return ToolRun(Result.failure("No context available for exit_plan", code="no_context"))
+            plan_content = tool_input.get("plan_content", "")
+            if not plan_content:
+                return ToolRun(Result.failure("plan_content is required", code="missing_plan_content"))
+            from .tools.plan_mode import run_exit_plan
+            return ToolRun(Result.success(run_exit_plan(context, plan_content)))
         return ToolRun(Result.failure(f"Unknown tool handler: {tool_name}", code="unknown_tool_handler"))
 
     try:
@@ -334,6 +355,7 @@ def run_tool(
     tool_input: ToolInput,
     policy: PermissionPolicy,
     approval: ApprovalFlow = None,
+    context: RunContext | None = None,
 ) -> ToolRun:
     approval = approval or default_approval_flow(policy)
 
@@ -361,7 +383,7 @@ def run_tool(
         )
 
     log_tool_start(call_id, tool_name, tool_input)
-    tool_run = execute_tool(tool_name, tool_input)
+    tool_run = execute_tool(tool_name, tool_input, context)
 
     duration_ms = (time.perf_counter() - start) * 1000
     log_tool_done(call_id, tool_name, tool_run, duration_ms)

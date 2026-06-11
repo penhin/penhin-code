@@ -6,6 +6,7 @@ from skills import load_skill
 from todo import run_todo
 
 from . import tasks as task_tools
+from .glob import run_glob
 from .shell import run_bash
 from .workspace import run_workspace
 from .files import run_edit, run_list, run_read, run_search, run_write
@@ -89,55 +90,6 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema({"note": {"type": "string"}}),
         category=ToolCategory.state,
         handler=lambda **kwargs: task_tools.run_task_complete(note=kwargs.get("note")),
-        available_to_child=False,
-        available_to_parent=True,
-        approval=ToolApproval(),
-    ),
-    "task_block": ToolSpec(
-        name="task_block",
-        description="Mark the current high-level task as blocked.",
-        input_schema=object_schema(
-            {
-                "blocked_by": {"type": "array", "items": {"type": "integer"}},
-                "note": {"type": "string"},
-            }
-        ),
-        category=ToolCategory.state,
-        handler=lambda **kwargs: task_tools.task_status(
-            action="block",
-            blocked_by=kwargs.get("blocked_by"),
-            note=kwargs.get("note"),
-        ),
-        available_to_child=False,
-        available_to_parent=True,
-        approval=ToolApproval(),
-    ),
-    "task_clear": ToolSpec(
-        name="task_clear",
-        description="Clear the current high-level task pointer.",
-        input_schema=object_schema(),
-        category=ToolCategory.state,
-        handler=lambda **kwargs: task_tools.task_status(action="clear"),
-        available_to_child=False,
-        available_to_parent=True,
-        approval=ToolApproval(),
-    ),
-    "task_list": ToolSpec(
-        name="task_list",
-        description="List all high-level task states.",
-        input_schema=object_schema(),
-        category=ToolCategory.state,
-        handler=lambda **kwargs: task_tools.task_status(action="list"),
-        available_to_child=False,
-        available_to_parent=True,
-        approval=ToolApproval(),
-    ),
-    "task_switch": ToolSpec(
-        name="task_switch",
-        description="Switch the current high-level task pointer.",
-        input_schema=object_schema({"id": {"type": "integer"}}, ["id"]),
-        category=ToolCategory.state,
-        handler=lambda **kwargs: task_tools.task_status(action="switch", id=kwargs["id"]),
         available_to_child=False,
         available_to_parent=True,
         approval=ToolApproval(),
@@ -239,12 +191,13 @@ TOOL_SPECS: dict[str, ToolSpec] = {
                 "query": {"type": "string"},
                 "path": {"type": "string"},
                 "limit": {"type": "integer"},
+                "timeout": {"type": "integer"},
             },
             ["query"],
         ),
         category=ToolCategory.readonly,
         handler=lambda **kwargs: run_search(
-            kwargs["query"], kwargs.get("path", "."), kwargs.get("limit")
+            kwargs["query"], kwargs.get("path", "."), kwargs.get("limit"), kwargs.get("timeout", 30)
         ),
         approval=ToolApproval(),
     ),
@@ -283,12 +236,49 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         handler=lambda **kwargs: run_todo("clear"),
         approval=ToolApproval(),
     ),
+    "glob": ToolSpec(
+        name="glob",
+        description="Search for files by pattern (e.g. **/*.py, src/**/*.ts). Supports recursive ** matching.",
+        input_schema=object_schema(
+            {
+                "pattern": {"type": "string"},
+                "path": {"type": "string"},
+            },
+            ["pattern"],
+        ),
+        category=ToolCategory.readonly,
+        handler=lambda **kwargs: run_glob(kwargs["pattern"], kwargs.get("path", ".")),
+        approval=ToolApproval(),
+    ),
     "workspace": ToolSpec(
         name="workspace",
         description="Show the absolute path of the current project working directory.",
         input_schema=object_schema(),
         category=ToolCategory.readonly,
         handler=lambda **kwargs: run_workspace([tool["name"] for tool in PARENT_TOOLS]),
+        approval=ToolApproval(),
+    ),
+    "enter_plan": ToolSpec(
+        name="enter_plan",
+        description="Switch to read-only plan mode for exploring and designing implementation. Only read/list/search/glob tools are available.",
+        input_schema=object_schema(),
+        category=ToolCategory.state,
+        handler=None,
+        available_to_child=False,
+        available_to_parent=True,
+        approval=ToolApproval(),
+    ),
+    "exit_plan": ToolSpec(
+        name="exit_plan",
+        description="Exit plan mode with a complete implementation plan. Saves the plan to disk and restores the previous permission mode.",
+        input_schema=object_schema(
+            {"plan_content": {"type": "string"}},
+            ["plan_content"],
+        ),
+        category=ToolCategory.state,
+        handler=None,
+        available_to_child=False,
+        available_to_parent=True,
         approval=ToolApproval(),
     ),
     "load_skill": ToolSpec(
