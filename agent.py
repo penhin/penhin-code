@@ -4,7 +4,7 @@ from typing import Any
 
 from context import RunContext
 from tools.registry import PARENT_TOOLS
-from prompt import build_main_system
+from prompt import build_main_system, ensure_project_instructions_message
 from transcript import transcripts
 from runtime import get_runtime, log_usage
 from message_flow import ToolResults, execute_tool_blocks, extract_text
@@ -84,6 +84,7 @@ def compact_context_for_llm(context: RunContext) -> None:
 
 
 def call_llm(context: RunContext, runtime):
+    ensure_project_instructions_message(context.messages)
     return runtime.call_with_retry(
         system=build_main_system(),
         messages=context.messages,

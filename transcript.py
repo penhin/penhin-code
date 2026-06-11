@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from atomic_io import read_jsonl, write_jsonl_atomic
+from prompt import PROJECT_INSTRUCTIONS_TAG
 
 
 logger = logging.getLogger("penhin.transcript")
@@ -81,7 +82,10 @@ def is_synthetic_user_message(message: dict[str, Any]) -> bool:
     content = message.get("content")
 
     if isinstance(content, str):
-        return content.startswith("[Conversation compressed.")
+        return (
+            content.startswith("[Conversation compressed.")
+            or content.strip().startswith(f"<{PROJECT_INSTRUCTIONS_TAG}>")
+        )
 
     if isinstance(content, list):
         return any(

@@ -1,6 +1,11 @@
 import logging
+from typing import Any
 
-from prompt import build_subagent_final_system, build_subagent_system
+from prompt import (
+    build_subagent_final_system,
+    build_subagent_system,
+    ensure_project_instructions_message,
+)
 from result import Result
 from tools.registry import CHILD_TOOLS
 from runtime import get_runtime, log_usage
@@ -12,6 +17,7 @@ logger = logging.getLogger("penhin.subagent")
 
 
 def request_final_summary(runtime, sub_messages: list[dict[str, Any]]) -> str:
+    ensure_project_instructions_message(sub_messages)
     response = runtime.call_with_retry(
         system=build_subagent_final_system(),
         messages=sub_messages,
@@ -25,6 +31,7 @@ def run_subagent(task: str) -> Result:
     runtime = get_runtime()
     
     sub_messages = [{"role": "user", "content": task}]
+    ensure_project_instructions_message(sub_messages)
     
     for _ in range(0, runtime.sub_max_turns):
         response = runtime.call_with_retry(
