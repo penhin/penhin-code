@@ -31,8 +31,8 @@ def run_enter_plan(context: RunContext) -> str:
         "You can explore the codebase using read, list, search, glob, task_show, "
         "and other read-only tools.\n"
         "You CANNOT create, edit, or delete any files.\n"
-        "When you have fully explored and designed an implementation plan, "
-        "call exit_plan with your complete plan to present it for approval."
+        "Design a complete step-by-step implementation plan.\n"
+        "When ready, call exit_plan with your full plan to restore write access."
     )
 
 
@@ -56,5 +56,6 @@ def run_exit_plan(context: RunContext, plan_content: str) -> str:
         "=== PLAN ===\n"
         f"{plan_content}\n"
         "============\n\n"
-        "Plan mode exited. Present the above plan to the user for approval."
+        "Plan mode exited. Now call task_start with 2-5 execution steps "
+        "derived from the plan above, then execute each step."
     )

@@ -46,14 +46,13 @@ todo_clear     清空 todo 列表
 task_start     开始追踪当前主任务
 task_show      查看当前或指定主任务
 task_complete  标记当前主任务完成
-task_block     标记当前主任务阻塞
-task_clear     清除当前主任务指针
-task_list      查看所有主任务
-task_switch    切换当前主任务
 background_start 启动后台任务
 background_list  查看后台任务状态
 background_show  查看后台任务结果
 task           委派一个子 agent 执行聚焦任务
+enter_plan     切换到只读计划模式
+exit_plan      退出计划模式并保存实施计划
+glob           使用 glob 模式搜索文件
 load_skill     读取完整 skill 内容
 workspace      查看当前工作区信息
 compact        压缩长上下文
@@ -161,14 +160,13 @@ todo_clear     clear the todo list
 task_start     start tracking the current high-level task
 task_show      show the current or selected high-level task
 task_complete  mark the current high-level task completed
-task_block     mark the current high-level task blocked
-task_clear     clear the current high-level task pointer
-task_list      show all high-level tasks
-task_switch    switch the current high-level task
 background_start start a background task
 background_list  show background task statuses
 background_show  show a background task result
 task           delegate a focused task to a subagent
+enter_plan     switch to read-only plan mode
+exit_plan      exit plan mode and save the implementation plan
+glob           search files using glob patterns
 load_skill     load full skill content
 workspace      show workspace information
 compact        compact long context

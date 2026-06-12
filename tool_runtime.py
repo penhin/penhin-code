@@ -330,7 +330,7 @@ def execute_tool(
         if tool_name == "enter_plan":
             if context is None:
                 return ToolRun(Result.failure("No context available for enter_plan", code="no_context"))
-            from .tools.plan_mode import run_enter_plan
+            from tools.plan_mode import run_enter_plan
             return ToolRun(Result.success(run_enter_plan(context)))
         if tool_name == "exit_plan":
             if context is None:
@@ -338,7 +338,7 @@ def execute_tool(
             plan_content = tool_input.get("plan_content", "")
             if not plan_content:
                 return ToolRun(Result.failure("plan_content is required", code="missing_plan_content"))
-            from .tools.plan_mode import run_exit_plan
+            from tools.plan_mode import run_exit_plan
             return ToolRun(Result.success(run_exit_plan(context, plan_content)))
         return ToolRun(Result.failure(f"Unknown tool handler: {tool_name}", code="unknown_tool_handler"))
 

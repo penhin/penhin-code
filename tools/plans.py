@@ -44,5 +44,5 @@ _WORDS = [
     "pale", "proud", "pure", "quick", "rare",
     "rough", "round", "sharp", "short", "shy",
     "slim", "small", "smart", "soft", "solid",
-    "still", "sunny", "swift", "tall", "tame",
+    "still", "sunny", "warm", "tall", "tame",
 ]

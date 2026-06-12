@@ -84,6 +84,16 @@ TASK_WORKFLOW_SECTION = (
     "- Do not create tasks or todos for simple questions, tiny lookups, or one-step responses."
 )
 
+PLANNING_WORKFLOW_SECTION = (
+    "Planning workflow:\n"
+    "- For complex or multi-step implementation changes, enter plan mode first with enter_plan.\n"
+    "- In plan mode, you are READ-ONLY. Explore the codebase with read, search, glob, and list.\n"
+    "- Design a complete, step-by-step implementation plan before making any changes.\n"
+    "- Once ready, call exit_plan with your full plan to restore write access.\n"
+    "- After exiting plan mode, immediately call task_start with 2-5 executable steps derived from your plan.\n"
+    "- Then execute each step, marking todos done with todo_done as you go."
+)
+
 
 IDENTITY_SECTION = (
     f"You are Penhin Code, a tiny coding agent running in {os.getcwd()}."
@@ -116,6 +126,7 @@ def build_main_system_sections() -> list[str]:
         xml_section("tool_usage", TOOL_USAGE_SECTION),
         xml_section("file_scope", FILE_SCOPE_SECTION),
         xml_section("task_workflow", TASK_WORKFLOW_SECTION),
+        xml_section("planning_workflow", PLANNING_WORKFLOW_SECTION),
         xml_section("available_tools", available_tools_section()),
         xml_section("available_skills", available_skills_section()),
     ]
