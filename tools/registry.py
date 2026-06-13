@@ -33,10 +33,39 @@ def object_schema(properties: ToolSchema | None = None, required: list[str] | No
 TOOL_SPECS: dict[str, ToolSpec] = {
     "task": ToolSpec(
         name="task",
-        description="Spawn a subagent with fresh context. It shares the filesystem but not conversation history.",
+        description="Spawn a general-purpose subagent with fresh context. It shares the filesystem but not conversation history. Use verify for completed-work verification.",
         input_schema=object_schema({"task": {"type": "string"}}, ["task"]),
         category=ToolCategory.agent,
         handler=lambda **kwargs: task_tools.run_task(kwargs["task"]),
+        available_to_child=False,
+        available_to_parent=True,
+        approval=ToolApproval(),
+    ),
+    "verify": ToolSpec(
+        name="verify",
+        description=(
+            "Run a verification agent to check completed coding work. "
+            "It may inspect files and run focused checks, but must not modify files. "
+            "If plan_slug is provided, or the current task has one, the saved plan is loaded automatically."
+        ),
+        input_schema=object_schema(
+            {
+                "goal": {"type": "string"},
+                "plan": {"type": "string"},
+                "plan_slug": {"type": "string"},
+                "changes": {"type": "string"},
+                "test_hint": {"type": "string"},
+            },
+            ["goal"],
+        ),
+        category=ToolCategory.agent,
+        handler=lambda **kwargs: task_tools.run_verify(
+            goal=kwargs["goal"],
+            plan=kwargs.get("plan", ""),
+            plan_slug=kwargs.get("plan_slug", ""),
+            changes=kwargs.get("changes", ""),
+            test_hint=kwargs.get("test_hint", ""),
+        ),
         available_to_child=False,
         available_to_parent=True,
         approval=ToolApproval(),
@@ -60,6 +89,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
                 "description": {"type": "string"},
                 "note": {"type": "string"},
                 "plan": {"type": "array", "items": {"type": "string"}},
+                "plan_slug": {"type": "string"},
             },
             ["subject"],
         ),
@@ -69,6 +99,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
             description=kwargs.get("description", ""),
             note=kwargs.get("note"),
             plan=kwargs.get("plan"),
+            plan_slug=kwargs.get("plan_slug", ""),
         ),
         available_to_child=False,
         available_to_parent=True,

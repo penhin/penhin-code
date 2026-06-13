@@ -53,7 +53,7 @@ def handle_permission_command(args: list[str], context: RunContext | None = None
     mode = args[0]
     if mode not in PERMISSION_MODES:
         ui.print_error(f"Unknown permission mode: {mode}")
-        ui.print_info("Available modes: default, auto-review, full-access, plan")
+        ui.print_info(f"Available modes: {', '.join(sorted(PERMISSION_MODES))}")
         return
 
     # Use state machine when context is available (plan mode needs save/restore).

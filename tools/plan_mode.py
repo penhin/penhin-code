@@ -42,6 +42,7 @@ def run_exit_plan(context: RunContext, plan_content: str) -> str:
         return "Not in plan mode. Call enter_plan first."
 
     plan_path = write_plan(plan_content)
+    plan_slug = plan_path.stem
 
     pre_plan = context.pre_plan_mode or PermissionMode.DEFAULT.value
     transition_mode(PermissionMode.PLAN, PermissionMode(pre_plan), context)
@@ -53,9 +54,10 @@ def run_exit_plan(context: RunContext, plan_content: str) -> str:
 
     return (
         f"Plan saved to {plan_path}\n\n"
+        f"plan_slug: {plan_slug}\n\n"
         "=== PLAN ===\n"
         f"{plan_content}\n"
         "============\n\n"
-        "Plan mode exited. Now call task_start with 2-5 execution steps "
+        "Plan mode exited. Now call task_start with plan_slug and 2-5 execution steps "
         "derived from the plan above, then execute each step."
     )

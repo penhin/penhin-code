@@ -23,6 +23,8 @@ class TaskStatus:
     description: str = ""
     status: str = "running"
     blocked_by: list[int] = field(default_factory=list)
+    plan_slug: str = ""
+    verified_plan_slug: str = ""
     note: str = ""
     error: str = ""
     result: str = ""
@@ -42,6 +44,8 @@ class TaskStatus:
             description=str(data.get("description", "")),
             status=str(data.get("status", "running")),
             blocked_by=list(blocked_by),
+            plan_slug=str(data.get("plan_slug", "")),
+            verified_plan_slug=str(data.get("verified_plan_slug", "")),
             note=str(data.get("note", "")),
             error=str(data.get("error", "")),
             result=str(data.get("result", "")),
@@ -94,13 +98,20 @@ class TaskStatusManager:
         current_id = data.get("current_id")
         return int(current_id) if current_id is not None else None
 
-    def start(self, subject: str, description: str = "", note: str = "") -> TaskStatus:
+    def start(
+        self,
+        subject: str,
+        description: str = "",
+        note: str = "",
+        plan_slug: str = "",
+    ) -> TaskStatus:
         with self._lock:
             task = TaskStatus(
                 id=self._next_id,
                 subject=subject,
                 description=description,
                 note=note,
+                plan_slug=plan_slug,
                 status="running",
             )
             self._save(task)
@@ -142,6 +153,14 @@ class TaskStatusManager:
             self._set_current_id(None)
             return task
 
+    def mark_plan_verified(self, task_id: int, plan_slug: str) -> TaskStatus:
+        with self._lock:
+            task = self._load(task_id)
+            task.verified_plan_slug = plan_slug
+            task.updated_at = time.time_ns()
+            self._save(task)
+            return task
+
     def finish_background(self, id: int, status: str, result: str = "", error: str = "") -> TaskStatus:
         with self._lock:
             task = self._load(id)
@@ -181,12 +200,13 @@ class TaskStatusManager:
         subject: str = None,
         description: str = "",
         note: str = None,
+        plan_slug: str = "",
     ) -> Result:
         try:
             if action == "start":
                 if not subject:
                     return Result.failure("Error: subject is required for start", code="missing_subject")
-                task = self.start(subject, description, note or "")
+                task = self.start(subject, description, note or "", plan_slug)
                 return Result.success(task.to_json(), data=task.to_dict(), action=action)
 
             if action == "show":
