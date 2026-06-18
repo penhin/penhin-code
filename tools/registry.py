@@ -33,10 +33,29 @@ def object_schema(properties: ToolSchema | None = None, required: list[str] | No
 TOOL_SPECS: dict[str, ToolSpec] = {
     "task": ToolSpec(
         name="task",
-        description="Spawn a general-purpose subagent with fresh context. It shares the filesystem but not conversation history. Use verify for completed-work verification.",
-        input_schema=object_schema({"task": {"type": "string"}}, ["task"]),
+        description=(
+            "Spawn a subagent with an isolated context. "
+            "Use agent_type='explore' for read-only codebase investigation, "
+            "'plan' for read-only software architecture planning, "
+            "and 'general' only when implementation-level tools are needed. "
+            "Use verify for completed-work verification."
+        ),
+        input_schema=object_schema(
+            {
+                "task": {"type": "string"},
+                "agent_type": {
+                    "type": "string",
+                    "enum": ["explore", "general", "plan"],
+                    "description": "Subagent type. Defaults to general when omitted.",
+                },
+            },
+            ["task"],
+        ),
         category=ToolCategory.agent,
-        handler=lambda **kwargs: task_tools.run_task(kwargs["task"]),
+        handler=lambda **kwargs: task_tools.run_task(
+            kwargs["task"],
+            agent_type=kwargs.get("agent_type", "general"),
+        ),
         available_to_child=False,
         available_to_parent=True,
         approval=ToolApproval(),
@@ -287,29 +306,6 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema(),
         category=ToolCategory.readonly,
         handler=lambda **kwargs: run_workspace([tool["name"] for tool in PARENT_TOOLS]),
-        approval=ToolApproval(),
-    ),
-    "enter_plan": ToolSpec(
-        name="enter_plan",
-        description="Switch to read-only plan mode for exploring and designing implementation. Only read/list/search/glob tools are available.",
-        input_schema=object_schema(),
-        category=ToolCategory.state,
-        handler=None,
-        available_to_child=False,
-        available_to_parent=True,
-        approval=ToolApproval(),
-    ),
-    "exit_plan": ToolSpec(
-        name="exit_plan",
-        description="Exit plan mode with a complete implementation plan. Saves the plan to disk and restores the previous permission mode.",
-        input_schema=object_schema(
-            {"plan_content": {"type": "string"}},
-            ["plan_content"],
-        ),
-        category=ToolCategory.state,
-        handler=None,
-        available_to_child=False,
-        available_to_parent=True,
         approval=ToolApproval(),
     ),
     "load_skill": ToolSpec(

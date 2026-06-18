@@ -7,7 +7,8 @@ import ui
 
 from config import get_permission_mode, set_permission_mode
 from context import RunContext
-from permissions import PERMISSION_MODES, PermissionMode, permission_setup, transition_mode
+from permissions import PERMISSION_MODES, PermissionMode, transition_mode
+from tool_runtime import runtime_permission_setup
 from tools.registry import tool_names
 from tools.workspace import workspace_info
 
@@ -56,14 +57,13 @@ def handle_permission_command(args: list[str], context: RunContext | None = None
         ui.print_info(f"Available modes: {', '.join(sorted(PERMISSION_MODES))}")
         return
 
-    # Use state machine when context is available (plan mode needs save/restore).
     if context is not None:
         current = PermissionMode(get_permission_mode())
         target = PermissionMode(mode)
         transition_mode(current, target, context)
 
     set_permission_mode(mode)
-    policy, approval = permission_setup(mode)
+    policy, approval = runtime_permission_setup(mode)
     if context is not None:
         context.policy = policy
         context.approval = approval

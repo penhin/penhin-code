@@ -8,7 +8,8 @@ import argparse
 from ui import prompt_input
 from context import RunContext
 from config import get_permission_mode
-from permissions import permission_setup
+from permissions import normalize_permission_mode
+from tool_runtime import runtime_permission_setup
 from tools.registry import tool_names
 from tools.workspace import workspace_info
 from runtime import init_runtime
@@ -87,10 +88,11 @@ def main() -> None:
     command_completer = setup_command_completion()
     permission_mode = get_permission_mode()
     try:
-        policy, approval = permission_setup(permission_mode)
+        normalize_permission_mode(permission_mode)
+        policy, approval = runtime_permission_setup(permission_mode)
     except ValueError:
         permission_mode = "default"
-        policy, approval = permission_setup(permission_mode)
+        policy, approval = runtime_permission_setup(permission_mode)
     logger.info(f"[permission] mode={permission_mode}")
     context = RunContext(
         messages=messages,

@@ -42,7 +42,7 @@ def next_tool_call_id() -> str:
 @dataclass
 class PermissionPolicy:
     allow: set[str]
-    deny: set[str]
+    deny: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -110,24 +110,8 @@ def approval_required_tools(tool_names: set[str]) -> set[str]:
     }
 
 
-ASK_ALLOW = tool_names_by_category({ToolCategory.readonly})
-EDIT_ALLOW = tool_names_by_category({ToolCategory.readonly, ToolCategory.write, ToolCategory.state})
 PARENT_AGENT_ALLOW = tool_names_for("parent")
 CHILD_AGENT_ALLOW = tool_names_for("child")
-
-
-ASK_POLICY = PermissionPolicy(
-    allow=ASK_ALLOW,
-    deny={"write", "edit", "bash", "task"},
-)
-ASK_APPROVAL_FLOW = ApprovalFlow.preapproved(ASK_ALLOW)
-
-
-EDIT_POLICY = PermissionPolicy(
-    allow=EDIT_ALLOW,
-    deny={"bash"},
-)
-EDIT_APPROVAL_FLOW = ApprovalFlow.preapproved(EDIT_ALLOW)
 
 
 PARENT_AGENT_POLICY = PermissionPolicy(
@@ -139,9 +123,33 @@ PARENT_AGENT_APPROVAL_FLOW = ApprovalFlow.preapproved(PARENT_AGENT_ALLOW)
 
 CHILD_AGENT_POLICY = PermissionPolicy(
     allow=CHILD_AGENT_ALLOW,
-    deny=set(),
 )
 CHILD_AGENT_APPROVAL_FLOW = ApprovalFlow.preapproved(CHILD_AGENT_ALLOW)
+
+
+def policy_for_runtime_mode(mode: str) -> PermissionPolicy:
+    if mode == "auto-review":
+        allow = tool_names_by_category({ToolCategory.readonly, ToolCategory.state})
+        if "compact" in TOOL_SPECS:
+            allow.add("compact")
+        return PermissionPolicy(
+            allow=allow,
+            deny={"write", "edit", "bash", "task", "background_start"},
+        )
+
+    return PARENT_AGENT_POLICY
+
+
+def approval_for_runtime_mode(mode: str, policy: PermissionPolicy) -> ApprovalFlow:
+    if mode in {"auto-review", "full-access"}:
+        return ApprovalFlow.preapproved(policy.allow)
+
+    return ApprovalFlow.require_confirmation(policy.allow)
+
+
+def runtime_permission_setup(mode: str) -> tuple[PermissionPolicy, ApprovalFlow]:
+    policy = policy_for_runtime_mode(mode)
+    return policy, approval_for_runtime_mode(mode, policy)
 
 
 def default_approval_flow(policy: PermissionPolicy) -> ApprovalFlow:
@@ -307,6 +315,17 @@ def validate_tool_input(tool_name: str, tool_input: ToolInput) -> Result | None:
                 actual=type(value).__name__,
             )
 
+        enum_values = field_schema.get("enum")
+        if enum_values is not None and value not in enum_values:
+            return Result.failure(
+                f"Invalid input value: {name} must be one of {', '.join(map(str, enum_values))}",
+                code="invalid_tool_input",
+                field=name,
+                expected="enum",
+                allowed=enum_values,
+                actual=value,
+            )
+
     return None
 
 
@@ -327,19 +346,6 @@ def execute_tool(
                 result=Result.success("Compacting conversation history now"),
                 manual_compact=True,
             )
-        if tool_name == "enter_plan":
-            if context is None:
-                return ToolRun(Result.failure("No context available for enter_plan", code="no_context"))
-            from tools.plan_mode import run_enter_plan
-            return ToolRun(Result.success(run_enter_plan(context)))
-        if tool_name == "exit_plan":
-            if context is None:
-                return ToolRun(Result.failure("No context available for exit_plan", code="no_context"))
-            plan_content = tool_input.get("plan_content", "")
-            if not plan_content:
-                return ToolRun(Result.failure("plan_content is required", code="missing_plan_content"))
-            from tools.plan_mode import run_exit_plan
-            return ToolRun(Result.success(run_exit_plan(context, plan_content)))
         return ToolRun(Result.failure(f"Unknown tool handler: {tool_name}", code="unknown_tool_handler"))
 
     try:

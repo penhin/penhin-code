@@ -1,19 +1,22 @@
 import logging
 from typing import Any
 
-from permissions import permission_setup
 from prompt import (
+    build_exploration_final_system,
+    build_exploration_system,
+    build_plan_agent_final_system,
+    build_plan_agent_system,
     build_verification_system,
     build_subagent_final_system,
     build_subagent_system,
     ensure_project_instructions_message,
 )
 from result import Result
-from tools.registry import CHILD_TOOLS, TOOL_SPECS
+from tools.registry import TOOL_SPECS
 from tools.types import ToolSchema, tool_schema
 from runtime import get_runtime, log_usage
 from message_flow import execute_tool_blocks, extract_text
-from tool_runtime import CHILD_AGENT_APPROVAL_FLOW, CHILD_AGENT_POLICY
+from tool_runtime import ApprovalFlow, PermissionPolicy
 
 
 logger = logging.getLogger("penhin.subagent")
@@ -27,34 +30,104 @@ def tools_for_policy(tool_names: set[str]) -> list[ToolSchema]:
     ]
 
 
-def verification_agent_config() -> dict[str, Any]:
-    policy, approval = permission_setup("verification")
+def _available_tool_names(tool_names: set[str]) -> set[str]:
+    return {name for name in tool_names if name in TOOL_SPECS}
+
+
+def _readonly_tool_allowlist() -> set[str]:
+    return _available_tool_names({
+        "glob",
+        "list",
+        "read",
+        "search",
+        "workspace",
+    })
+
+
+def _verification_tool_allowlist() -> set[str]:
+    return _available_tool_names({
+        "bash",
+        "compact",
+        "glob",
+        "list",
+        "read",
+        "search",
+        "task_show",
+        "todo_show",
+        "workspace",
+    })
+
+
+def _child_tool_allowlist() -> set[str]:
     return {
-        "system": build_verification_system,
-        "final_system": build_verification_system,
-        "tools": tools_for_policy(policy.allow),
-        "policy": policy,
-        "approval": approval,
+        name
+        for name, spec in TOOL_SPECS.items()
+        if spec.available_to_child
     }
 
 
+def _agent_type_config(system, final_system, allow: set[str]) -> dict[str, Any]:
+    policy = PermissionPolicy(allow=_available_tool_names(allow))
+    return {
+        "system": system,
+        "final_system": final_system,
+        "tools": tools_for_policy(policy.allow),
+        "policy": policy,
+        "approval": ApprovalFlow.preapproved(policy.allow),
+    }
+
+
+def _general_config() -> dict[str, Any]:
+    return _agent_type_config(
+        build_subagent_system,
+        build_subagent_final_system,
+        _child_tool_allowlist(),
+    )
+
+
+def _explore_config() -> dict[str, Any]:
+    return _agent_type_config(
+        build_exploration_system,
+        build_exploration_final_system,
+        _readonly_tool_allowlist(),
+    )
+
+
+def _verify_config() -> dict[str, Any]:
+    return _agent_type_config(
+        build_verification_system,
+        build_verification_system,
+        _verification_tool_allowlist(),
+    )
+
+
+def _plan_config() -> dict[str, Any]:
+    return _agent_type_config(
+        build_plan_agent_system,
+        build_plan_agent_final_system,
+        _readonly_tool_allowlist(),
+    )
+
+
 AGENT_TYPES = {
-    "general": {
-        "system": build_subagent_system,
-        "final_system": build_subagent_final_system,
-        "tools": CHILD_TOOLS,
-        "policy": CHILD_AGENT_POLICY,
-        "approval": CHILD_AGENT_APPROVAL_FLOW,
-    },
-    "verification": verification_agent_config,
+    "general": _general_config,
+    "explore": _explore_config,
+    "verification": _verify_config,
+    "plan": _plan_config,
 }
 
 
 def agent_config(agent_type: str) -> dict[str, Any] | None:
-    config = AGENT_TYPES.get(agent_type)
-    if callable(config):
-        return config()
-    return config
+    config_factory = AGENT_TYPES.get(agent_type)
+    if config_factory is None:
+        return None
+    return config_factory()
+
+
+def build_subagent_initial_messages(task: str) -> list[dict[str, Any]]:
+    sub_messages = [{"role": "user", "content": task}]
+    ensure_project_instructions_message(sub_messages)
+    return sub_messages
 
 
 def request_final_summary(runtime, sub_messages: list[dict[str, Any]], config: dict[str, Any], agent_type: str) -> str:
@@ -78,9 +151,7 @@ def run_subagent(task: str, agent_type: str = "general") -> Result:
         )
 
     runtime = get_runtime()
-    
-    sub_messages = [{"role": "user", "content": task}]
-    ensure_project_instructions_message(sub_messages)
+    sub_messages = build_subagent_initial_messages(task)
     
     for _ in range(0, runtime.sub_max_turns):
         response = runtime.call_with_retry(
@@ -113,8 +184,3 @@ def run_subagent(task: str, agent_type: str = "general") -> Result:
             f"Subagent failed to summarize after max turns: {error}",
             code="summary_failed",
         )
-    
-
-        
-        
-    

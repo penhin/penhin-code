@@ -11,9 +11,9 @@ from tools.plans import read_plan
 BACKGROUND_THREAD_PREFIX = "background-task-"
 
 
-def run_task(task: str) -> Result:
+def run_task(task: str, agent_type: str = "general") -> Result:
     from subagent import run_subagent
-    return run_subagent(task, agent_type="general")
+    return run_subagent(task, agent_type=agent_type)
 
 
 def run_verify(

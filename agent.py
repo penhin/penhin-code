@@ -142,9 +142,9 @@ def agent_loop(context: RunContext) -> None:
 
 def run_once(query: str) -> None:
     from config import get_permission_mode
-    from permissions import permission_setup
+    from tool_runtime import runtime_permission_setup
 
-    policy, approval = permission_setup(get_permission_mode())
+    policy, approval = runtime_permission_setup(get_permission_mode())
     context = RunContext(
         messages=[{"role": "user", "content": query}],
         policy=policy,

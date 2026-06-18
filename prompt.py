@@ -73,21 +73,41 @@ def build_subagent_final_system() -> str:
     )
 
 
+def build_exploration_system() -> str:
+    return EXPLORATION_SYSTEM
+
+
+def build_exploration_final_system() -> str:
+    return EXPLORATION_SYSTEM + (
+        "\n\n"
+        "The tool budget is exhausted. Use the available tool results and return the final concise summary now."
+    )
+
+
+def build_plan_agent_system() -> str:
+    return PLAN_AGENT_SYSTEM
+
+
+def build_plan_agent_final_system() -> str:
+    return PLAN_AGENT_SYSTEM + (
+        "\n\n"
+        "The tool budget is exhausted. Use the available tool results and return the final concise plan now."
+    )
+
+
 def build_verification_system() -> str:
     return VERIFICATION_SYSTEM
 
 
 TASK_WORKFLOW_SECTION = (
     "Task and planning workflow:\n"
-    "- For complex or multi-step implementation changes, enter plan mode first with enter_plan.\n"
-    "- In plan mode, you are READ-ONLY. Explore the codebase with read, search, glob, list, and task_show.\n"
-    "- Design a complete implementation plan before making changes, including verification steps and acceptance criteria.\n"
-    "- Call exit_plan with the full plan. It saves the plan and returns a plan_slug.\n"
-    "- Immediately call task_start with the returned plan_slug and a 2-5 item executable todo plan.\n"
-    "- Treat task_start(plan=[...], plan_slug=...) as the primary way to connect a task to its saved plan.\n"
+    "- For complex or multi-step implementation changes, delegate planning first with task(agent_type=\"plan\").\n"
+    "- The plan agent is read-only and has an isolated context window, so use it to explore and design without polluting the main conversation.\n"
+    "- Ask the plan agent for a complete implementation plan, including verification steps and acceptance criteria.\n"
+    "- After reviewing the returned plan, call task_start with a 2-5 item executable todo plan.\n"
     "- Execute the implementation, marking todos done with todo_done as each step is completed.\n"
-    "- Before task_complete, call verify with goal plus relevant changes/test_hint. If the current task has plan_slug, verify will load the saved plan automatically.\n"
-    "- Use task_complete only after implementation and verification are done. If task_complete reports unverified_plan=true, mention that residual risk to the user.\n"
+    "- Before task_complete, call verify with goal plus relevant changes/test_hint.\n"
+    "- Use task_complete only after implementation and verification are done.\n"
     "- Do not use task_start for internal workflow steps, retries, status checks, or tool failures.\n"
     "- Do not create tasks or todos for simple questions, tiny lookups, or one-step responses."
 )
@@ -233,6 +253,18 @@ SUBAGENT_SYSTEM = (
     "Follow project instructions, but keep the assigned task narrow and do not expand scope. "
     "Tool results are JSON with ok/message/data/error/meta fields; prefer data for structured facts and error for failures. "
 )
+
+
+EXPLORATION_SYSTEM = (
+    "You are an exploration subagent. "
+    "Investigate the assigned question with read-only tools and return concise findings. "
+    "Do not modify files, run commands, update task/todo state, or spawn other agents. "
+    "Follow project instructions, but keep the assigned task narrow and do not expand scope. "
+    "Tool results are JSON with ok/message/data/error/meta fields; prefer data for structured facts and error for failures. "
+)
+
+
+PLAN_AGENT_SYSTEM = "You are a software architect."
 
 
 VERIFICATION_SYSTEM = (

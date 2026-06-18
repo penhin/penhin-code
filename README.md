@@ -49,9 +49,7 @@ task_complete  标记当前主任务完成
 background_start 启动后台任务
 background_list  查看后台任务状态
 background_show  查看后台任务结果
-task           委派一个子 agent 执行聚焦任务
-enter_plan     切换到只读计划模式
-exit_plan      退出计划模式并保存实施计划
+task           委派一个隔离上下文的子 agent 执行聚焦任务，可选 explore/plan/general 类型
 glob           使用 glob 模式搜索文件
 load_skill     读取完整 skill 内容
 workspace      查看当前工作区信息
@@ -163,9 +161,7 @@ task_complete  mark the current high-level task completed
 background_start start a background task
 background_list  show background task statuses
 background_show  show a background task result
-task           delegate a focused task to a subagent
-enter_plan     switch to read-only plan mode
-exit_plan      exit plan mode and save the implementation plan
+task           delegate a focused task to an isolated-context subagent, optionally explore/plan/general
 glob           search files using glob patterns
 load_skill     load full skill content
 workspace      show workspace information
