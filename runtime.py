@@ -8,6 +8,7 @@ from typing import Any
 from anthropic import Anthropic, APIConnectionError, APIError, RateLimitError
 from dotenv import load_dotenv
 
+from circuit_breaker import CircuitBreaker, CircuitBreakerOpen
 from config import ENV_FILE
 
 
@@ -49,10 +50,18 @@ class Runtime:
     sub_max_turns: int = 30
     sub_max_tokens: int = 2000
     retry_delays: tuple[int, ...] = (1, 2, 4)
+    circuit_breaker: CircuitBreaker | None = None
 
     def call_with_retry(self, system: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None, max_tokens: int | None = None):
         retry_errors = (APIError, APIConnectionError, RateLimitError)
         delays = self.retry_delays
+
+        if self.circuit_breaker is not None:
+            try:
+                self.circuit_breaker.before_call()
+            except CircuitBreakerOpen as error:
+                logger.warning(f"[circuit] messages.create skipped: {error}")
+                raise
 
         for attempt in range(len(delays) + 1):
             try:
@@ -64,9 +73,14 @@ class Runtime:
                 }
                 if tools is not None:
                     kwargs["tools"] = tools
-                return self.client.messages.create(**kwargs)
+                response = self.client.messages.create(**kwargs)
+                if self.circuit_breaker is not None:
+                    self.circuit_breaker.record_success()
+                return response
             except retry_errors as error:
                 if attempt == len(delays):
+                    if self.circuit_breaker is not None:
+                        self.circuit_breaker.record_failure()
                     raise
 
                 delay = delays[attempt]
@@ -108,6 +122,46 @@ def log_usage(label: str, response) -> None:
     )
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        logger.warning(f"[config] invalid {name}={value!r}; using {default}")
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        logger.warning(f"[config] invalid {name}={value!r}; using {default}")
+        return default
+
+
+def build_circuit_breaker_from_env() -> CircuitBreaker | None:
+    if not _env_bool("CIRCUIT_BREAKER_ENABLED", True):
+        return None
+
+    return CircuitBreaker(
+        failure_threshold=_env_int("CIRCUIT_BREAKER_FAILURE_THRESHOLD", 5),
+        recovery_timeout=_env_float("CIRCUIT_BREAKER_RECOVERY_TIMEOUT", 30.0),
+        success_threshold=_env_int("CIRCUIT_BREAKER_SUCCESS_THRESHOLD", 1),
+    )
+
+
 def init_runtime() -> None:
     setup_logging()
 
@@ -125,7 +179,8 @@ def init_runtime() -> None:
     
     runtime = Runtime(
         client=client,
-        model=model
+        model=model,
+        circuit_breaker=build_circuit_breaker_from_env(),
     )
 
 def get_runtime() -> Runtime:

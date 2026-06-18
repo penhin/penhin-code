@@ -8,6 +8,7 @@ import ui
 from config import get_permission_mode, set_permission_mode
 from context import RunContext
 from permissions import PERMISSION_MODES, PermissionMode, transition_mode
+from runtime import get_runtime
 from tool_runtime import runtime_permission_setup
 from tools.registry import tool_names
 from tools.workspace import workspace_info
@@ -70,6 +71,23 @@ def handle_permission_command(args: list[str], context: RunContext | None = None
     ui.print_info(f"permission: {mode}")
 
 
+def handle_circuit_command(args: list[str], context: RunContext | None = None):
+    try:
+        runtime = get_runtime()
+    except RuntimeError as error:
+        ui.print_error(str(error))
+        return
+
+    breaker = runtime.circuit_breaker
+    if breaker is None:
+        ui.print_json({"enabled": False})
+        return
+
+    status = {"enabled": True}
+    status.update(breaker.snapshot())
+    ui.print_json(status)
+
+
 def complete_local_command(text: str, state: int) -> str | None:
     matches = [
         name for name in LOCAL_COMMANDS
@@ -118,5 +136,10 @@ LOCAL_COMMANDS = {
         name="/help",
         description="Show local commands",
         handler=handle_help_command,
+    ),
+    "/circuit": LocalCommand(
+        name="/circuit",
+        description="Show circuit breaker status",
+        handler=handle_circuit_command,
     ),
 }

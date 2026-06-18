@@ -11,6 +11,7 @@ from prompt import (
     build_subagent_system,
     ensure_project_instructions_message,
 )
+from circuit_breaker import CircuitBreakerOpen
 from result import Result
 from tools.registry import TOOL_SPECS
 from tools.types import ToolSchema, tool_schema
@@ -20,6 +21,7 @@ from tool_runtime import ApprovalFlow, PermissionPolicy
 
 
 logger = logging.getLogger("penhin.subagent")
+API_UNAVAILABLE_MESSAGE = "API is temporarily unavailable because the circuit breaker is open. Please try again later."
 
 
 def tools_for_policy(tool_names: set[str]) -> list[ToolSchema]:
@@ -132,11 +134,14 @@ def build_subagent_initial_messages(task: str) -> list[dict[str, Any]]:
 
 def request_final_summary(runtime, sub_messages: list[dict[str, Any]], config: dict[str, Any], agent_type: str) -> str:
     ensure_project_instructions_message(sub_messages)
-    response = runtime.call_with_retry(
-        system=config["final_system"](),
-        messages=sub_messages,
-        max_tokens=runtime.sub_max_tokens,
-    )
+    try:
+        response = runtime.call_with_retry(
+            system=config["final_system"](),
+            messages=sub_messages,
+            max_tokens=runtime.sub_max_tokens,
+        )
+    except CircuitBreakerOpen as error:
+        raise RuntimeError(f"{API_UNAVAILABLE_MESSAGE} ({error})") from error
     log_usage(f"subagent-{agent_type}-final", response)
     return extract_text(response.content, default="(no summary)")
 
@@ -154,12 +159,20 @@ def run_subagent(task: str, agent_type: str = "general") -> Result:
     sub_messages = build_subagent_initial_messages(task)
     
     for _ in range(0, runtime.sub_max_turns):
-        response = runtime.call_with_retry(
-            system=config["system"](),
-            messages=sub_messages,
-            tools=config["tools"],
-            max_tokens=runtime.sub_max_tokens
-        )
+        try:
+            response = runtime.call_with_retry(
+                system=config["system"](),
+                messages=sub_messages,
+                tools=config["tools"],
+                max_tokens=runtime.sub_max_tokens
+            )
+        except CircuitBreakerOpen as error:
+            logger.warning(f"[circuit] subagent stopped: {error}")
+            return Result.failure(
+                API_UNAVAILABLE_MESSAGE,
+                code="circuit_open",
+                data={"agent_type": agent_type},
+            )
         sub_messages.append({"role": "assistant", "content": response.content})
         
         log_usage(f"subagent-{agent_type}", response)

@@ -4,7 +4,7 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Any
 
-from compact import auto_compact_messages, micro_compact_text, should_auto_compact
+from compact import auto_compact_messages, micro_compact_if_needed, should_auto_compact
 from tool_runtime import ApprovalFlow, PermissionPolicy
 
 
@@ -24,8 +24,8 @@ class RunContext:
     def add_tool_results(self, tool_results: list[dict[str, Any]]) -> None:
         self.add_user_message(tool_results)
 
-    def micro_compact(self) -> None:
-        micro_compact_text(self.messages)
+    def micro_compact(self, limit: int = 100000) -> None:
+        micro_compact_if_needed(self.messages, limit=limit)
 
     def auto_compact_if_needed(self) -> None:
         if should_auto_compact(self.messages):

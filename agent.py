@@ -3,6 +3,7 @@ import logging
 from typing import Any
 
 from context import RunContext
+from circuit_breaker import CircuitBreakerOpen
 from tools.registry import PARENT_TOOLS
 from prompt import build_main_system, ensure_project_instructions_message
 from transcript import transcripts
@@ -12,6 +13,7 @@ from tool_runtime import ApprovalFlow, PermissionPolicy, approval_key, run_tool
 
 
 logger = logging.getLogger("penhin.agent")
+API_UNAVAILABLE_MESSAGE = "API is temporarily unavailable because the circuit breaker is open. Please try again later."
 
 
 def format_tool_input(tool_input: dict[str, Any]) -> str:
@@ -78,8 +80,8 @@ def resolve_approval(
     return run_with_one_time_rejection(tool_name, tool_input, policy, approval)
 
 
-def compact_context_for_llm(context: RunContext) -> None:
-    context.micro_compact()
+def compact_context_for_llm(context: RunContext, model_limit: int = 100000) -> None:
+    context.micro_compact(model_limit)
     context.auto_compact_if_needed()
 
 
@@ -125,7 +127,14 @@ def agent_loop(context: RunContext) -> None:
     while True:
         compact_context_for_llm(context)
 
-        response = call_llm(context, runtime)
+        try:
+            response = call_llm(context, runtime)
+        except CircuitBreakerOpen as error:
+            logger.warning(f"[circuit] {API_UNAVAILABLE_MESSAGE} ({error})")
+            context.add_assistant_message([
+                {"type": "text", "text": API_UNAVAILABLE_MESSAGE}
+            ])
+            return
 
         record_llm_response(context, response)
 

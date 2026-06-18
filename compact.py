@@ -33,6 +33,23 @@ def estimate_tokens(messages: list[Any]) -> int:
     return len(str(messages)) // 4
 
 
+def micro_compact_if_needed(messages: list[dict[str, Any]], limit: int = THRESHOLD) -> None:
+    if limit <= 0:
+        return
+
+    tokens = estimate_tokens(messages)
+    usage_ratio = tokens / limit
+
+    if usage_ratio < 0.5:
+        return
+    elif usage_ratio < 0.7:
+        micro_compact_text(messages, 5)
+    elif usage_ratio < 0.85:
+        micro_compact_text(messages, 3)
+    else:
+        micro_compact_text(messages, 1)
+
+
 def micro_compact_text(messages: list[dict[str, Any]], keep_recent: int = KEEP_RECENT) -> None:
     tool_results = []
     for msg_id, msg in enumerate(messages):
