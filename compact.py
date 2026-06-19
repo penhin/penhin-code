@@ -9,10 +9,14 @@ from message_flow import block_get
 
 logger = logging.getLogger("penhin.compact")
 
-THRESHOLD = 50000
+WARNING_THRESHOLD = 40000
+COMPACT_THRESHOLD = 50000
+BLOCKING_THRESHOLD = 80000
+THRESHOLD = COMPACT_THRESHOLD
 SUMMARY_HEAD_CHARS = 40000
 SUMMARY_TAIL_CHARS = 40000
 KEEP_RECENT = 3
+KEEP_HEAD_MESSAGES = 2
 KEEP_LAST_MESSAGES = 8
 PRESERVE_RESULT_TOOLS = {"todo_set", "todo_show", "todo_done", "todo_clear", "load_skill", "read"}
 
@@ -33,7 +37,7 @@ def estimate_tokens(messages: list[Any]) -> int:
     return len(str(messages)) // 4
 
 
-def micro_compact_if_needed(messages: list[dict[str, Any]], limit: int = THRESHOLD) -> None:
+def micro_compact_if_needed(messages: list[dict[str, Any]], limit: int = COMPACT_THRESHOLD) -> None:
     if limit <= 0:
         return
 
@@ -78,7 +82,38 @@ def micro_compact_text(messages: list[dict[str, Any]], keep_recent: int = KEEP_R
         result["content"] = f"[Previous: used {tool_name}]"
 
 
-def should_auto_compact(messages: list[dict[str, Any]], threshold: int = THRESHOLD) -> bool:
+def compact_watermark(messages: list[dict[str, Any]]) -> str:
+    tokens = estimate_tokens(messages)
+    if tokens >= BLOCKING_THRESHOLD:
+        return "blocking"
+    if tokens >= COMPACT_THRESHOLD:
+        return "compact"
+    if tokens >= WARNING_THRESHOLD:
+        return "warning"
+    return "normal"
+
+
+def log_compact_watermark(messages: list[dict[str, Any]]) -> str:
+    watermark = compact_watermark(messages)
+    if watermark == "warning":
+        logger.warning(
+            f"[compact] context above warning threshold "
+            f"({estimate_tokens(messages)}/{WARNING_THRESHOLD})"
+        )
+    elif watermark == "compact":
+        logger.warning(
+            f"[compact] context above compact threshold "
+            f"({estimate_tokens(messages)}/{COMPACT_THRESHOLD}); auto compacting"
+        )
+    elif watermark == "blocking":
+        logger.warning(
+            f"[compact] context above blocking threshold "
+            f"({estimate_tokens(messages)}/{BLOCKING_THRESHOLD}); compact required"
+        )
+    return watermark
+
+
+def should_auto_compact(messages: list[dict[str, Any]], threshold: int = COMPACT_THRESHOLD) -> bool:
     return estimate_tokens(messages) >= threshold
 
 
@@ -98,6 +133,7 @@ def recent_message_start(messages: list[dict[str, Any]], keep_last: int) -> int:
 
 def auto_compact_messages(
     messages: list[dict[str, Any]],
+    keep_head: int = KEEP_HEAD_MESSAGES,
     keep_last: int = KEEP_LAST_MESSAGES,
 ) -> list[dict[str, Any]]:
     transcript_path = transcripts.save(messages)
@@ -130,10 +166,11 @@ def auto_compact_messages(
     if not summary:
         summary = "No summary generated."
 
-    start = recent_message_start(messages, keep_last)
+    head_end = max(0, min(keep_head, len(messages)))
+    start = max(head_end, recent_message_start(messages, keep_last))
     compacted = {
         "role": "user",
         "content": f"[Conversation compressed. Transcript: {transcript_path}]\n\n{summary}",
     }
-    return [compacted] + messages[start:]
+    return [compacted] + messages[:head_end] + messages[start:]
     

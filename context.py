@@ -4,7 +4,7 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Any
 
-from compact import auto_compact_messages, micro_compact_if_needed, should_auto_compact
+from compact import auto_compact_messages, log_compact_watermark, micro_compact_if_needed
 from tool_runtime import ApprovalFlow, PermissionPolicy
 
 
@@ -28,7 +28,7 @@ class RunContext:
         micro_compact_if_needed(self.messages, limit=limit)
 
     def auto_compact_if_needed(self) -> None:
-        if should_auto_compact(self.messages):
+        if log_compact_watermark(self.messages) in {"compact", "blocking"}:
             self.messages[:] = auto_compact_messages(self.messages)
 
     def force_auto_compact(self) -> None:
