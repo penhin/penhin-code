@@ -31,6 +31,10 @@ class RunContext:
     def auto_compact_if_needed(self) -> None:
         if log_compact_watermark(self.messages) in {"compact", "blocking"}:
             self.messages[:] = auto_compact_messages(self.messages)
+            from tools.cache import tool_result_cache
+            tool_result_cache.clear()
 
     def force_auto_compact(self) -> None:
         self.messages[:] = auto_compact_messages(self.messages)
+        from tools.cache import tool_result_cache
+        tool_result_cache.clear()

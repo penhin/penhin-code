@@ -6,6 +6,7 @@ from pathlib import Path
 from atomic_io import atomic_write_text
 from result import Result
 
+from .cache import file_signature, file_validator, tool_result_cache, tree_signature, tree_validator
 from .workspace import IGNORED_PATH_PARTS, WORKDIR, is_ignored_path, iter_workspace_files
 
 
@@ -38,17 +39,30 @@ def ignored_path_part(path: Path) -> str | None:
 
 def run_read(path: str, limit: int = None, line_numbers: bool = True) -> Result:
     try:
-        text = safe_path(path).read_text(encoding="utf-8")
+        file_path = safe_path(path)
+        key = ("read", str(file_path), limit, line_numbers)
+        cached = tool_result_cache.get(key)
+        if cached is not None:
+            return cached
+
+        signature = file_signature(file_path)
+        text = file_path.read_text(encoding="utf-8")
         lines = text.splitlines()
         if limit and len(lines) > limit:
             lines = lines[:limit] + [f"... ({len(lines) - limit} more lines)"]
         if line_numbers:
             lines = [f"{i}: {line}" for i, line in enumerate(lines, start=1)]
         output = "\n".join(lines)[:50000]
-        return Result.success(
+        result = Result.success(
             output,
             data={"path": path, "lines": lines, "line_numbers": line_numbers},
             truncated=len(output) >= 50000,
+        )
+        return tool_result_cache.set(
+            key,
+            result,
+            description=f"read {path}",
+            is_valid=file_validator(file_path, signature),
         )
     except Exception as error:
         return Result.failure(f"Error: {error}", code="read_error")
@@ -62,6 +76,7 @@ def run_write(path: str, content: str = None) -> Result:
         with FILE_LOCK:
             file_path.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_text(file_path, content)
+        tool_result_cache.clear()
         return Result.success(
             f"Wrote {len(content)} bytes to {path}",
             data={"path": path, "bytes": len(content)},
@@ -85,6 +100,15 @@ def run_list(path: str = ".", limit: int = None) -> Result:
         if not file_path.is_dir():
             return Result.failure("Error: Path should be a dir", code="not_directory", data={"path": path})
 
+        key = ("list", str(file_path), limit)
+        cached = tool_result_cache.get(key)
+        if cached is not None:
+            return cached
+
+        def signature_factory():
+            return tree_signature(iter_workspace_files(file_path), WORKDIR)
+
+        signature = signature_factory()
         paths = []
         for child in iter_workspace_files(file_path):
             paths.append(str(child.relative_to(WORKDIR)))
@@ -92,10 +116,16 @@ def run_list(path: str = ".", limit: int = None) -> Result:
                 paths.append("... (limit reached)")
                 break
 
-        return Result.success(
+        result = Result.success(
             "\n".join(paths),
             data={"path": path, "paths": paths, "limit": limit},
             count=len(paths),
+        )
+        return tool_result_cache.set(
+            key,
+            result,
+            description=f"list {path}",
+            is_valid=tree_validator(signature_factory, signature),
         )
 
     except Exception as error:
@@ -117,6 +147,7 @@ def run_edit(path: str, old: str, new: str) -> Result:
             updated = text.replace(old, new, 1)
             atomic_write_text(file_path, updated)
 
+        tool_result_cache.clear()
         return Result.success(f"Edited {path}", data={"path": path, "replacements": 1})
     except Exception as error:
         return Result.failure(f"Error: {error}", code="edit_error")
@@ -140,12 +171,21 @@ def _search_file(query: str, file_path: Path, workdir: Path) -> list[str]:
 def run_search(query: str, path: str = ".", limit: int = None, timeout: int = 30) -> Result:
     try:
         file_path = safe_path(path)
+        key = ("search", str(file_path), query, limit, timeout)
+        cached = tool_result_cache.get(key)
+        if cached is not None:
+            return cached
+
         all_files = list(iter_workspace_files(file_path))
         if not all_files:
             return Result.success(
                 "", data={"query": query, "path": path, "matches": [], "limit": limit}, count=0
             )
 
+        def signature_factory():
+            return tree_signature(iter_workspace_files(file_path), WORKDIR)
+
+        signature = tree_signature(all_files, WORKDIR)
         results: list[str] = []
         with concurrent.futures.ThreadPoolExecutor(
             max_workers=min(os.cpu_count() or 1, 8)
@@ -161,10 +201,16 @@ def run_search(query: str, path: str = ".", limit: int = None, timeout: int = 30
                 pass  # return partial results
 
         results = results[:limit] if limit else results
-        return Result.success(
+        result = Result.success(
             "\n".join(results),
             data={"query": query, "path": path, "matches": results, "limit": limit},
             count=len(results),
+        )
+        return tool_result_cache.set(
+            key,
+            result,
+            description=f"search {path} for {query!r}",
+            is_valid=tree_validator(signature_factory, signature),
         )
     except Exception as error:
         return Result.failure(f"Error: {error}", code="search_error")

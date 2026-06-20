@@ -14,11 +14,14 @@ from tools.registry import tool_names
 from tools.workspace import workspace_info
 
 
+CommandHandler = Callable[[list[str], RunContext | None], None]
+
+
 @dataclass(frozen=True)
 class LocalCommand:
     name: str
     description: str
-    handler: Callable[[list[str], RunContext | None], None]
+    handler: CommandHandler
     
 
 def handle_local_command(text: str, context: RunContext | None = None) -> bool:
