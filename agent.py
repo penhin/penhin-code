@@ -80,8 +80,8 @@ def resolve_approval(
     return run_with_one_time_rejection(tool_name, tool_input, policy, approval)
 
 
-def compact_context_for_llm(context: RunContext, model_limit: int = 100000) -> None:
-    context.micro_compact(model_limit)
+def compact_context_for_llm(context: RunContext) -> None:
+    context.micro_compact()
     context.auto_compact_if_needed()
 
 

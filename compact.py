@@ -9,9 +9,9 @@ from message_flow import block_get
 
 logger = logging.getLogger("penhin.compact")
 
-WARNING_THRESHOLD = 40000
-COMPACT_THRESHOLD = 50000
-BLOCKING_THRESHOLD = 80000
+WARNING_THRESHOLD = 80000
+COMPACT_THRESHOLD = 120000
+BLOCKING_THRESHOLD = 160000
 THRESHOLD = COMPACT_THRESHOLD
 SUMMARY_HEAD_CHARS = 40000
 SUMMARY_TAIL_CHARS = 40000
@@ -44,11 +44,11 @@ def micro_compact_if_needed(messages: list[dict[str, Any]], limit: int = COMPACT
     tokens = estimate_tokens(messages)
     usage_ratio = tokens / limit
 
-    if usage_ratio < 0.5:
+    if usage_ratio < 0.2:
         return
-    elif usage_ratio < 0.7:
+    elif usage_ratio < 0.6:
         micro_compact_text(messages, 5)
-    elif usage_ratio < 0.85:
+    elif usage_ratio < 0.8:
         micro_compact_text(messages, 3)
     else:
         micro_compact_text(messages, 1)

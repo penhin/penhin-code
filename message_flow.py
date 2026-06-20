@@ -13,6 +13,8 @@ ToolResults = list[dict[str, Any]]
 ApprovalResolver = Callable[[str, dict[str, Any], PermissionPolicy, ApprovalFlow], ToolRun]
 
 logger = logging.getLogger("penhin.message_flow")
+TOOL_RESULT_CACHE_MIN_CHARS = 2048
+CACHE_CONTROL_EPHEMERAL = {"type": "ephemeral"}
 
 
 def block_get(block: Any, key: str, default: Any = None) -> Any:
@@ -39,6 +41,18 @@ def tool_result_block(tool_name: str, tool_use_id: str, tool_run: ToolRun) -> di
         "tool_use_id": tool_use_id,
         "content": tool_run.result.to_json(),
     }
+
+
+def cacheable_tool_result(block: dict[str, Any]) -> bool:
+    content = block.get("content")
+    return isinstance(content, str) and len(content) >= TOOL_RESULT_CACHE_MIN_CHARS
+
+
+def add_tool_result_cache_control(tool_results: ToolResults) -> None:
+    for block in reversed(tool_results):
+        if cacheable_tool_result(block):
+            block["cache_control"] = dict(CACHE_CONTROL_EPHEMERAL)
+            return
 
 
 def execute_tool_blocks(
@@ -72,4 +86,5 @@ def execute_tool_blocks(
 
         tool_results.append(tool_result_block(tool_name, tool_use_id, tool_run))
 
+    add_tool_result_cache_control(tool_results)
     return tool_results, manual_compact

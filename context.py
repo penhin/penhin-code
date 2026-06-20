@@ -24,8 +24,9 @@ class RunContext:
     def add_tool_results(self, tool_results: list[dict[str, Any]]) -> None:
         self.add_user_message(tool_results)
 
-    def micro_compact(self, limit: int = 100000) -> None:
-        micro_compact_if_needed(self.messages, limit=limit)
+    def micro_compact(self) -> None:
+        from compact import COMPACT_THRESHOLD
+        micro_compact_if_needed(self.messages, limit=COMPACT_THRESHOLD)
 
     def auto_compact_if_needed(self) -> None:
         if log_compact_watermark(self.messages) in {"compact", "blocking"}:
