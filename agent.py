@@ -9,6 +9,7 @@ from prompt import build_main_system, ensure_project_instructions_message
 from transcript import transcripts
 from runtime import get_runtime, log_usage
 from message_flow import ToolResults, execute_tool_blocks, extract_text
+from message_projection import messages_for_api
 from tool_runtime import ApprovalFlow, PermissionPolicy, approval_key, run_tool
 
 
@@ -89,7 +90,7 @@ def call_llm(context: RunContext, runtime):
     ensure_project_instructions_message(context.messages)
     return runtime.call_with_retry(
         system=build_main_system(),
-        messages=context.messages,
+        messages=messages_for_api(context.messages),
         tools=PARENT_TOOLS,
         max_tokens=runtime.max_tokens,
     )

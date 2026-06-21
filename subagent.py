@@ -17,6 +17,7 @@ from tools.registry import TOOL_SPECS
 from tools.types import ToolSchema, tool_schema
 from runtime import get_runtime, log_usage
 from message_flow import execute_tool_blocks, extract_text
+from message_projection import messages_for_api
 from tool_runtime import ApprovalFlow, PermissionPolicy
 
 
@@ -137,7 +138,7 @@ def request_final_summary(runtime, sub_messages: list[dict[str, Any]], config: d
     try:
         response = runtime.call_with_retry(
             system=config["final_system"](),
-            messages=sub_messages,
+            messages=messages_for_api(sub_messages),
             max_tokens=runtime.sub_max_tokens,
         )
     except CircuitBreakerOpen as error:
@@ -162,7 +163,7 @@ def run_subagent(task: str, agent_type: str = "general") -> Result:
         try:
             response = runtime.call_with_retry(
                 system=config["system"](),
-                messages=sub_messages,
+                messages=messages_for_api(sub_messages),
                 tools=config["tools"],
                 max_tokens=runtime.sub_max_tokens
             )
