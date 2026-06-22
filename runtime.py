@@ -51,16 +51,25 @@ class Runtime:
     sub_max_tokens: int = 2000
     retry_delays: tuple[int, ...] = (1, 2, 4)
     circuit_breaker: CircuitBreaker | None = None
+    compact_circuit_breaker: CircuitBreaker | None = None
 
-    def call_with_retry(self, system: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None, max_tokens: int | None = None):
+    def _call_with_retry(
+        self,
+        system: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        max_tokens: int | None = None,
+        breaker: CircuitBreaker | None = None,
+        label: str = "messages.create",
+    ):
         retry_errors = (APIError, APIConnectionError, RateLimitError)
         delays = self.retry_delays
 
-        if self.circuit_breaker is not None:
+        if breaker is not None:
             try:
-                self.circuit_breaker.before_call()
+                breaker.before_call()
             except CircuitBreakerOpen as error:
-                logger.warning(f"[circuit] messages.create skipped: {error}")
+                logger.warning(f"[circuit] {label} skipped: {error}")
                 raise
 
         for attempt in range(len(delays) + 1):
@@ -74,22 +83,32 @@ class Runtime:
                 if tools is not None:
                     kwargs["tools"] = tools
                 response = self.client.messages.create(**kwargs)
-                if self.circuit_breaker is not None:
-                    self.circuit_breaker.record_success()
+                if breaker is not None:
+                    breaker.record_success()
                 return response
             except retry_errors as error:
                 if attempt == len(delays):
-                    if self.circuit_breaker is not None:
-                        self.circuit_breaker.record_failure()
+                    if breaker is not None:
+                        breaker.record_failure()
                     raise
 
                 delay = delays[attempt]
                 logger.warning(
-                    f"[retry] messages.create failed ({error.__class__.__name__}), "
+                    f"[retry] {label} failed ({error.__class__.__name__}), "
                     f"retrying in {delay}s...\n"
                     f"[retry] Reconnecting...({attempt + 1}/{len(delays)})"
                 )
                 time.sleep(delay)
+
+    def call_with_retry(self, system: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None, max_tokens: int | None = None):
+        return self._call_with_retry(
+            system=system,
+            messages=messages,
+            tools=tools,
+            max_tokens=max_tokens,
+            breaker=self.circuit_breaker,
+            label="messages.create",
+        )
 
     def call_llm_once(
         self,
@@ -105,6 +124,28 @@ class Runtime:
         )
 
         log_usage(label, response)
+
+        return "\n".join(
+            block.text
+            for block in response.content
+            if getattr(block, "type", None) == "text"
+        )
+
+    def call_compact_once(
+        self,
+        system: str,
+        user_content: str,
+        max_tokens: int | None = None,
+    ) -> str:
+        response = self._call_with_retry(
+            system=system,
+            messages=[{"role": "user", "content": user_content}],
+            max_tokens=max_tokens or self.max_tokens,
+            breaker=self.compact_circuit_breaker,
+            label="compact.messages.create",
+        )
+
+        log_usage("compact", response)
 
         return "\n".join(
             block.text
@@ -162,6 +203,17 @@ def build_circuit_breaker_from_env() -> CircuitBreaker | None:
     )
 
 
+def build_compact_circuit_breaker_from_env() -> CircuitBreaker | None:
+    if not _env_bool("COMPACT_CIRCUIT_BREAKER_ENABLED", True):
+        return None
+
+    return CircuitBreaker(
+        failure_threshold=_env_int("COMPACT_CIRCUIT_BREAKER_FAILURE_THRESHOLD", 2),
+        recovery_timeout=_env_float("COMPACT_CIRCUIT_BREAKER_RECOVERY_TIMEOUT", 60.0),
+        success_threshold=_env_int("COMPACT_CIRCUIT_BREAKER_SUCCESS_THRESHOLD", 1),
+    )
+
+
 def init_runtime() -> None:
     setup_logging()
 
@@ -181,6 +233,7 @@ def init_runtime() -> None:
         client=client,
         model=model,
         circuit_breaker=build_circuit_breaker_from_env(),
+        compact_circuit_breaker=build_compact_circuit_breaker_from_env(),
     )
 
 def get_runtime() -> Runtime:

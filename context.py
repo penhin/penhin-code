@@ -34,7 +34,7 @@ class RunContext:
             from tools.cache import tool_result_cache
             tool_result_cache.clear()
 
-    def force_auto_compact(self) -> None:
-        self.messages[:] = auto_compact_messages(self.messages)
+    def force_auto_compact(self, hint: str | None = None) -> None:
+        self.messages[:] = auto_compact_messages(self.messages, hint=hint)
         from tools.cache import tool_result_cache
         tool_result_cache.clear()

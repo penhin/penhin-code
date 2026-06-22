@@ -7,6 +7,7 @@ from runtime import get_runtime
 from transcript import serialize_for_json, transcripts
 from message_flow import block_get
 from message_projection import mark_block_collapsed, mark_message_snipped, messages_for_api
+from circuit_breaker import CircuitBreakerOpen
 
 logger = logging.getLogger("penhin.compact")
 
@@ -165,14 +166,23 @@ def auto_compact_messages(
     messages: list[dict[str, Any]],
     keep_head: int = KEEP_HEAD_MESSAGES,
     keep_last: int = KEEP_LAST_MESSAGES,
+    hint: str | None = None,
 ) -> list[dict[str, Any]]:
     transcript_path = transcripts.save(messages)
 
     logger.info(f"[transcript saved: {transcript_path}]")
 
     conversation_text = compact_source_text(messages_for_api(messages))
+    hint_section = ""
+    if hint:
+        hint_section = (
+            "User-provided compact hint:\n"
+            f"{hint}\n\n"
+            "Use this hint to decide what details deserve extra preservation.\n\n"
+        )
+
     try:
-        summary = get_runtime().call_llm_once(
+        summary = get_runtime().call_compact_once(
             system=AUTO_COMPACT_SYSTEM,
             user_content=(
                 "Create a concise continuation snapshot from this conversation.\n"
@@ -185,11 +195,13 @@ def auto_compact_messages(
                 "- Recommended next step\n\n"
                 "Write for the next agent turn, not for an end-user report. "
                 "Prefer concrete file/function names over general summaries.\n\n"
+                + hint_section
                 + conversation_text
             ),
             max_tokens=2000,
-            label="compact",
         )
+    except CircuitBreakerOpen as error:
+        summary = f"Summary skipped during compaction: compact circuit breaker is open ({error})"
     except Exception as error:
         summary = f"Summary failed during compaction: {error}"
 

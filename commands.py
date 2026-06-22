@@ -81,14 +81,34 @@ def handle_circuit_command(args: list[str], context: RunContext | None = None):
         ui.print_error(str(error))
         return
 
-    breaker = runtime.circuit_breaker
+    ui.print_json(
+        {
+            "main": circuit_status(runtime.circuit_breaker),
+            "compact": circuit_status(runtime.compact_circuit_breaker),
+        }
+    )
+
+
+def circuit_status(breaker):
     if breaker is None:
-        ui.print_json({"enabled": False})
-        return
+        return {"enabled": False}
 
     status = {"enabled": True}
     status.update(breaker.snapshot())
-    ui.print_json(status)
+    return status
+
+
+def handle_compact_command(args: list[str], context: RunContext | None = None):
+    if context is None:
+        ui.print_error("No active session to compact.")
+        return
+
+    hint = " ".join(args).strip()
+    context.force_auto_compact(hint=hint or None)
+    if hint:
+        ui.print_info("compact: done with hint")
+    else:
+        ui.print_info("compact: done")
 
 
 def complete_local_command(text: str, state: int) -> str | None:
@@ -144,5 +164,10 @@ LOCAL_COMMANDS = {
         name="/circuit",
         description="Show circuit breaker status",
         handler=handle_circuit_command,
+    ),
+    "/compact": LocalCommand(
+        name="/compact",
+        description="Compact current session, optionally with a hint",
+        handler=handle_compact_command,
     ),
 }
