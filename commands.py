@@ -5,10 +5,10 @@ from prompt_toolkit.completion import Completer, Completion
 
 import ui
 
-from config import get_permission_mode, set_permission_mode
+from config import get_permission_mode, set_env_value, set_permission_mode
 from context import RunContext, conversation_turn_ranges, parse_snip_selectors
 from permissions import PERMISSION_MODES, PermissionMode, transition_mode
-from runtime import get_runtime
+from runtime import get_runtime, set_runtime_api_key, set_runtime_model
 from tool_runtime import runtime_permission_setup
 from tools.registry import tool_names
 from tools.workspace import workspace_info
@@ -72,6 +72,57 @@ def handle_permission_command(args: list[str], context: RunContext | None = None
         context.policy = policy
         context.approval = approval
     ui.print_info(f"permission: {mode}")
+
+
+def handle_model_command(args: list[str], context: RunContext | None = None):
+    if not args:
+        try:
+            ui.print_info(f"model: {get_runtime().model}")
+        except RuntimeError:
+            ui.print_error("Runtime is not initialized.")
+        return
+
+    model = " ".join(args).strip()
+    if not model:
+        ui.print_error("Usage: /model MODEL_ID")
+        return
+
+    import os
+
+    os.environ["MODEL_ID"] = model
+    set_env_value("MODEL_ID", model)
+    set_runtime_model(model)
+    ui.print_info(f"model: {model}")
+
+
+def mask_secret(value: str) -> str:
+    if len(value) <= 8:
+        return "*" * len(value)
+    return f"{value[:4]}...{value[-4:]}"
+
+
+def handle_api_key_command(args: list[str], context: RunContext | None = None):
+    if not args:
+        import os
+
+        value = os.getenv("ANTHROPIC_API_KEY", "")
+        if value:
+            ui.print_info(f"api-key: {mask_secret(value)}")
+        else:
+            ui.print_info("api-key: not set")
+        return
+
+    api_key = " ".join(args).strip()
+    if not api_key:
+        ui.print_error("Usage: /api-key ANTHROPIC_API_KEY")
+        return
+
+    import os
+
+    os.environ["ANTHROPIC_API_KEY"] = api_key
+    set_env_value("ANTHROPIC_API_KEY", api_key)
+    set_runtime_api_key(api_key)
+    ui.print_info("api-key: saved")
 
 
 def handle_circuit_command(args: list[str], context: RunContext | None = None):
@@ -183,6 +234,16 @@ LOCAL_COMMANDS = {
         name="/help",
         description="Show local commands",
         handler=handle_help_command,
+    ),
+    "/model": LocalCommand(
+        name="/model",
+        description="Show or set model id",
+        handler=handle_model_command,
+    ),
+    "/api-key": LocalCommand(
+        name="/api-key",
+        description="Show or set Anthropic API key",
+        handler=handle_api_key_command,
     ),
     "/circuit": LocalCommand(
         name="/circuit",

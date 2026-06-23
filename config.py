@@ -34,6 +34,38 @@ def save_config(config: dict[str, Any]) -> None:
     )
 
 
+def set_env_value(name: str, value: str) -> None:
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+    lines = []
+    if ENV_FILE.exists():
+        try:
+            lines = ENV_FILE.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            lines = []
+
+    replacement = f"{name}={value}"
+    updated = False
+    new_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("#") or "=" not in line:
+            new_lines.append(line)
+            continue
+
+        key = line.split("=", 1)[0].strip()
+        if key == name:
+            new_lines.append(replacement)
+            updated = True
+        else:
+            new_lines.append(line)
+
+    if not updated:
+        new_lines.append(replacement)
+
+    atomic_write_text(ENV_FILE, "\n".join(new_lines).rstrip() + "\n")
+
+
 def get_permission_mode() -> str:
     return str(load_config().get("permission_mode", DEFAULT_CONFIG["permission_mode"]))
 

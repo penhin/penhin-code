@@ -28,7 +28,6 @@ skills.py            skills 描述加载和完整 skill 内容读取
 subagent.py          子 agent loop
 compact.py           micro / auto compact 逻辑
 transcript.py        transcript 保存和读取
-tests/               按领域拆分的离线测试，test_smoke.py 是总入口
 requirements.txt     Python 依赖
 .env.example         环境变量示例
 ```
@@ -54,15 +53,16 @@ glob           使用 glob 模式搜索文件
 load_skill     读取完整 skill 内容
 workspace      查看当前工作区信息
 compact        压缩长上下文
+snip           标记指定历史轮次，后续 API 请求中省略
 list           列出项目文件
 search         搜索项目文本
 read           读取文件，可显示行号
 edit           用唯一 old 文本替换为 new 文本
 write          写入文件
-bash           运行命令、测试或观察运行时行为
+bash           运行命令或观察运行时行为
 ```
 
-### 安装
+### 快速开始
 
 ```bash
 python -m venv .venv
@@ -72,7 +72,23 @@ mkdir -p ~/.penhin
 cp .env.example ~/.penhin/.env
 ```
 
-然后编辑 `~/.penhin/.env`，设置 `ANTHROPIC_API_KEY` 和 `MODEL_ID`。项目根目录的 `.env` 仍作为兼容 fallback 被读取。
+配置模型和 API key 有两种方式。
+
+方式一：编辑 `~/.penhin/.env`：
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-xxx
+MODEL_ID=claude-sonnet-4-6
+```
+
+方式二：先启动 CLI，再用命令保存：
+
+```text
+/api-key sk-ant-xxx
+/model claude-sonnet-4-6
+```
+
+项目根目录的 `.env` 仍作为兼容 fallback 被读取。
 
 ### 运行
 
@@ -97,18 +113,6 @@ python main.py --once "summarize this project"
 ```text
 list files in this directory
 ```
-
-### 预期结果
-
-你会看到 `penhin >>` 提示符。启动时会显示当前 session 是恢复还是新建；输入任务后，模型会按需调用工具，终端会打印工具名、call id、输入摘要、耗时和结果规模，最后模型给出文本回答。
-
-### 测试
-
-```bash
-.venv/bin/python tests/test_smoke.py
-```
-
-测试不需要真实 LLM API，会覆盖工具注册、IO helper、todo、task status、transcript、session resume、tool runtime 日志和 compact 的离线行为。`tests/test_smoke.py` 会调用拆分后的各领域测试。
 
 ---
 
@@ -140,7 +144,6 @@ skills.py            skill description loader and full skill reader
 subagent.py          subagent loop
 compact.py           micro / auto compaction logic
 transcript.py        transcript save/read support
-tests/               split offline tests; test_smoke.py is the aggregate runner
 requirements.txt     Python dependencies
 .env.example         environment variable example
 ```
@@ -166,15 +169,16 @@ glob           search files using glob patterns
 load_skill     load full skill content
 workspace      show workspace information
 compact        compact long context
+snip           mark selected historical turns so future API requests omit them
 list           list project files
 search         search project text
 read           read files, optionally with line numbers
 edit           replace unique old text with new text
 write          write files
-bash           run commands, tests, or inspect runtime behavior
+bash           run commands or inspect runtime behavior
 ```
 
-### Setup
+### Quick Start
 
 ```bash
 python -m venv .venv
@@ -184,7 +188,23 @@ mkdir -p ~/.penhin
 cp .env.example ~/.penhin/.env
 ```
 
-Then edit `~/.penhin/.env` and set `ANTHROPIC_API_KEY` and `MODEL_ID`. A project-root `.env` is still read as a compatibility fallback.
+There are two ways to configure the model and API key.
+
+Option one: edit `~/.penhin/.env`:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-xxx
+MODEL_ID=claude-sonnet-4-6
+```
+
+Option two: start the CLI, then save them with commands:
+
+```text
+/api-key sk-ant-xxx
+/model claude-sonnet-4-6
+```
+
+A project-root `.env` is still read as a compatibility fallback.
 
 ### Run
 
@@ -209,15 +229,3 @@ Try:
 ```text
 list files in this directory
 ```
-
-### Expected Result
-
-You should see the `penhin >>` prompt. Startup logs show whether the session was resumed or created fresh. After you enter a task, the model may call tools; the terminal logs tool name, call id, input summary, duration, and result size before the model answers in text.
-
-### Testing
-
-```bash
-.venv/bin/python tests/test_smoke.py
-```
-
-The tests do not require a real LLM API. They cover offline behavior for tool registration, IO helpers, todo, task status, transcripts, session resume, tool runtime logs, and compaction. `tests/test_smoke.py` runs the split domain tests.

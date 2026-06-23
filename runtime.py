@@ -240,3 +240,16 @@ def get_runtime() -> Runtime:
     if runtime is None:
         raise RuntimeError("init_runtime() must be called before get_runtime()")
     return runtime
+
+
+def set_runtime_model(model: str) -> None:
+    if runtime is not None:
+        runtime.model = model
+
+
+def set_runtime_api_key(api_key: str) -> None:
+    if runtime is not None:
+        runtime.client = Anthropic(
+            api_key=api_key,
+            base_url=os.getenv("ANTHROPIC_BASE_URL"),
+        )

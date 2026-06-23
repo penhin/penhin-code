@@ -3,6 +3,7 @@
 __pycache__/
 *.py[cod]
 tests/
+skills/
 AGENTS.md
 
 .penhin_todos.json
