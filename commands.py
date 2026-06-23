@@ -6,7 +6,7 @@ from prompt_toolkit.completion import Completer, Completion
 import ui
 
 from config import get_permission_mode, set_permission_mode
-from context import RunContext
+from context import RunContext, conversation_turn_ranges, parse_snip_selectors
 from permissions import PERMISSION_MODES, PermissionMode, transition_mode
 from runtime import get_runtime
 from tool_runtime import runtime_permission_setup
@@ -111,6 +111,30 @@ def handle_compact_command(args: list[str], context: RunContext | None = None):
         ui.print_info("compact: done")
 
 
+def handle_force_snip_command(args: list[str], context: RunContext | None = None):
+    if context is None:
+        ui.print_error("No active session to snip.")
+        return
+
+    if not args:
+        turns = conversation_turn_ranges(context.messages)
+        if not turns:
+            ui.print_info("snip: no turns")
+            return
+        for turn_number, start, end, summary in turns:
+            ui.print_info(f"{turn_number}: messages {start + 1}-{end} {summary}")
+        return
+
+    try:
+        selectors = parse_snip_selectors(args)
+    except ValueError:
+        ui.print_error("Usage: /force-snip [turn|start-end] ...")
+        return
+
+    snipped = context.force_snip_turns(selectors)
+    ui.print_info(f"snip: marked {snipped} messages")
+
+
 def complete_local_command(text: str, state: int) -> str | None:
     matches = [
         name for name in LOCAL_COMMANDS
@@ -169,5 +193,10 @@ LOCAL_COMMANDS = {
         name="/compact",
         description="Compact current session, optionally with a hint",
         handler=handle_compact_command,
+    ),
+    "/force-snip": LocalCommand(
+        name="/force-snip",
+        description="Mark selected history turns as snipped",
+        handler=handle_force_snip_command,
     ),
 }

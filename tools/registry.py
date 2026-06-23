@@ -99,6 +99,26 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         available_to_parent=True,
         approval=ToolApproval(),
     ),
+    "snip": ToolSpec(
+        name="snip",
+        description=(
+            "Mark selected historical conversation turns as snipped so they are omitted from future API context. "
+            "Use selectors like '2' or '2-4'."
+        ),
+        input_schema=object_schema(
+            {
+                "selectors": {
+                    "description": "Turn selectors, for example ['2'], ['2-4'], or '2 3-4'.",
+                },
+            },
+            ["selectors"],
+        ),
+        category=ToolCategory.agent,
+        handler=None,
+        available_to_child=False,
+        available_to_parent=True,
+        approval=ToolApproval(),
+    ),
     "task_start": ToolSpec(
         name="task_start",
         description="Start tracking a new current high-level task.",

@@ -90,7 +90,10 @@ def call_llm(context: RunContext, runtime):
     ensure_project_instructions_message(context.messages)
     return runtime.call_with_retry(
         system=build_main_system(),
-        messages=messages_for_api(context.messages),
+        messages=messages_for_api(
+            context.messages,
+            collapse_keep_recent=context.collapse_keep_recent,
+        ),
         tools=PARENT_TOOLS,
         max_tokens=runtime.max_tokens,
     )

@@ -346,6 +346,8 @@ def execute_tool(
                 result=Result.success("Compacting conversation history now"),
                 manual_compact=True,
             )
+        if tool_name == "snip":
+            return execute_snip_tool(tool_input, context)
         return ToolRun(Result.failure(f"Unknown tool handler: {tool_name}", code="unknown_tool_handler"))
 
     try:
@@ -354,6 +356,33 @@ def execute_tool(
         return ToolRun(Result.failure(f"Invalid input for {tool_name}: {error}", code="invalid_tool_input"))
     except Exception as error:
         return ToolRun(Result.failure(f"Tool {tool_name} failed: {error}", code="tool_error"))
+
+
+def execute_snip_tool(tool_input: ToolInput, context: RunContext | None) -> ToolRun:
+    if context is None:
+        return ToolRun(Result.failure("No active session to snip.", code="missing_context"))
+
+    selectors_input = tool_input.get("selectors")
+    if isinstance(selectors_input, str):
+        selector_texts = selectors_input.split()
+    elif isinstance(selectors_input, list):
+        selector_texts = [str(selector) for selector in selectors_input]
+    else:
+        return ToolRun(Result.failure("Invalid input: selectors must be an array", code="invalid_tool_input"))
+
+    try:
+        from context import parse_snip_selectors
+        selectors = parse_snip_selectors(selector_texts)
+    except ValueError:
+        return ToolRun(
+            Result.failure(
+                "Invalid snip selector. Use turn numbers or ranges like 2 or 2-4.",
+                code="invalid_tool_input",
+            )
+        )
+
+    snipped = context.force_snip_turns(selectors)
+    return ToolRun(Result.success(f"Marked {snipped} messages as snipped.", snipped=snipped))
 
 
 def run_tool(
