@@ -2,19 +2,22 @@ import json
 import logging
 from typing import Any
 
-from context import RunContext
-from circuit_breaker import CircuitBreakerOpen
-from tools.registry import PARENT_TOOLS
-from prompt import build_main_system, ensure_project_instructions_message
-from transcript import transcripts
-from runtime import get_runtime, log_usage
-from message_flow import ToolResults, execute_tool_blocks, extract_text
-from message_projection import messages_for_api
-from tool_runtime import ApprovalFlow, PermissionPolicy, approval_key, run_tool
+import ui
 
+from circuit_breaker import CircuitBreakerOpen
+from context import RunContext
+from message_flow import ToolResults, execute_tool_blocks
+from message_projection import messages_for_api
+from prompt import build_main_system, ensure_project_instructions_message
+from runtime import get_runtime, log_usage
+from tool_runtime import ApprovalFlow, PermissionPolicy, approval_key, run_tool
+from tools.registry import PARENT_TOOLS
+from transcript import transcripts
+
+
+API_UNAVAILABLE_MESSAGE = "API is temporarily unavailable because the circuit breaker is open. Please try again later."
 
 logger = logging.getLogger("penhin.agent")
-API_UNAVAILABLE_MESSAGE = "API is temporarily unavailable because the circuit breaker is open. Please try again later."
 
 
 def format_tool_input(tool_input: dict[str, Any]) -> str:
@@ -88,16 +91,27 @@ def compact_context_for_llm(context: RunContext) -> None:
 
 def call_llm(context: RunContext, runtime):
     ensure_project_instructions_message(context.messages)
-    return runtime.call_with_retry(
-        system=build_main_system(),
-        messages=messages_for_api(
-            context.messages,
-            collapse_keep_recent=context.collapse_keep_recent,
-        ),
-        tools=PARENT_TOOLS,
-        max_tokens=runtime.max_tokens,
-    )
+    streamed = False
 
+    def on_stream_text(text: str) -> None:
+        nonlocal streamed
+        streamed = True
+        ui.print_stream_delta(text)
+
+    try:
+        return runtime.call_with_retry(
+            system=build_main_system(),
+            messages=messages_for_api(
+                context.messages,
+                collapse_keep_recent=context.collapse_keep_recent,
+            ),
+            tools=PARENT_TOOLS,
+            max_tokens=runtime.max_tokens,
+            stream_callback=on_stream_text,
+        )
+    finally:
+        if streamed:
+            ui.finish_stream()
 
 def record_llm_response(context: RunContext, response) -> None:
     context.add_assistant_message(response.content)
@@ -165,10 +179,3 @@ def run_once(query: str) -> None:
     )
     agent_loop(context)
     transcripts.save(context.messages)
-    print_last_text(context.messages)
-
-
-def print_last_text(messages: list[dict[str, Any]]) -> None:
-    text = extract_text(messages[-1]["content"])
-    if text:
-        logger.info(text)

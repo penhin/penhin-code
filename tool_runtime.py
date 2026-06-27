@@ -1,26 +1,19 @@
 from __future__ import annotations
 
-import json
-import time
-import logging
 import hashlib
 import itertools
-
+import json
+import logging
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from result import Result
-
-if TYPE_CHECKING:
-    from context import RunContext
 from tools.registry import TOOL_SPECS
 from tools.types import ToolCategory, ToolInput
 
-
-logger = logging.getLogger("penhin.tool_runtime")
-logger.addHandler(logging.NullHandler())
-
-_TOOL_CALL_COUNTER = itertools.count(1)
+if TYPE_CHECKING:
+    from context import RunContext
 
 SAFE_INPUT_FIELDS = {"path", "name", "id", "index", "action", "limit", "line_numbers"}
 HASHED_INPUT_FIELDS = {"command", "content", "task", "description", "note", "old", "new", "items", "blocked_by"}
@@ -33,6 +26,11 @@ TYPE_CHECKS = {
     "array": lambda value: isinstance(value, list),
     "object": lambda value: isinstance(value, dict),
 }
+
+logger = logging.getLogger("penhin.tool_runtime")
+logger.addHandler(logging.NullHandler())
+
+_TOOL_CALL_COUNTER = itertools.count(1)
 
 
 def next_tool_call_id() -> str:

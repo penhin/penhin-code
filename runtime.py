@@ -1,18 +1,20 @@
+import logging
 import os
 import sys
 import time
-import logging
 from dataclasses import dataclass
 from typing import Any
 
-from anthropic import Anthropic, APIConnectionError, APIError, RateLimitError
 from dotenv import load_dotenv
 
 from circuit_breaker import CircuitBreaker, CircuitBreakerOpen
 from config import ENV_FILE
+from providers.anthropic import AnthropicProvider
+from providers.types import LLMProvider, LLMRequest, LLMResponse, StreamCallback
 
 
 runtime = None
+
 logger = logging.getLogger("penhin.runtime")
 
 
@@ -44,7 +46,7 @@ def setup_logging() -> None:
 
 @dataclass
 class Runtime:
-    client: Anthropic
+    provider: LLMProvider
     model: str
     max_tokens: int = 10000
     sub_max_turns: int = 30
@@ -61,8 +63,9 @@ class Runtime:
         max_tokens: int | None = None,
         breaker: CircuitBreaker | None = None,
         label: str = "messages.create",
-    ):
-        retry_errors = (APIError, APIConnectionError, RateLimitError)
+        stream_callback: StreamCallback | None = None,
+    ) -> LLMResponse:
+        retry_errors = self.provider.retry_errors
         delays = self.retry_delays
 
         if breaker is not None:
@@ -74,15 +77,17 @@ class Runtime:
 
         for attempt in range(len(delays) + 1):
             try:
-                kwargs: dict[str, Any] = {
-                    "model": self.model,
-                    "system": system,
-                    "messages": messages,
-                    "max_tokens": max_tokens or self.max_tokens,
-                }
-                if tools is not None:
-                    kwargs["tools"] = tools
-                response = self.client.messages.create(**kwargs)
+                request = LLMRequest(
+                    model=self.model,
+                    system=system,
+                    messages=messages,
+                    tools=tools,
+                    max_tokens=max_tokens or self.max_tokens,
+                )
+                if stream_callback is None:
+                    response = self.provider.create_message(request)
+                else:
+                    response = self.provider.stream_message(request, stream_callback)
                 if breaker is not None:
                     breaker.record_success()
                 return response
@@ -100,7 +105,14 @@ class Runtime:
                 )
                 time.sleep(delay)
 
-    def call_with_retry(self, system: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None, max_tokens: int | None = None):
+    def call_with_retry(
+        self,
+        system: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        max_tokens: int | None = None,
+        stream_callback: StreamCallback | None = None,
+    ) -> LLMResponse:
         return self._call_with_retry(
             system=system,
             messages=messages,
@@ -108,6 +120,7 @@ class Runtime:
             max_tokens=max_tokens,
             breaker=self.circuit_breaker,
             label="messages.create",
+            stream_callback=stream_callback,
         )
 
     def call_llm_once(
@@ -126,9 +139,9 @@ class Runtime:
         log_usage(label, response)
 
         return "\n".join(
-            block.text
+            block.get("text", "")
             for block in response.content
-            if getattr(block, "type", None) == "text"
+            if block.get("type") == "text"
         )
 
     def call_compact_once(
@@ -148,10 +161,11 @@ class Runtime:
         log_usage("compact", response)
 
         return "\n".join(
-            block.text
+            block.get("text", "")
             for block in response.content
-            if getattr(block, "type", None) == "text"
+            if block.get("type") == "text"
         )
+
 
 def log_usage(label: str, response) -> None:
     usage = response.usage
@@ -226,15 +240,15 @@ def init_runtime() -> None:
         logger.error(f"Please configure {', '.join(missing_env)} in {ENV_FILE} or .env")
         sys.exit(1)
 
-    client = Anthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"))
     model = os.environ["MODEL_ID"]
     
     runtime = Runtime(
-        client=client,
+        provider=build_provider_from_env(),
         model=model,
         circuit_breaker=build_circuit_breaker_from_env(),
         compact_circuit_breaker=build_compact_circuit_breaker_from_env(),
     )
+
 
 def get_runtime() -> Runtime:
     if runtime is None:
@@ -249,7 +263,14 @@ def set_runtime_model(model: str) -> None:
 
 def set_runtime_api_key(api_key: str) -> None:
     if runtime is not None:
-        runtime.client = Anthropic(
+        runtime.provider = AnthropicProvider(
             api_key=api_key,
             base_url=os.getenv("ANTHROPIC_BASE_URL"),
         )
+
+
+def build_provider_from_env() -> LLMProvider:
+    provider = os.getenv("LLM_PROVIDER", "anthropic").strip().lower()
+    if provider != "anthropic":
+        logger.warning(f"[config] unsupported LLM_PROVIDER={provider!r}; using anthropic")
+    return AnthropicProvider.from_env()

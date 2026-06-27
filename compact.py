@@ -2,13 +2,11 @@ import json
 import logging
 from typing import Any
 
+from circuit_breaker import CircuitBreakerOpen
+from message_projection import mark_message_snipped, messages_for_api
 from prompt import AUTO_COMPACT_SYSTEM
 from runtime import get_runtime
 from transcript import serialize_for_json, transcripts
-from message_projection import mark_message_snipped, messages_for_api
-from circuit_breaker import CircuitBreakerOpen
-
-logger = logging.getLogger("penhin.compact")
 
 WARNING_THRESHOLD = 80000
 COMPACT_THRESHOLD = 120000
@@ -19,6 +17,8 @@ SUMMARY_TAIL_CHARS = 40000
 KEEP_RECENT = 3
 KEEP_HEAD_MESSAGES = 2
 KEEP_LAST_MESSAGES = 8
+
+logger = logging.getLogger("penhin.compact")
 
 
 def compact_source_text(messages: list[dict[str, Any]]) -> str:

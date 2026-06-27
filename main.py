@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 
+import argparse
+import logging
 import sys
 import time
-import logging
-import argparse
 
-from ui import prompt_input
-from context import RunContext
+from agent import agent_loop, run_once
+from commands import handle_local_command, setup_command_completion
 from config import get_permission_mode
+from context import RunContext
 from permissions import normalize_permission_mode
+from runtime import init_runtime
 from tool_runtime import runtime_permission_setup
 from tools.registry import tool_names
 from tools.workspace import workspace_info
-from runtime import init_runtime
 from transcript import transcripts
-from agent import agent_loop, print_last_text, run_once
-from commands import handle_local_command, setup_command_completion
+from ui import prompt_input
 
 
 logger = logging.getLogger("penhin.main")
@@ -119,7 +119,6 @@ def main() -> None:
         context.add_user_message(user_input)
         agent_loop(context)
         context.session_path = transcripts.save_session(context.session_path, context.messages)
-        print_last_text(context.messages)
 
 
 def print_session_list() -> None:

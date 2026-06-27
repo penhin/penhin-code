@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass
 from typing import Callable
 
@@ -87,8 +88,6 @@ def handle_model_command(args: list[str], context: RunContext | None = None):
         ui.print_error("Usage: /model MODEL_ID")
         return
 
-    import os
-
     os.environ["MODEL_ID"] = model
     set_env_value("MODEL_ID", model)
     set_runtime_model(model)
@@ -103,8 +102,6 @@ def mask_secret(value: str) -> str:
 
 def handle_api_key_command(args: list[str], context: RunContext | None = None):
     if not args:
-        import os
-
         value = os.getenv("ANTHROPIC_API_KEY", "")
         if value:
             ui.print_info(f"api-key: {mask_secret(value)}")
@@ -116,8 +113,6 @@ def handle_api_key_command(args: list[str], context: RunContext | None = None):
     if not api_key:
         ui.print_error("Usage: /api-key ANTHROPIC_API_KEY")
         return
-
-    import os
 
     os.environ["ANTHROPIC_API_KEY"] = api_key
     set_env_value("ANTHROPIC_API_KEY", api_key)

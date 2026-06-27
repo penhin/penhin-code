@@ -7,7 +7,15 @@ from result import Result
 
 
 WORKDIR = Path.cwd().resolve()
-IGNORED_PATH_PARTS = [".venv", ".git", "__pycache__", ".penhin_todos.json", ".transcripts", ".tasks", "skills"]
+IGNORED_PATH_PARTS = [
+    ".git",
+    ".penhin_todos.json",
+    ".tasks",
+    ".transcripts",
+    ".venv",
+    "__pycache__",
+    "skills",
+]
 
 
 def is_ignored_path(path: Path) -> bool:

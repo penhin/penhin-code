@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from pathlib import Path
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from compact import auto_compact_messages, log_compact_watermark, micro_compact_if_needed

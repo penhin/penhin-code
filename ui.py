@@ -33,6 +33,14 @@ def print_text(message: str) -> None:
     console.print(message)
 
 
+def print_stream_delta(text: str) -> None:
+    console.print(text, end="", highlight=False, markup=False)
+
+
+def finish_stream() -> None:
+    console.print()
+
+
 def print_info(message: str) -> None:
     console.print(message, style="cyan")
 

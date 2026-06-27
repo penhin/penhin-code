@@ -1,28 +1,29 @@
 import logging
 from typing import Any
 
+from circuit_breaker import CircuitBreakerOpen
+from message_flow import execute_tool_blocks, extract_text
+from message_projection import messages_for_api
 from prompt import (
     build_exploration_final_system,
     build_exploration_system,
     build_plan_agent_final_system,
     build_plan_agent_system,
-    build_verification_system,
     build_subagent_final_system,
     build_subagent_system,
+    build_verification_system,
     ensure_project_instructions_message,
 )
-from circuit_breaker import CircuitBreakerOpen
 from result import Result
+from runtime import get_runtime, log_usage
+from tool_runtime import ApprovalFlow, PermissionPolicy
 from tools.registry import TOOL_SPECS
 from tools.types import ToolSchema, tool_schema
-from runtime import get_runtime, log_usage
-from message_flow import execute_tool_blocks, extract_text
-from message_projection import messages_for_api
-from tool_runtime import ApprovalFlow, PermissionPolicy
 
+
+API_UNAVAILABLE_MESSAGE = "API is temporarily unavailable because the circuit breaker is open. Please try again later."
 
 logger = logging.getLogger("penhin.subagent")
-API_UNAVAILABLE_MESSAGE = "API is temporarily unavailable because the circuit breaker is open. Please try again later."
 
 
 def tools_for_policy(tool_names: set[str]) -> list[ToolSchema]:

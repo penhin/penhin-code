@@ -1,22 +1,20 @@
 from __future__ import annotations
 
-import re
-import time
 import json
 import logging
-from pathlib import Path
+import re
+import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from atomic_io import read_jsonl, write_jsonl_atomic
 from prompt import PROJECT_INSTRUCTIONS_TAG
 
-
-logger = logging.getLogger("penhin.transcript")
-
-
 TRANSCRIPT_DIR = Path(".transcripts")
 COMPACT_TRANSCRIPT_RE = re.compile(r"^\[Conversation compressed\. Transcript: (?P<path>[^\]]+)\]")
+
+logger = logging.getLogger("penhin.transcript")
 
 
 def serialize_for_json(value: Any) -> Any:

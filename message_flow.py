@@ -12,9 +12,10 @@ if TYPE_CHECKING:
 ToolResults = list[dict[str, Any]]
 ApprovalResolver = Callable[[str, dict[str, Any], PermissionPolicy, ApprovalFlow], ToolRun]
 
-logger = logging.getLogger("penhin.message_flow")
 TOOL_RESULT_CACHE_MIN_CHARS = 2048
 CACHE_CONTROL_EPHEMERAL = {"type": "ephemeral"}
+
+logger = logging.getLogger("penhin.message_flow")
 
 
 def block_get(block: Any, key: str, default: Any = None) -> Any:
