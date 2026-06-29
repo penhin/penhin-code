@@ -80,7 +80,9 @@ def build_exploration_system() -> str:
 def build_exploration_final_system() -> str:
     return EXPLORATION_SYSTEM + (
         "\n\n"
-        "The tool budget is exhausted. Use the available tool results and return the final concise summary now."
+        "The tool budget is exhausted. Use the available tool results and return the final concise summary now. "
+        "Do not mention budget, guard, or tool limitations. Return only the strongest concrete findings, "
+        "with file paths when known, and mark uncertain items as risks. Keep the answer under 600 words."
     )
 
 
@@ -104,6 +106,8 @@ TASK_WORKFLOW_SECTION = (
     "- For complex or multi-step implementation changes, delegate planning first with task(agent_type=\"plan\").\n"
     "- The plan agent is read-only and has an isolated context window, so use it to explore and design without polluting the main conversation.\n"
     "- Ask the plan agent for a complete implementation plan, including verification steps and acceptance criteria.\n"
+    "- When a task/explore subagent returns substantive findings, use that result as the primary evidence; do not repeat broad file-reading after delegation.\n"
+    "- Only read files again after delegation to verify a specific finding or fill a narrow gap.\n"
     "- After reviewing the returned plan, call task_start with a 2-5 item executable todo plan.\n"
     "- Execute the implementation, marking todos done with todo_done as each step is completed.\n"
     "- Before task_complete, call verify with goal plus relevant changes/test_hint.\n"
@@ -225,6 +229,11 @@ def available_tools_section() -> str:
 
 
 def available_skills_section() -> str:
+    if os.getenv("PENHIN_ADVERTISE_SKILLS", "").strip().lower() not in {"1", "true", "yes", "on"}:
+        return (
+            "Available skills:\n"
+            "(not advertised for this workspace; use load_skill only when the user explicitly names a skill)"
+        )
     return "Available skills:\n" + load_skill.get_descriptions()
 
 
@@ -260,6 +269,10 @@ EXPLORATION_SYSTEM = (
     "Investigate the assigned question with read-only tools and return concise findings. "
     "Do not modify files, run commands, update task/todo state, or spawn other agents. "
     "Follow project instructions, but keep the assigned task narrow and do not expand scope. "
+    "Work efficiently: first inspect the workspace shape, then read only the smallest set of files needed "
+    "to support concrete findings. Prefer 3-5 high-signal files over broad sweeps. "
+    "Stop as soon as you have enough evidence for actionable findings; do not exhaustively audit the whole repo. "
+    "If you cannot prove a finding quickly, label it as a risk instead of continuing to read widely. "
     "Tool results are JSON with ok/message/data/error/meta fields; prefer data for structured facts and error for failures. "
 )
 

@@ -6,7 +6,7 @@ import ui
 
 from circuit_breaker import CircuitBreakerOpen
 from context import RunContext
-from message_flow import ToolResults, execute_tool_blocks
+from message_flow import ToolResults, build_tool_execution_context, execute_tool_blocks
 from message_projection import messages_for_api
 from prompt import build_main_system, ensure_project_instructions_message
 from runtime import get_runtime, log_usage
@@ -68,7 +68,11 @@ def resolve_approval(
     logger.info(f"[approval] key: {approval_key(tool_name, tool_input)}")
     logger.info(format_tool_input(tool_input))
 
-    reply = input("[approval] y=once, ys=session, n=reject [y/N] ").strip().lower()
+    try:
+        reply = input("[approval] y=once, ys=session, n=reject [y/N] ").strip().lower()
+    except EOFError:
+        logger.info("[approval] no input available; rejecting")
+        reply = ""
     if reply == "y":
         return run_with_one_time_approval(tool_name, tool_input, policy, approval)
 
@@ -85,6 +89,12 @@ def resolve_approval(
 
 
 def compact_context_for_llm(context: RunContext) -> None:
+    force_compact_hint = context.consume_force_compact_hint()
+    if force_compact_hint is not None:
+        context.force_auto_compact(hint=force_compact_hint)
+        context.collapse_keep_recent = None
+        return
+
     context.micro_compact()
     context.auto_compact_if_needed()
 
@@ -125,10 +135,12 @@ def should_continue_with_tools(response) -> bool:
 def execute_tool_uses(context: RunContext, response) -> tuple[ToolResults, bool]:
     return execute_tool_blocks(
         response.content,
-        context.policy,
-        context.approval,
-        approval_resolver=resolve_approval,
-        context=context,
+        build_tool_execution_context(
+            context.policy,
+            context.approval,
+            approval_resolver=resolve_approval,
+            context=context,
+        ),
     )
 
 
@@ -136,7 +148,7 @@ def record_tool_results(context: RunContext, tool_results: ToolResults, manual_c
     context.add_tool_results(tool_results)
 
     if manual_compact:
-        context.force_auto_compact()
+        context.request_force_compact()
 
 
 def agent_loop(context: RunContext) -> None:

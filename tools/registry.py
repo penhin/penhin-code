@@ -56,6 +56,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
             kwargs["task"],
             agent_type=kwargs.get("agent_type", "general"),
         ),
+        parallel_safe=False,
         available_to_child=False,
         available_to_parent=True,
         approval=ToolApproval(),
@@ -85,6 +86,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
             changes=kwargs.get("changes", ""),
             test_hint=kwargs.get("test_hint", ""),
         ),
+        parallel_safe=False,
         available_to_child=False,
         available_to_parent=True,
         approval=ToolApproval(),
@@ -95,6 +97,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema(),
         category=ToolCategory.agent,
         handler=None,
+        parallel_safe=False,
         available_to_child=False,
         available_to_parent=True,
         approval=ToolApproval(),
@@ -115,6 +118,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         ),
         category=ToolCategory.agent,
         handler=None,
+        parallel_safe=False,
         available_to_child=False,
         available_to_parent=True,
         approval=ToolApproval(),
@@ -140,6 +144,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
             plan=kwargs.get("plan"),
             plan_slug=kwargs.get("plan_slug", ""),
         ),
+        parallel_safe=False,
         available_to_child=False,
         available_to_parent=True,
         approval=ToolApproval(),
@@ -150,6 +155,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema({"id": {"type": "integer"}}),
         category=ToolCategory.state,
         handler=lambda **kwargs: task_tools.run_task_show(id=kwargs.get("id")),
+        parallel_safe=True,
         available_to_child=False,
         available_to_parent=True,
         approval=ToolApproval(),
@@ -160,6 +166,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema({"note": {"type": "string"}}),
         category=ToolCategory.state,
         handler=lambda **kwargs: task_tools.run_task_complete(note=kwargs.get("note")),
+        parallel_safe=False,
         available_to_child=False,
         available_to_parent=True,
         approval=ToolApproval(),
@@ -170,6 +177,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema({"task": {"type": "string"}}, ["task"]),
         category=ToolCategory.agent,
         handler=lambda **kwargs: task_tools.run_background_start(kwargs["task"]),
+        parallel_safe=False,
         available_to_child=False,
         available_to_parent=True,
         approval=ToolApproval(requires_approval=True, key=lambda tool_input: _short_digest(tool_input.get("task", ""))),
@@ -180,6 +188,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema(),
         category=ToolCategory.state,
         handler=lambda **kwargs: task_tools.task_status(action="background_list"),
+        parallel_safe=True,
         available_to_child=False,
         available_to_parent=True,
         approval=ToolApproval(),
@@ -190,6 +199,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema({"id": {"type": "integer"}}, ["id"]),
         category=ToolCategory.state,
         handler=lambda **kwargs: task_tools.task_status(action="background_show", id=kwargs["id"]),
+        parallel_safe=True,
         available_to_child=False,
         available_to_parent=True,
         approval=ToolApproval(),
@@ -200,6 +210,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema({"command": {"type": "string"}}, ["command"]),
         category=ToolCategory.shell,
         handler=lambda **kwargs: run_bash(kwargs["command"]),
+        parallel_safe=False,
         approval=ToolApproval(requires_approval=True, key=_input_value_key("command")),
     ),
     "read": ToolSpec(
@@ -217,6 +228,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         handler=lambda **kwargs: run_read(
             kwargs["path"], kwargs.get("limit"), kwargs.get("line_numbers", True)
         ),
+        parallel_safe=True,
         approval=ToolApproval(),
     ),
     "write": ToolSpec(
@@ -228,6 +240,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         ),
         category=ToolCategory.write,
         handler=lambda **kwargs: run_write(kwargs["path"], kwargs["content"]),
+        parallel_safe=False,
         approval=ToolApproval(requires_approval=True, key=_input_value_key("path")),
     ),
     "list": ToolSpec(
@@ -236,6 +249,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema({"path": {"type": "string"}, "limit": {"type": "integer"}}),
         category=ToolCategory.readonly,
         handler=lambda **kwargs: run_list(kwargs.get("path", "."), kwargs.get("limit")),
+        parallel_safe=True,
         approval=ToolApproval(),
     ),
     "edit": ToolSpec(
@@ -251,6 +265,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         ),
         category=ToolCategory.write,
         handler=lambda **kwargs: run_edit(kwargs["path"], kwargs["old"], kwargs["new"]),
+        parallel_safe=False,
         approval=ToolApproval(requires_approval=True, key=_input_value_key("path")),
     ),
     "search": ToolSpec(
@@ -269,6 +284,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         handler=lambda **kwargs: run_search(
             kwargs["query"], kwargs.get("path", "."), kwargs.get("limit"), kwargs.get("timeout", 30)
         ),
+        parallel_safe=True,
         approval=ToolApproval(),
     ),
     "todo_set": ToolSpec(
@@ -280,6 +296,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         ),
         category=ToolCategory.state,
         handler=lambda **kwargs: run_todo("set", kwargs["items"]),
+        parallel_safe=False,
         approval=ToolApproval(),
     ),
     "todo_show": ToolSpec(
@@ -288,6 +305,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema(),
         category=ToolCategory.state,
         handler=lambda **kwargs: run_todo("show"),
+        parallel_safe=True,
         approval=ToolApproval(),
     ),
     "todo_done": ToolSpec(
@@ -296,6 +314,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema({"index": {"type": "integer"}}, ["index"]),
         category=ToolCategory.state,
         handler=lambda **kwargs: run_todo("done", index=kwargs["index"]),
+        parallel_safe=False,
         approval=ToolApproval(),
     ),
     "todo_clear": ToolSpec(
@@ -304,6 +323,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema(),
         category=ToolCategory.state,
         handler=lambda **kwargs: run_todo("clear"),
+        parallel_safe=False,
         approval=ToolApproval(),
     ),
     "glob": ToolSpec(
@@ -318,6 +338,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         ),
         category=ToolCategory.readonly,
         handler=lambda **kwargs: run_glob(kwargs["pattern"], kwargs.get("path", ".")),
+        parallel_safe=True,
         approval=ToolApproval(),
     ),
     "workspace": ToolSpec(
@@ -326,6 +347,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema(),
         category=ToolCategory.readonly,
         handler=lambda **kwargs: run_workspace([tool["name"] for tool in PARENT_TOOLS]),
+        parallel_safe=True,
         approval=ToolApproval(),
     ),
     "load_skill": ToolSpec(
@@ -334,6 +356,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema({"name": {"type": "string"}}, ["name"]),
         category=ToolCategory.readonly,
         handler=lambda **kwargs: load_skill(kwargs["name"]),
+        parallel_safe=True,
         approval=ToolApproval(),
     ),
 }

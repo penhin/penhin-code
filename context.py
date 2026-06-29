@@ -6,7 +6,29 @@ from typing import Any
 
 from compact import auto_compact_messages, log_compact_watermark, micro_compact_if_needed
 from message_projection import mark_message_snipped
+from result import Result
 from tool_runtime import ApprovalFlow, PermissionPolicy
+
+
+POST_DELEGATION_READ_BUDGET = 3
+POST_DELEGATION_BLOCKED_TOOLS = {
+    "bash",
+    "compact",
+    "glob",
+    "list",
+    "load_skill",
+    "search",
+    "snip",
+    "task",
+    "task_complete",
+    "task_start",
+    "verify",
+    "workspace",
+    "background_start",
+    "todo_clear",
+    "todo_done",
+    "todo_set",
+}
 
 
 @dataclass
@@ -16,8 +38,13 @@ class RunContext:
     approval: ApprovalFlow
     session_path: Path | None = None
     collapse_keep_recent: int | None = None
+    post_delegation_read_budget: int | None = None
+    post_delegation_source: str = ""
+    pending_force_compact_hint: str | None = None
 
     def add_user_message(self, content: Any) -> None:
+        if not is_tool_result_content(content):
+            self.clear_post_delegation_guard()
         self.messages.append({"role": "user", "content": content})
 
     def add_assistant_message(self, content: Any) -> None:
@@ -25,6 +52,60 @@ class RunContext:
 
     def add_tool_results(self, tool_results: list[dict[str, Any]]) -> None:
         self.add_user_message(tool_results)
+
+    def clear_post_delegation_guard(self) -> None:
+        self.post_delegation_read_budget = None
+        self.post_delegation_source = ""
+
+    def activate_post_delegation_guard(self, source_tool: str) -> None:
+        self.post_delegation_read_budget = POST_DELEGATION_READ_BUDGET
+        self.post_delegation_source = source_tool
+
+    def post_delegation_tool_block(self, tool_name: str) -> Result | None:
+        if self.post_delegation_read_budget is None:
+            return None
+
+        if tool_name in POST_DELEGATION_BLOCKED_TOOLS:
+            return Result.failure(
+                (
+                    f"Blocked broad {tool_name} after {self.post_delegation_source}. "
+                    "Use the delegated result as primary evidence; only narrow read calls "
+                    "are allowed to verify specific findings. Do not call more tools for "
+                    "this investigation; answer from the delegated result now. Do not ask "
+                    "the user to reset, retry, or grant more inspection for this same request."
+                ),
+                code="post_delegation_broad_tool_blocked",
+                source_tool=self.post_delegation_source,
+                blocked_tool=tool_name,
+                read_budget_remaining=self.post_delegation_read_budget,
+            )
+
+        if tool_name == "read":
+            if self.post_delegation_read_budget <= 0:
+                return Result.failure(
+                    (
+                        f"Post-delegation read budget exhausted after {self.post_delegation_source}. "
+                        "Do not call more tools for this investigation; summarize from the delegated result "
+                        "now. Do not ask the user to reset, retry, or grant more inspection for this same request."
+                    ),
+                    code="post_delegation_read_budget_exhausted",
+                    source_tool=self.post_delegation_source,
+                    blocked_tool=tool_name,
+                    read_budget_remaining=0,
+                )
+            self.post_delegation_read_budget -= 1
+
+        return None
+
+    def request_force_compact(self, hint: str | None = None) -> None:
+        self.pending_force_compact_hint = hint or ""
+
+    def consume_force_compact_hint(self) -> str | None:
+        if self.pending_force_compact_hint is None:
+            return None
+        hint = self.pending_force_compact_hint
+        self.pending_force_compact_hint = None
+        return hint or None
 
     def micro_compact(self) -> None:
         from compact import COMPACT_THRESHOLD
@@ -36,8 +117,6 @@ class RunContext:
                 self.messages,
                 collapse_keep_recent=self.collapse_keep_recent,
             )
-            from tools.cache import tool_result_cache
-            tool_result_cache.clear()
 
     def force_auto_compact(self, hint: str | None = None) -> None:
         self.messages[:] = auto_compact_messages(
@@ -45,8 +124,6 @@ class RunContext:
             hint=hint,
             collapse_keep_recent=self.collapse_keep_recent,
         )
-        from tools.cache import tool_result_cache
-        tool_result_cache.clear()
 
     def force_snip_turns(self, selectors: list[int | tuple[int, int]]) -> int:
         ranges = conversation_turn_ranges(self.messages)
@@ -68,9 +145,13 @@ def is_human_user_message(message: dict[str, Any]) -> bool:
     if message.get("role") != "user":
         return False
     content = message.get("content")
+    return not is_tool_result_content(content)
+
+
+def is_tool_result_content(content: Any) -> bool:
     if not isinstance(content, list):
-        return True
-    return not any(isinstance(block, dict) and block.get("type") == "tool_result" for block in content)
+        return False
+    return any(isinstance(block, dict) and block.get("type") == "tool_result" for block in content)
 
 
 def message_summary(message: dict[str, Any], limit: int = 80) -> str:

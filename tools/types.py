@@ -36,6 +36,7 @@ class ToolSpec:
     input_schema: ToolSchema
     category: ToolCategory
     handler: Callable[..., Result] | None
+    parallel_safe: bool = False
     available_to_child: bool = True
     available_to_parent: bool = True
     approval: ToolApproval = field(default_factory=ToolApproval)
@@ -46,4 +47,5 @@ def tool_schema(spec: ToolSpec) -> ToolSchema:
         "name": spec.name,
         "description": spec.description,
         "input_schema": spec.input_schema,
+        "parallel_safe": spec.parallel_safe,
     }

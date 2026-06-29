@@ -3,7 +3,7 @@ import logging
 from typing import Any
 
 from circuit_breaker import CircuitBreakerOpen
-from message_projection import mark_message_snipped, messages_for_api
+from message_projection import messages_for_api
 from prompt import AUTO_COMPACT_SYSTEM
 from runtime import get_runtime
 from transcript import serialize_for_json, transcripts
@@ -130,6 +130,12 @@ def recent_message_start(messages: list[dict[str, Any]], keep_last: int) -> int:
     return start
 
 
+def safe_recent_messages(messages: list[dict[str, Any]], keep_last: int) -> list[dict[str, Any]]:
+    if not messages:
+        return []
+    return messages[recent_message_start(messages, keep_last):]
+
+
 def auto_compact_messages(
     messages: list[dict[str, Any]],
     keep_head: int = KEEP_HEAD_MESSAGES,
@@ -179,14 +185,9 @@ def auto_compact_messages(
     if not summary:
         summary = "No summary generated."
 
-    head_end = max(0, min(keep_head, len(messages)))
-    start = max(head_end, recent_message_start(messages, keep_last))
-    for message in messages[head_end:start]:
-        mark_message_snipped(message, reason="auto_compact")
-
     compacted = {
         "role": "user",
         "content": f"[Conversation compressed. Transcript: {transcript_path}]\n\n{summary}",
     }
-    return [compacted] + messages
+    return [compacted] + safe_recent_messages(messages, keep_last)
     
