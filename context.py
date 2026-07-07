@@ -6,6 +6,7 @@ from typing import Any
 
 from compact import auto_compact_messages, log_compact_watermark, micro_compact_if_needed
 from message_projection import mark_message_snipped
+from permissions import PermissionMode
 from result import Result
 from tool_runtime import ApprovalFlow, PermissionPolicy
 
@@ -41,6 +42,7 @@ class RunContext:
     post_delegation_read_budget: int | None = None
     post_delegation_source: str = ""
     pending_force_compact_hint: str | None = None
+    pre_plan_mode: PermissionMode | None = None
 
     def add_user_message(self, content: Any) -> None:
         if not is_tool_result_content(content):

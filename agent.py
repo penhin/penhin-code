@@ -4,6 +4,7 @@ from typing import Any
 
 import ui
 
+from agent_state import AgentDeps, AgentState, is_terminal, step_agent
 from circuit_breaker import CircuitBreakerOpen
 from context import RunContext
 from message_flow import ToolResults, build_tool_execution_context, execute_tool_blocks
@@ -151,32 +152,39 @@ def record_tool_results(context: RunContext, tool_results: ToolResults, manual_c
         context.request_force_compact()
 
 
-def agent_loop(context: RunContext) -> None:
+def handle_circuit_open(context: RunContext, error: CircuitBreakerOpen) -> None:
+    logger.warning(f"[circuit] {API_UNAVAILABLE_MESSAGE} ({error})")
+    context.add_assistant_message([
+        {"type": "text", "text": API_UNAVAILABLE_MESSAGE}
+    ])
+
+
+def build_agent_deps(runtime) -> AgentDeps:
+    return AgentDeps(
+        compact_context=compact_context_for_llm,
+        call_llm=lambda context: call_llm(context, runtime),
+        record_llm_response=record_llm_response,
+        should_continue_with_tools=should_continue_with_tools,
+        execute_tool_uses=execute_tool_uses,
+        record_tool_results=record_tool_results,
+        handle_circuit_open=handle_circuit_open,
+    )
+
+
+def run_agent_state_machine(
+    context: RunContext,
+    deps: AgentDeps,
+    initial_state: AgentState | None = None,
+) -> AgentState:
+    state = initial_state or AgentState()
+    while not is_terminal(state):
+        state = step_agent(context, state, deps)
+    return state
+
+
+def agent_loop(context: RunContext) -> AgentState:
     runtime = get_runtime()
-
-    while True:
-        compact_context_for_llm(context)
-
-        try:
-            response = call_llm(context, runtime)
-        except CircuitBreakerOpen as error:
-            logger.warning(f"[circuit] {API_UNAVAILABLE_MESSAGE} ({error})")
-            context.add_assistant_message([
-                {"type": "text", "text": API_UNAVAILABLE_MESSAGE}
-            ])
-            return
-
-        record_llm_response(context, response)
-
-        if not should_continue_with_tools(response):
-            return
-
-        tool_results, manual_compact = execute_tool_uses(context, response)
-
-        if not tool_results:
-            return
-
-        record_tool_results(context, tool_results, manual_compact)
+    return run_agent_state_machine(context, build_agent_deps(runtime))
 
 
 def run_once(query: str) -> None:

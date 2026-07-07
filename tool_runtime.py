@@ -349,6 +349,8 @@ def execute_tool(
         return ToolRun(Result.failure(f"Unknown tool handler: {tool_name}", code="unknown_tool_handler"))
 
     try:
+        if tool_name in {"enter_plan", "exit_plan"}:
+            return ToolRun(spec.handler(context=context, **tool_input))
         return ToolRun(spec.handler(**tool_input))
     except TypeError as error:
         return ToolRun(Result.failure(f"Invalid input for {tool_name}: {error}", code="invalid_tool_input"))

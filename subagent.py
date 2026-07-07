@@ -2,7 +2,17 @@ import logging
 import time
 from typing import Any
 
+from agent_state import (
+    AgentDeps,
+    AgentPhase,
+    AgentState,
+    TerminalReason,
+    finish,
+    is_terminal,
+    step_agent,
+)
 from circuit_breaker import CircuitBreakerOpen
+from context import RunContext
 from message_flow import build_tool_execution_context, execute_tool_blocks, extract_text
 from message_projection import messages_for_api
 from prompt import (
@@ -208,6 +218,84 @@ def summarize_incomplete_response(runtime, sub_messages: list[dict[str, Any]], c
         )
 
 
+def build_subagent_deps(
+    runtime,
+    config: dict[str, Any],
+    execution_context,
+    agent_type: str,
+    max_tokens: int,
+    last_response: dict[str, Any],
+    budget_exhausted: dict[str, bool],
+) -> AgentDeps:
+    turn_counter = {"value": 0}
+
+    def call_subagent_llm(context: RunContext):
+        start = time.perf_counter()
+        response = runtime.call_with_retry(
+            system=config["system"](),
+            messages=messages_for_api(context.messages),
+            tools=config["tools"],
+            max_tokens=max_tokens,
+        )
+        duration_ms = (time.perf_counter() - start) * 1000
+        turn_counter["value"] += 1
+        log_subagent_turn(agent_type, turn_counter["value"], response, duration_ms)
+        last_response["value"] = response
+        return response
+
+    def record_subagent_response(context: RunContext, response) -> None:
+        context.add_assistant_message(response.content)
+        log_usage(f"subagent-{agent_type}", response)
+
+    def execute_subagent_tools(context: RunContext, response):
+        return execute_tool_blocks(response.content, execution_context)
+
+    def record_subagent_tool_results(
+        context: RunContext,
+        tool_results: list[dict[str, Any]],
+        _manual_compact: bool,
+    ) -> None:
+        context.add_tool_results(tool_results)
+        budget_exhausted["value"] = (
+            execution_context.max_tool_calls is not None
+            and execution_context.tool_calls_used >= execution_context.max_tool_calls
+        )
+
+    def handle_subagent_circuit_open(_context: RunContext, error: CircuitBreakerOpen) -> None:
+        logger.warning(f"[circuit] subagent stopped: {error}")
+
+    return AgentDeps(
+        compact_context=lambda _context: None,
+        call_llm=call_subagent_llm,
+        record_llm_response=record_subagent_response,
+        should_continue_with_tools=lambda response: response.stop_reason == "tool_use",
+        execute_tool_uses=execute_subagent_tools,
+        record_tool_results=record_subagent_tool_results,
+        handle_circuit_open=handle_subagent_circuit_open,
+    )
+
+
+def run_subagent_state_machine(
+    context: RunContext,
+    deps: AgentDeps,
+    max_turns: int,
+    budget_exhausted: dict[str, bool],
+) -> AgentState:
+    state = AgentState()
+    while not is_terminal(state) and not budget_exhausted["value"]:
+        if state.phase == AgentPhase.COMPACT_CONTEXT and state.turn >= max_turns:
+            break
+        state = step_agent(context, state, deps)
+
+    if is_terminal(state):
+        return state
+
+    if budget_exhausted["value"]:
+        return finish(state, TerminalReason.TOOL_BUDGET_EXHAUSTED)
+
+    return finish(state, TerminalReason.MAX_TURNS)
+
+
 def run_subagent(task: str, agent_type: str = "general") -> Result:
     config = agent_config(agent_type)
     if config is None:
@@ -226,79 +314,85 @@ def run_subagent(task: str, agent_type: str = "general") -> Result:
         config["approval"],
         max_tool_calls=config["max_tool_calls"],
     )
-    
-    for turn in range(1, max_turns + 1):
-        start = time.perf_counter()
-        try:
-            response = runtime.call_with_retry(
-                system=config["system"](),
-                messages=messages_for_api(sub_messages),
-                tools=config["tools"],
-                max_tokens=max_tokens,
-            )
-        except CircuitBreakerOpen as error:
-            logger.warning(f"[circuit] subagent stopped: {error}")
-            return Result.failure(
-                API_UNAVAILABLE_MESSAGE,
-                code="circuit_open",
-                data={"agent_type": agent_type},
-            )
-        duration_ms = (time.perf_counter() - start) * 1000
-        log_subagent_turn(agent_type, turn, response, duration_ms)
-        sub_messages.append({"role": "assistant", "content": response.content})
-        
-        log_usage(f"subagent-{agent_type}", response)
-        if response.stop_reason != "tool_use":
-            if response.stop_reason == "max_tokens":
-                return summarize_incomplete_response(
-                    runtime,
-                    sub_messages,
-                    config,
-                    agent_type,
-                    "max_tokens",
-                )
+    context = RunContext(
+        messages=sub_messages,
+        policy=config["policy"],
+        approval=config["approval"],
+    )
+    last_response: dict[str, Any] = {"value": None}
+    budget_exhausted = {"value": False}
+    deps = build_subagent_deps(
+        runtime,
+        config,
+        execution_context,
+        agent_type,
+        max_tokens,
+        last_response,
+        budget_exhausted,
+    )
 
-            text = response_text(response)
-            if text:
-                return Result.success(text)
+    state = run_subagent_state_machine(context, deps, max_turns, budget_exhausted)
+    sub_messages = context.messages
+    response = last_response["value"]
 
-            logger.warning(
-                f"[subagent] empty_text_summary agent_type={agent_type} "
-                f"turn={turn} stop_reason={response.stop_reason} {usage_summary(response)}"
-            )
-            return summarize_incomplete_response(
-                runtime,
-                sub_messages,
-                config,
-                agent_type,
-                "empty_text",
-            )
-
-        tool_results, _ = execute_tool_blocks(
-            response.content,
-            execution_context,
-        )
-
-        if not tool_results:
-            return Result.success(extract_text(response.content, default="(no summary)"))
-
-        sub_messages.append({"role": "user", "content": tool_results})
-        if (
-            execution_context.max_tool_calls is not None
-            and execution_context.tool_calls_used >= execution_context.max_tool_calls
-        ):
-            return summarize_incomplete_response(
-                runtime,
-                sub_messages,
-                config,
-                agent_type,
-                "tool_budget_exhausted",
-            )
-    
-    try:
-        return Result.success(request_final_summary(runtime, sub_messages, config, agent_type))
-    except Exception as error:
+    if state.terminal_reason == TerminalReason.CIRCUIT_OPEN:
         return Result.failure(
-            f"Subagent failed to summarize after max turns: {error}",
-            code="summary_failed",
+            API_UNAVAILABLE_MESSAGE,
+            code="circuit_open",
+            data={"agent_type": agent_type},
         )
+
+    if state.terminal_reason == TerminalReason.TOOL_BUDGET_EXHAUSTED:
+        return summarize_incomplete_response(
+            runtime,
+            sub_messages,
+            config,
+            agent_type,
+            "tool_budget_exhausted",
+        )
+
+    if state.terminal_reason == TerminalReason.MAX_TURNS:
+        try:
+            return Result.success(request_final_summary(runtime, sub_messages, config, agent_type))
+        except Exception as error:
+            return Result.failure(
+                f"Subagent failed to summarize after max turns: {error}",
+                code="summary_failed",
+            )
+
+    if state.terminal_reason == TerminalReason.NO_TOOL_RESULTS:
+        return Result.success(
+            extract_text(getattr(response, "content", []), default="(no summary)")
+        )
+
+    if response is not None and getattr(response, "stop_reason", "") == "max_tokens":
+        return summarize_incomplete_response(
+            runtime,
+            sub_messages,
+            config,
+            agent_type,
+            "max_tokens",
+        )
+
+    if response is not None:
+        text = response_text(response)
+        if text:
+            return Result.success(text)
+
+        logger.warning(
+            f"[subagent] empty_text_summary agent_type={agent_type} "
+            f"turn={state.turn} stop_reason={getattr(response, 'stop_reason', '')} "
+            f"{usage_summary(response)}"
+        )
+        return summarize_incomplete_response(
+            runtime,
+            sub_messages,
+            config,
+            agent_type,
+            "empty_text",
+        )
+
+    return Result.failure(
+        "Subagent stopped without a model response.",
+        code="missing_response",
+    )

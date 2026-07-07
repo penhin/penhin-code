@@ -8,6 +8,7 @@ from todo import run_todo
 from . import tasks as task_tools
 from .files import run_edit, run_list, run_read, run_search, run_write
 from .glob import run_glob
+from .plan_mode import run_enter_plan, run_exit_plan
 from .shell import run_bash
 from .types import ApprovalKey, ToolApproval, ToolCategory, ToolSchema, ToolSpec, tool_schema
 from .workspace import run_workspace
@@ -118,6 +119,39 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         ),
         category=ToolCategory.agent,
         handler=None,
+        parallel_safe=False,
+        available_to_child=False,
+        available_to_parent=True,
+        approval=ToolApproval(),
+    ),
+    "enter_plan": ToolSpec(
+        name="enter_plan",
+        description=(
+            "Enter read-only plan mode before proposing implementation work. "
+            "Saves the previous permission mode so exit_plan can restore it."
+        ),
+        input_schema=object_schema(),
+        category=ToolCategory.state,
+        handler=run_enter_plan,
+        parallel_safe=False,
+        available_to_child=False,
+        available_to_parent=True,
+        approval=ToolApproval(),
+    ),
+    "exit_plan": ToolSpec(
+        name="exit_plan",
+        description=(
+            "Exit plan mode after writing a concrete plan. Saves the plan and "
+            "restores the permission mode that was active before enter_plan."
+        ),
+        input_schema=object_schema(
+            {
+                "plan_content": {"type": "string"},
+            },
+            ["plan_content"],
+        ),
+        category=ToolCategory.state,
+        handler=run_exit_plan,
         parallel_safe=False,
         available_to_child=False,
         available_to_parent=True,
