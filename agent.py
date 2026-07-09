@@ -5,6 +5,7 @@ from typing import Any
 import ui
 
 from agent_state import AgentDeps, AgentState, is_terminal, step_agent
+from approval_rules import suggest_bash_prefix
 from circuit_breaker import CircuitBreakerOpen
 from context import RunContext
 from message_flow import ToolResults, build_tool_execution_context, execute_tool_blocks
@@ -68,17 +69,40 @@ def resolve_approval(
     logger.info(f"[approval] tool: {tool_name}")
     logger.info(f"[approval] key: {approval_key(tool_name, tool_input)}")
     logger.info(format_tool_input(tool_input))
+    suggested_prefix = None
+    if tool_name == "bash":
+        command = str(tool_input.get("command", ""))
+        suggested_prefix = suggest_bash_prefix(command)
+        print("[approval] bash")
+        print(command)
+        print()
+        print("1. allow once")
+        print("2. allow exact command this session")
+        if suggested_prefix:
+            print(f"3. allow command prefix this session: {suggested_prefix}")
+        else:
+            print("3. allow command prefix this session: unavailable")
+        print("4. reject")
 
     try:
-        reply = input("[approval] y=once, ys=session, n=reject [y/N] ").strip().lower()
+        reply = input("[approval] choose 1-4 [4] ").strip().lower()
     except EOFError:
         logger.info("[approval] no input available; rejecting")
         reply = ""
-    if reply == "y":
+    if reply in {"1", "y"}:
         return run_with_one_time_approval(tool_name, tool_input, policy, approval)
 
-    if reply == "ys":
+    if reply in {"2", "ys"}:
         approval.approve(tool_name, tool_input)
+        return run_tool(
+            tool_name,
+            tool_input,
+            policy,
+            approval,
+        )
+
+    if reply in {"3", "yp"} and suggested_prefix:
+        approval.approve_rule(tool_name, suggested_prefix)
         return run_tool(
             tool_name,
             tool_input,

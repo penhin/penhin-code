@@ -1,18 +1,20 @@
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 
 from prompt_toolkit.completion import Completer, Completion
 
 import ui
 
-from config import get_permission_mode, set_env_value, set_permission_mode
+from config import CONFIG_FILE, ENV_FILE, get_permission_mode, set_env_value, set_permission_mode
 from context import RunContext, conversation_turn_ranges, parse_snip_selectors
 from permissions import PERMISSION_MODES, PermissionMode, transition_mode
 from runtime import get_runtime, set_runtime_api_key, set_runtime_model
 from tool_runtime import runtime_permission_setup
 from tools.registry import tool_names
 from tools.workspace import workspace_info
+from transcript import session_id_from_path
 
 
 CommandHandler = Callable[[list[str], RunContext | None], None]
@@ -49,6 +51,93 @@ def handle_workspace_command(args: list[str], context: RunContext | None = None)
 def handle_help_command(args: list[str], context: RunContext | None = None):
     for command in LOCAL_COMMANDS.values():
         ui.print_info(f"{command.name} {command.description}")
+
+
+def provider_label(provider: str) -> str:
+    labels = {
+        "anthropic": "Anthropic API",
+        "openai": "OpenAI API",
+    }
+    return labels.get(provider, provider or "-")
+
+
+def provider_base_url(provider: str) -> tuple[str, str] | None:
+    env_names = {
+        "anthropic": ("ANTHROPIC_BASE_URL", "Anthropic base URL"),
+        "openai": ("OPENAI_BASE_URL", "OpenAI base URL"),
+    }
+    env_name, label = env_names.get(
+        provider,
+        (f"{provider.upper()}_BASE_URL", f"{provider} base URL"),
+    )
+    value = os.getenv(env_name, "")
+    if not value:
+        return None
+    return label, value
+
+
+def proxy_url() -> str:
+    return (
+        os.getenv("HTTPS_PROXY")
+        or os.getenv("https_proxy")
+        or os.getenv("HTTP_PROXY")
+        or os.getenv("http_proxy")
+        or "-"
+    )
+
+
+def setting_sources() -> str:
+    sources = []
+    if CONFIG_FILE.exists():
+        sources.append("User config")
+    if ENV_FILE.exists():
+        sources.append("User env")
+    if Path(".env").exists():
+        sources.append("Project env")
+    return ", ".join(sources) if sources else "-"
+
+
+def session_id(context: RunContext | None) -> str:
+    if context is None or context.session_path is None:
+        return "-"
+    return session_id_from_path(context.session_path)
+
+
+def runtime_model() -> str:
+    try:
+        return get_runtime().model
+    except RuntimeError:
+        return os.getenv("MODEL_ID", "-")
+
+
+def build_status_lines(context: RunContext | None = None) -> list[str]:
+    provider = os.getenv("LLM_PROVIDER", "anthropic").strip().lower()
+    base_url = provider_base_url(provider)
+    lines = [
+        f"Version: {os.getenv('PENHIN_VERSION', 'dev')}",
+        "Session name: /rename to add a name",
+        f"Session ID: {session_id(context)}",
+        f"cwd: {workspace_info().get('cwd', '-')}",
+        f"API provider: {provider_label(provider)}",
+    ]
+    if base_url:
+        label, value = base_url
+        lines.append(f"{label}: {value}")
+    lines.extend([
+        f"Proxy: {proxy_url()}",
+        "",
+        f"Model: {runtime_model()}",
+        "IDE: Not connected",
+        "MCP servers: none",
+        f"Permission mode: {get_permission_mode()}",
+        f"Setting sources: {setting_sources()}",
+    ])
+    return lines
+
+
+def handle_status_command(args: list[str], context: RunContext | None = None):
+    for line in build_status_lines(context):
+        ui.print_info(line)
 
 
 def handle_permission_command(args: list[str], context: RunContext | None = None):
@@ -229,6 +318,11 @@ LOCAL_COMMANDS = {
         name="/help",
         description="Show local commands",
         handler=handle_help_command,
+    ),
+    "/status": LocalCommand(
+        name="/status",
+        description="Show session and runtime status",
+        handler=handle_status_command,
     ),
     "/model": LocalCommand(
         name="/model",

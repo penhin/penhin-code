@@ -8,6 +8,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from approval_rules import approval_rule_key, bash_prefix_matches
 from result import Result
 from tools.registry import TOOL_SPECS
 from tools.types import ToolCategory, ToolInput
@@ -48,6 +49,7 @@ class ApprovalFlow:
     approved: set[str] = field(default_factory=set)
     required: set[str] = field(default_factory=set)
     rejected: set[str] = field(default_factory=set)
+    approved_rules: set[str] = field(default_factory=set)
 
     @classmethod
     def preapproved(cls, tool_names: set[str]) -> ApprovalFlow:
@@ -63,6 +65,7 @@ class ApprovalFlow:
             approved=set(self.approved),
             required=set(self.required),
             rejected=set(self.rejected),
+            approved_rules=set(self.approved_rules),
         )
 
     def approve(self, tool_name: str, tool_input: ToolInput) -> None:
@@ -71,8 +74,21 @@ class ApprovalFlow:
     def reject(self, tool_name: str, tool_input: ToolInput) -> None:
         self.rejected.add(approval_key(tool_name, tool_input))
 
+    def approve_rule(self, tool_name: str, rule: str) -> None:
+        self.approved_rules.add(approval_rule_key(tool_name, rule))
+
     def is_approved(self, tool_name: str, tool_input: ToolInput) -> bool:
-        return tool_name in self.approved or approval_key(tool_name, tool_input) in self.approved
+        if tool_name in self.approved or approval_key(tool_name, tool_input) in self.approved:
+            return True
+
+        if tool_name == "bash":
+            command = str(tool_input.get("command", ""))
+            return any(
+                rule_key.startswith("bash:") and bash_prefix_matches(command, rule_key.removeprefix("bash:"))
+                for rule_key in self.approved_rules
+            )
+
+        return False
 
     def is_rejected(self, tool_name: str, tool_input: ToolInput) -> bool:
         return tool_name in self.rejected or approval_key(tool_name, tool_input) in self.rejected
