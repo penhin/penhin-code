@@ -96,3 +96,35 @@ class JobEvent:
     event_type: str
     payload: dict[str, Any] = field(default_factory=dict)
     created_at: str | None = None
+
+
+@dataclass
+class IntegrationRun:
+    id: str
+    root_task_id: str
+    base_commit: str
+    worktree_path: str
+    worktree_branch: str
+    status: str = "created"
+    result_commit: str = ""
+    error: str = ""
+    created_at: str | None = None
+    finished_at: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class IntegrationItem:
+    id: str
+    run_id: str
+    job_id: str
+    ordinal: int
+    source_branch: str
+    commits: list[str]
+    status: str = "pending"
+    error: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)

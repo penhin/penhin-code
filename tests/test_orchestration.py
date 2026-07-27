@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 
-from orchestration.models import AgentJob, AgentRole, Artifact, JobStatus
+from orchestration.models import AgentJob, AgentRole, Artifact, IntegrationItem, IntegrationRun, JobStatus
 from orchestration.repository import PostgresOrchestrationRepository
 from orchestration.planning import DAG_PROTOCOL_VERSION, parse_dag_plan
 from orchestration.service import create_isolated_agent_job, materialize_dag_plan
@@ -185,3 +185,29 @@ def test_postgres_claim_only_releases_dag_node_after_all_dependencies_succeed(
     assert claimed[0].id == child.id
     child_attempt = claimed[1]
     repository.finish_attempt(child_attempt.id, JobStatus.FAILED, error="test cleanup")
+
+
+def test_postgres_records_integration_run_and_ordered_items(repository: PostgresOrchestrationRepository) -> None:
+    root = repository.create_root_task("integration root", "integration root")
+    source = repository.create_job(AgentJob(
+        id=str(uuid4()), root_task_id=root.id, parent_id=root.id, role=AgentRole.GENERAL,
+        subject="source", instruction="source", workspace_mode="isolated_write",
+        worktree_path="/tmp/source", worktree_branch="penhin/source",
+    ))
+    run = IntegrationRun(
+        id=str(uuid4()), root_task_id=root.id, base_commit="a" * 40,
+        worktree_path="/tmp/integration", worktree_branch="penhin/integration-test",
+    )
+    item = IntegrationItem(
+        id=str(uuid4()), run_id=run.id, job_id=source.id, ordinal=0,
+        source_branch=source.worktree_branch, commits=["b" * 40],
+    )
+
+    stored = repository.create_integration_run(run, [item])
+    repository.update_integration_item(item.id, "applied")
+    repository.finish_integration_run(run.id, "integrated", result_commit="c" * 40)
+
+    assert stored.status == "created"
+    assert repository.get_integration_run(run.id).result_commit == "c" * 40
+    assert repository.list_integration_items(run.id)[0].commits == ["b" * 40]
+    assert repository.list_integration_items(run.id)[0].status == "applied"

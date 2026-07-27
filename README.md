@@ -58,6 +58,10 @@ Agent results use `penhin.handoff/v1`. A valid handoff is one JSON object contai
 
 Every executable Agent Job receives a dedicated Git worktree under `.penhin/worktrees/<job-id>` and a `penhin/agent-<job>` branch. `general` Agents can write only inside their own worktree; `explore`, `plan`, and `verify` Agents run in readonly mode, where file writes, edits, and non-readonly shell commands are rejected. Worktrees are created from the committed `HEAD`, so changes that must be visible to delegated Agents should be committed first. Completed worktrees are intentionally retained for review and later integration.
 
+### Collaboration convergence
+
+Successful write-capable Agents checkpoint uncommitted edits and publish an immutable `change_set` in their handoff: common base commit, commit list, and changed files. `integration_start` accepts an ordered set of those Jobs, creates `.penhin/integrations/<run-id>` on a dedicated `penhin/integration-*` branch, and cherry-picks their commits. It never updates `main`. Every run and item is persisted in PostgreSQL; conflicts stop at `needs_resolution` with the integration worktree retained. `integration_verify` runs an explicitly approved verification command there and marks the run `verified` or `verification_failed`. Promotion to a target branch remains an explicit human/coordinator action.
+
 ### 当前工具
 
 ```text

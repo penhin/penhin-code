@@ -38,3 +38,19 @@ def provision_worktree(job_id: str) -> AgentWorktree:
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "git worktree add failed")
     return AgentWorktree(path=str(worktree_path), branch=branch)
+
+
+def provision_integration_worktree(run_id: str, base_commit: str) -> AgentWorktree:
+    root = repository_root()
+    worktree_path = root / ".penhin" / "integrations" / run_id
+    branch = f"penhin/integration-{run_id.replace('-', '')[:12]}"
+    if worktree_path.exists():
+        raise RuntimeError(f"Refusing to reuse existing integration worktree: {worktree_path}")
+    worktree_path.parent.mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(
+        ["git", "worktree", "add", "-b", branch, str(worktree_path), base_commit],
+        cwd=root, capture_output=True, text=True, timeout=30, check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or "git worktree add failed")
+    return AgentWorktree(path=str(worktree_path), branch=branch)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from orchestration.repository import database_url_from_env
+from orchestration.integration import apply_integration, start_integration, verify_integration
 from orchestration.service import create_dag_plan, repository_from_env, wait_for_job
 from result import Result
 
@@ -111,4 +112,49 @@ def run_agent_job_wait(id: str, timeout_seconds: int = 30) -> Result:
             "schema_valid": artifact.schema_valid,
         },
     }
+    return Result.success(json.dumps(data, ensure_ascii=False, indent=2), data=data)
+
+
+def _integration_data(repository, run_id: str) -> dict:
+    run = repository.get_integration_run(run_id)
+    if run is None:
+        raise KeyError(run_id)
+    return {"run": run.to_dict(), "items": [item.to_dict() for item in repository.list_integration_items(run_id)]}
+
+
+def run_integration_start(root_task_id: str, job_ids: list[str]) -> Result:
+    repository, failure = _repository_or_failure()
+    if failure:
+        return failure
+    try:
+        run = start_integration(repository, root_task_id, job_ids)
+        run = apply_integration(repository, run.id)
+        data = _integration_data(repository, run.id)
+    except (KeyError, ValueError, RuntimeError) as error:
+        return Result.failure(str(error), code="integration_start_failed")
+    return Result.success(json.dumps(data, ensure_ascii=False, indent=2), data=data)
+
+
+def run_integration_show(id: str) -> Result:
+    repository, failure = _repository_or_failure()
+    if failure:
+        return failure
+    try:
+        data = _integration_data(repository, id)
+    except KeyError:
+        return Result.failure(f"Integration run {id} not found", code="not_found")
+    return Result.success(json.dumps(data, ensure_ascii=False, indent=2), data=data)
+
+
+def run_integration_verify(id: str, command: list[str]) -> Result:
+    repository, failure = _repository_or_failure()
+    if failure:
+        return failure
+    try:
+        run = verify_integration(repository, id, command)
+        data = _integration_data(repository, run.id)
+    except (KeyError, ValueError, RuntimeError) as error:
+        return Result.failure(str(error), code="integration_verification_failed")
+    if run.status != "verified":
+        return Result.failure(run.error or "Integration verification failed", code="verification_failed", data=data)
     return Result.success(json.dumps(data, ensure_ascii=False, indent=2), data=data)

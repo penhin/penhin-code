@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import subprocess
 import sys
 from uuid import uuid4
 
@@ -42,6 +43,27 @@ def finish_failure(repository: PostgresOrchestrationRepository, attempt_id: str,
         pass
 
 
+def _git(worktree: str, *args: str) -> str:
+    result = subprocess.run(["git", *args], cwd=worktree, capture_output=True, text=True, timeout=30, check=False)
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip() or f"git {' '.join(args)} failed")
+    return result.stdout.strip()
+
+
+def checkpoint_change_set(job, base_commit: str | None = None) -> dict:
+    """Commit a general agent's uncommitted edits and return immutable integration metadata."""
+    if job.workspace_mode != "isolated_write":
+        return {"base_commit": _git(job.worktree_path, "rev-parse", "HEAD"), "commits": [], "changed_files": []}
+    base_commit = base_commit or _git(job.worktree_path, "rev-parse", "HEAD")
+    dirty_files = [line[3:] for line in _git(job.worktree_path, "status", "--porcelain").splitlines() if line]
+    if dirty_files:
+        _git(job.worktree_path, "add", "-A")
+        _git(job.worktree_path, "commit", "-m", f"agent {job.id}: {job.subject[:72]}")
+    commits = [item for item in _git(job.worktree_path, "rev-list", "--reverse", f"{base_commit}..HEAD").splitlines() if item]
+    changed_files = [item for item in _git(job.worktree_path, "diff", "--name-only", f"{base_commit}..HEAD").splitlines() if item]
+    return {"base_commit": base_commit, "commits": commits, "changed_files": changed_files}
+
+
 def main() -> int:
     args = parse_args()
     if not args.database_url:
@@ -55,6 +77,7 @@ def main() -> int:
         job = repository.get_job(args.job_id)
         if job is None or job.cancel_requested:
             return 0
+        initial_commit = _git(job.worktree_path, "rev-parse", "HEAD") if job.workspace_mode == "isolated_write" else None
         init_runtime()
         from subagent import run_subagent
 
@@ -76,6 +99,8 @@ def main() -> int:
             else:
                 content, schema_valid = normalize_subagent_result(result.message, producer=producer)
                 artifact_kind = "agent_handoff.v1"
+                if job.workspace_mode == "isolated_write":
+                    content["change_set"] = checkpoint_change_set(job, initial_commit)
             artifact = Artifact(
                 id=str(uuid4()), job_id=job.id, kind=artifact_kind, content=content, schema_valid=schema_valid,
             )

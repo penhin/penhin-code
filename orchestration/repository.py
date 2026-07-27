@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Iterator
@@ -9,7 +10,7 @@ from uuid import uuid4
 import psycopg
 from psycopg.rows import dict_row
 
-from .models import AgentJob, AgentRole, Artifact, JobAttempt, JobEvent, JobStatus
+from .models import AgentJob, AgentRole, Artifact, IntegrationItem, IntegrationRun, JobAttempt, JobEvent, JobStatus
 from .state_machine import transition_is_allowed
 
 
@@ -80,6 +81,32 @@ CREATE INDEX IF NOT EXISTS agent_jobs_parent_idx ON agent_jobs (parent_id);
 CREATE INDEX IF NOT EXISTS job_events_job_created_idx ON job_events (job_id, created_at);
 CREATE INDEX IF NOT EXISTS job_attempts_job_created_idx ON job_attempts (job_id, started_at);
 CREATE INDEX IF NOT EXISTS job_dependencies_dependency_idx ON job_dependencies (dependency_job_id);
+CREATE TABLE IF NOT EXISTS integration_runs (
+    id UUID PRIMARY KEY,
+    root_task_id UUID NOT NULL,
+    base_commit TEXT NOT NULL,
+    worktree_path TEXT NOT NULL,
+    worktree_branch TEXT NOT NULL,
+    status TEXT NOT NULL,
+    result_commit TEXT NOT NULL DEFAULT '',
+    error TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    finished_at TIMESTAMPTZ
+);
+CREATE TABLE IF NOT EXISTS integration_items (
+    id UUID PRIMARY KEY,
+    run_id UUID NOT NULL REFERENCES integration_runs(id) ON DELETE CASCADE,
+    job_id UUID NOT NULL REFERENCES agent_jobs(id) ON DELETE RESTRICT,
+    ordinal INTEGER NOT NULL,
+    source_branch TEXT NOT NULL,
+    commits JSONB NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    error TEXT NOT NULL DEFAULT '',
+    UNIQUE (run_id, job_id),
+    UNIQUE (run_id, ordinal)
+);
+CREATE INDEX IF NOT EXISTS integration_runs_root_idx ON integration_runs (root_task_id, created_at);
+CREATE INDEX IF NOT EXISTS integration_items_run_idx ON integration_items (run_id, ordinal);
 ALTER TABLE agent_jobs ADD COLUMN IF NOT EXISTS max_attempts INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE agent_jobs ADD COLUMN IF NOT EXISTS cancel_requested BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE agent_jobs ADD COLUMN IF NOT EXISTS worker_pid INTEGER;
@@ -172,6 +199,41 @@ class PostgresOrchestrationRepository:
         with self._connection() as connection, connection.cursor() as cursor:
             cursor.execute(f"SELECT * FROM agent_jobs{where} ORDER BY created_at", values)
             return [self._job_from_row(cursor, row) for row in cursor.fetchall()]
+
+    def create_integration_run(self, run: IntegrationRun, items: list[IntegrationItem]) -> IntegrationRun:
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """INSERT INTO integration_runs (id, root_task_id, base_commit, worktree_path, worktree_branch, status)
+                   VALUES (%s, %s, %s, %s, %s, %s)""",
+                (run.id, run.root_task_id, run.base_commit, run.worktree_path, run.worktree_branch, run.status),
+            )
+            for item in items:
+                cursor.execute(
+                    """INSERT INTO integration_items (id, run_id, job_id, ordinal, source_branch, commits, status)
+                       VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s)""",
+                    (item.id, item.run_id, item.job_id, item.ordinal, item.source_branch, json.dumps(item.commits), item.status),
+                )
+            return self._get_integration_run(cursor, run.id)
+
+    def get_integration_run(self, run_id: str) -> IntegrationRun | None:
+        with self._connection() as connection, connection.cursor() as cursor:
+            return self._get_integration_run(cursor, run_id, required=False)
+
+    def list_integration_items(self, run_id: str) -> list[IntegrationItem]:
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT * FROM integration_items WHERE run_id = %s ORDER BY ordinal", (run_id,))
+            return [self._integration_item_from_row(row) for row in cursor.fetchall()]
+
+    def update_integration_item(self, item_id: str, status: str, error: str = "") -> None:
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute("UPDATE integration_items SET status = %s, error = %s WHERE id = %s", (status, error, item_id))
+
+    def finish_integration_run(self, run_id: str, status: str, result_commit: str = "", error: str = "") -> None:
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE integration_runs SET status = %s, result_commit = %s, error = %s, finished_at = now() WHERE id = %s",
+                (status, result_commit, error, run_id),
+            )
 
     def start_attempt(self, job_id: str, model: str = "") -> JobAttempt:
         with self._connection() as connection, connection.cursor() as cursor:
@@ -349,6 +411,27 @@ class PostgresOrchestrationRepository:
         if row is None:
             raise KeyError(f"Job {job_id} not found")
         return self._job_from_row(cursor, row)
+
+    def _get_integration_run(self, cursor, run_id: str, required: bool = True) -> IntegrationRun | None:
+        cursor.execute("SELECT * FROM integration_runs WHERE id = %s", (run_id,))
+        row = cursor.fetchone()
+        if row is None:
+            if required:
+                raise KeyError(run_id)
+            return None
+        return IntegrationRun(
+            id=str(row["id"]), root_task_id=str(row["root_task_id"]), base_commit=row["base_commit"],
+            worktree_path=row["worktree_path"], worktree_branch=row["worktree_branch"], status=row["status"],
+            result_commit=row["result_commit"], error=row["error"], created_at=_time(row["created_at"]),
+            finished_at=_time(row["finished_at"]),
+        )
+
+    @staticmethod
+    def _integration_item_from_row(row: dict[str, Any]) -> IntegrationItem:
+        return IntegrationItem(
+            id=str(row["id"]), run_id=str(row["run_id"]), job_id=str(row["job_id"]), ordinal=row["ordinal"],
+            source_branch=row["source_branch"], commits=list(row["commits"]), status=row["status"], error=row["error"],
+        )
 
     def _job_from_row(self, cursor, row: dict[str, Any]) -> AgentJob:
         cursor.execute("SELECT dependency_job_id FROM job_dependencies WHERE job_id = %s ORDER BY dependency_job_id", (row["id"],))
