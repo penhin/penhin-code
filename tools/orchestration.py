@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from orchestration.repository import database_url_from_env
-from orchestration.service import repository_from_env
+from orchestration.service import create_dag_plan, repository_from_env, wait_for_job
 from result import Result
 
 
@@ -64,3 +64,51 @@ def run_agent_job_cancel(id: str) -> Result:
     except KeyError:
         return Result.failure(f"Agent job {id} not found", code="not_found")
     return Result.success(json.dumps(job.to_dict(), ensure_ascii=False, indent=2), data=job.to_dict())
+
+
+def run_agent_plan_create(goal: str) -> Result:
+    if not goal.strip():
+        return Result.failure("goal must not be empty", code="invalid_goal")
+    return create_dag_plan(goal)
+
+
+def run_agent_dag_show(root_task_id: str) -> Result:
+    repository, failure = _repository_or_failure()
+    if failure:
+        return failure
+    jobs = repository.list_jobs(root_task_id)
+    if not jobs:
+        return Result.failure(f"No DAG jobs found for root task {root_task_id}", code="not_found")
+    by_id = {job.id: job for job in jobs}
+    nodes = []
+    for job in jobs:
+        blockers = [dependency_id for dependency_id in job.depends_on if by_id.get(dependency_id) and by_id[dependency_id].status != "succeeded"]
+        node = job.to_dict()
+        node["blocked_by"] = blockers
+        node["ready"] = job.status == "queued" and not blockers
+        nodes.append(node)
+    data = {"root_task_id": root_task_id, "jobs": nodes}
+    return Result.success(json.dumps(data, ensure_ascii=False, indent=2), data=data)
+
+
+def run_agent_job_wait(id: str, timeout_seconds: int = 30) -> Result:
+    repository, failure = _repository_or_failure()
+    if failure:
+        return failure
+    if timeout_seconds < 1 or timeout_seconds > 900:
+        return Result.failure("timeout_seconds must be between 1 and 900", code="invalid_timeout")
+    outcome = wait_for_job(repository, id, timeout_seconds)
+    if not outcome.ok:
+        return outcome
+    job = outcome.data["job"]
+    artifact = outcome.data["artifact"]
+    data = {
+        "job": job,
+        "artifact": {
+            "id": artifact.id,
+            "kind": artifact.kind,
+            "content": artifact.content,
+            "schema_valid": artifact.schema_valid,
+        },
+    }
+    return Result.success(json.dumps(data, ensure_ascii=False, indent=2), data=data)

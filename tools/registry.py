@@ -8,7 +8,15 @@ from todo import run_todo
 from . import tasks as task_tools
 from .files import run_edit, run_list, run_read, run_search, run_write
 from .glob import run_glob
-from .orchestration import run_agent_artifact_show, run_agent_job_cancel, run_agent_job_list, run_agent_job_show
+from .orchestration import (
+    run_agent_artifact_show,
+    run_agent_dag_show,
+    run_agent_job_cancel,
+    run_agent_job_list,
+    run_agent_job_show,
+    run_agent_job_wait,
+    run_agent_plan_create,
+)
 from .plan_mode import run_enter_plan, run_exit_plan
 from .shell import run_bash
 from .types import ApprovalKey, ToolApproval, ToolCategory, ToolSchema, ToolSpec, tool_schema
@@ -279,6 +287,39 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         category=ToolCategory.state,
         handler=lambda **kwargs: run_agent_job_cancel(kwargs["id"]),
         parallel_safe=False,
+        available_to_child=False,
+        available_to_parent=True,
+        approval=ToolApproval(),
+    ),
+    "agent_plan_create": ToolSpec(
+        name="agent_plan_create",
+        description="Run the Planner and materialize its validated penhin.dag/v1 plan as persistent agent jobs.",
+        input_schema=object_schema({"goal": {"type": "string"}}, ["goal"]),
+        category=ToolCategory.agent,
+        handler=lambda **kwargs: run_agent_plan_create(kwargs["goal"]),
+        parallel_safe=False,
+        available_to_child=False,
+        available_to_parent=True,
+        approval=ToolApproval(),
+    ),
+    "agent_dag_show": ToolSpec(
+        name="agent_dag_show",
+        description="Show DAG jobs, dependencies, and which queued jobs are ready to run.",
+        input_schema=object_schema({"root_task_id": {"type": "string"}}, ["root_task_id"]),
+        category=ToolCategory.readonly,
+        handler=lambda **kwargs: run_agent_dag_show(kwargs["root_task_id"]),
+        parallel_safe=True,
+        available_to_child=False,
+        available_to_parent=True,
+        approval=ToolApproval(),
+    ),
+    "agent_job_wait": ToolSpec(
+        name="agent_job_wait",
+        description="Wait for a persistent agent job and return its result artifact when complete.",
+        input_schema=object_schema({"id": {"type": "string"}, "timeout_seconds": {"type": "integer"}}, ["id"]),
+        category=ToolCategory.readonly,
+        handler=lambda **kwargs: run_agent_job_wait(kwargs["id"], kwargs.get("timeout_seconds", 30)),
+        parallel_safe=True,
         available_to_child=False,
         available_to_parent=True,
         approval=ToolApproval(),

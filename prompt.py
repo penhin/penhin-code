@@ -4,6 +4,7 @@ from pathlib import Path
 from skills import load_skill
 from tools.registry import tool_description_lines
 from orchestration.artifacts import collaboration_protocol_instructions
+from orchestration.planning import dag_protocol_instructions
 
 
 USER_PROMPT_PATH = Path("AGENTS.md")
@@ -104,9 +105,8 @@ def build_verification_system() -> str:
 
 TASK_WORKFLOW_SECTION = (
     "Task and planning workflow:\n"
-    "- For complex or multi-step implementation changes, delegate planning first with task(agent_type=\"plan\").\n"
-    "- The plan agent is read-only and has an isolated context window, so use it to explore and design without polluting the main conversation.\n"
-    "- Ask the plan agent for a complete implementation plan, including verification steps and acceptance criteria.\n"
+    "- For complex or multi-step implementation changes, call agent_plan_create to run the read-only Planner and materialize its validated DAG.\n"
+    "- Use agent_dag_show to inspect dependencies and ready nodes; use agent_job_wait or agent_artifact_show to consume durable results.\n"
     "- When a task/explore subagent returns substantive findings, use that result as the primary evidence; do not repeat broad file-reading after delegation.\n"
     "- Only read files again after delegation to verify a specific finding or fill a narrow gap.\n"
     "- After reviewing the returned plan, call task_start with a 2-5 item executable todo plan.\n"
@@ -280,7 +280,7 @@ EXPLORATION_SYSTEM = (
 )
 
 
-PLAN_AGENT_SYSTEM = "You are a software architect.\n\n" + collaboration_protocol_instructions()
+PLAN_AGENT_SYSTEM = "You are a software architect.\n\n" + dag_protocol_instructions()
 
 
 VERIFICATION_SYSTEM = (

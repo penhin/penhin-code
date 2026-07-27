@@ -13,7 +13,8 @@ from result import Result
 from runtime import init_runtime
 
 from .artifacts import normalize_subagent_result
-from .models import Artifact, JobStatus
+from .models import AgentRole, Artifact, JobStatus
+from .planning import DAG_PROTOCOL_VERSION, parse_dag_plan
 from .repository import PostgresOrchestrationRepository
 
 
@@ -59,12 +60,24 @@ def main() -> int:
 
         result: Result = run_subagent(job.instruction, agent_type=agent_type_for_role(str(job.role)))
         if result.ok:
-            content, schema_valid = normalize_subagent_result(
-                result.message,
-                producer={"job_id": job.id, "role": str(job.role), "attempt_id": args.attempt_id},
-            )
+            producer = {"job_id": job.id, "role": str(job.role), "attempt_id": args.attempt_id}
+            if job.role == AgentRole.PLANNER:
+                plan, errors = parse_dag_plan(result.message)
+                content = {
+                    "protocol_version": DAG_PROTOCOL_VERSION,
+                    "protocol_valid": not errors,
+                    "protocol_errors": errors,
+                    "producer": producer,
+                    "raw_text": result.message,
+                    **plan,
+                }
+                schema_valid = not errors
+                artifact_kind = "agent_dag_plan.v1"
+            else:
+                content, schema_valid = normalize_subagent_result(result.message, producer=producer)
+                artifact_kind = "agent_handoff.v1"
             artifact = Artifact(
-                id=str(uuid4()), job_id=job.id, kind="agent_handoff.v1", content=content, schema_valid=schema_valid,
+                id=str(uuid4()), job_id=job.id, kind=artifact_kind, content=content, schema_valid=schema_valid,
             )
             repository.finish_attempt(args.attempt_id, JobStatus.SUCCEEDED, artifact=artifact, terminal_reason="completed")
             return 0

@@ -8,7 +8,9 @@ import pytest
 
 from orchestration.models import AgentJob, AgentRole, Artifact, JobStatus
 from orchestration.repository import PostgresOrchestrationRepository
-from orchestration.service import create_isolated_agent_job
+from orchestration.planning import DAG_PROTOCOL_VERSION, parse_dag_plan
+from orchestration.service import create_isolated_agent_job, materialize_dag_plan
+from orchestration.worktrees import AgentWorktree
 from orchestration.artifacts import HANDOFF_PROTOCOL_VERSION, normalize_subagent_result
 
 
@@ -104,3 +106,82 @@ def test_handoff_protocol_rejects_incomplete_payload_without_losing_raw_text() -
     assert valid is False
     assert content["protocol_valid"] is False
     assert content["raw_text"] == '{"summary": "not enough"}'
+
+
+def test_dag_protocol_accepts_dependencies_and_rejects_cycles() -> None:
+    valid = {
+        "protocol_version": DAG_PROTOCOL_VERSION,
+        "goal": "Implement the feature",
+        "jobs": [
+            {"key": "inspect", "agent_type": "explore", "instruction": "Inspect code", "depends_on": []},
+            {"key": "implement", "agent_type": "general", "instruction": "Implement change", "depends_on": ["inspect"], "priority": 2},
+        ],
+        "final_job_keys": ["implement"],
+    }
+    parsed, errors = parse_dag_plan(json.dumps(valid))
+    assert parsed == valid
+    assert errors == []
+
+    valid["jobs"][0]["depends_on"] = ["implement"]
+    _, errors = parse_dag_plan(json.dumps(valid))
+    assert errors == ["job dependencies must be acyclic"]
+
+
+def test_materialized_dag_uses_persistent_dependency_ids(
+    repository: PostgresOrchestrationRepository, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "orchestration.service.provision_worktree",
+        lambda job_id: AgentWorktree(path=f"/tmp/penhin-test-{job_id}", branch=f"penhin/test-{job_id[:8]}"),
+    )
+    planner = repository.create_root_job("plan", "plan", AgentRole.PLANNER)
+    plan = {
+        "protocol_version": DAG_PROTOCOL_VERSION,
+        "goal": "Implement the feature",
+        "jobs": [
+            {"key": "inspect", "agent_type": "explore", "instruction": "Inspect code", "depends_on": []},
+            {"key": "implement", "agent_type": "general", "instruction": "Implement change", "depends_on": ["inspect"]},
+        ],
+        "final_job_keys": ["implement"],
+    }
+
+    materialized = materialize_dag_plan(repository, planner.id, plan)
+    inspect = repository.get_job(materialized["job_ids"]["inspect"])
+    implement = repository.get_job(materialized["job_ids"]["implement"])
+
+    assert inspect.root_task_id == planner.id
+    assert implement.root_task_id == planner.id
+    assert implement.depends_on == [inspect.id]
+    assert implement.workspace_mode == "isolated_write"
+    repository.request_cancel(inspect.id)
+    repository.request_cancel(implement.id)
+
+
+def test_postgres_claim_only_releases_dag_node_after_all_dependencies_succeed(
+    repository: PostgresOrchestrationRepository,
+) -> None:
+    parent_id = str(uuid4())
+    parent = repository.create_job(AgentJob(
+        id=parent_id, root_task_id=parent_id, role=AgentRole.EXPLORE, subject="parent", instruction="parent",
+        priority=100000, worktree_path="/tmp/parent", worktree_branch="penhin/test-parent",
+    ))
+    child = repository.create_job(AgentJob(
+        id=str(uuid4()), root_task_id=parent.id, parent_id=parent.id, role=AgentRole.GENERAL,
+        subject="child", instruction="child", depends_on=[parent.id], workspace_mode="isolated_write",
+        priority=100000, worktree_path="/tmp/child", worktree_branch="penhin/test-child",
+    ))
+
+    parent_claim = repository.claim_next_job()
+    assert parent_claim is not None
+    assert parent_claim[0].id == parent.id
+    # The only claimable job is the parent; completing it releases its dependent child.
+    repository.finish_attempt(
+        parent_claim[1].id,
+        JobStatus.SUCCEEDED,
+        artifact=Artifact(id=str(uuid4()), job_id=parent.id, kind="test", content={}),
+    )
+    claimed = repository.claim_next_job()
+    assert claimed is not None
+    assert claimed[0].id == child.id
+    child_attempt = claimed[1]
+    repository.finish_attempt(child_attempt.id, JobStatus.FAILED, error="test cleanup")
