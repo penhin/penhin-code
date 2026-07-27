@@ -5,6 +5,7 @@ from pathlib import Path
 
 from atomic_io import atomic_write_text
 from result import Result
+from orchestration.permissions import write_is_allowed
 
 from .cache import file_signature, file_validator, tool_result_cache, tree_signature, tree_validator
 from .workspace import IGNORED_PATH_PARTS, WORKDIR, is_ignored_path, iter_workspace_files
@@ -70,6 +71,8 @@ def run_read(path: str, limit: int = None, line_numbers: bool = True) -> Result:
 
 def run_write(path: str, content: str = None) -> Result:
     try:
+        if not write_is_allowed():
+            return Result.failure("Error: writes are disabled for this agent worktree", code="readonly_workspace")
         if content is None:
             return Result.failure("Error: content is required", code="missing_content")
         file_path = safe_path(path)
@@ -134,6 +137,8 @@ def run_list(path: str = ".", limit: int = None) -> Result:
 
 def run_edit(path: str, old: str, new: str) -> Result:
     try:
+        if not write_is_allowed():
+            return Result.failure("Error: edits are disabled for this agent worktree", code="readonly_workspace")
         file_path = safe_path(path)
         with FILE_LOCK:
             text = file_path.read_text(encoding="utf-8")

@@ -3,6 +3,7 @@ from pathlib import Path
 
 from skills import load_skill
 from tools.registry import tool_description_lines
+from orchestration.artifacts import collaboration_protocol_instructions
 
 
 USER_PROMPT_PATH = Path("AGENTS.md")
@@ -261,6 +262,7 @@ SUBAGENT_SYSTEM = (
     "Complete the assigned task independently and return a concise summary. "
     "Follow project instructions, but keep the assigned task narrow and do not expand scope. "
     "Tool results are JSON with ok/message/data/error/meta fields; prefer data for structured facts and error for failures. "
+    + "\n\n" + collaboration_protocol_instructions()
 )
 
 
@@ -274,10 +276,11 @@ EXPLORATION_SYSTEM = (
     "Stop as soon as you have enough evidence for actionable findings; do not exhaustively audit the whole repo. "
     "If you cannot prove a finding quickly, label it as a risk instead of continuing to read widely. "
     "Tool results are JSON with ok/message/data/error/meta fields; prefer data for structured facts and error for failures. "
+    + "\n\n" + collaboration_protocol_instructions()
 )
 
 
-PLAN_AGENT_SYSTEM = "You are a software architect."
+PLAN_AGENT_SYSTEM = "You are a software architect.\n\n" + collaboration_protocol_instructions()
 
 
 VERIFICATION_SYSTEM = (
@@ -294,6 +297,7 @@ VERIFICATION_SYSTEM = (
             VERIFICATION_SELF_CHECK_SECTION,
         ]
     )
+    + "\n\n" + collaboration_protocol_instructions()
 )
 
 

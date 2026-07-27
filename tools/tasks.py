@@ -15,7 +15,9 @@ def run_task(task: str, agent_type: str = "general") -> Result:
     from orchestration.service import run_recorded_subagent
     current = current_running_task()
     root_task_id = str(current.get("orchestration_job_id", "")) if current else None
-    return run_recorded_subagent(task, agent_type=agent_type, root_task_id=root_task_id or None)
+    if root_task_id:
+        return run_recorded_subagent(task, agent_type=agent_type, root_task_id=root_task_id)
+    return run_recorded_subagent(task, agent_type=agent_type)
 
 
 def run_verify(
@@ -54,11 +56,12 @@ def run_verify(
         "and recommended next actions. Do not modify files."
     )
     root_task_id = str(linked_task.get("orchestration_job_id", "")) if linked_task else None
-    result = run_recorded_subagent(
-        "\n\n".join(sections),
-        agent_type="verification",
-        root_task_id=root_task_id or None,
-    )
+    if root_task_id:
+        result = run_recorded_subagent(
+            "\n\n".join(sections), agent_type="verification", root_task_id=root_task_id,
+        )
+    else:
+        result = run_recorded_subagent("\n\n".join(sections), agent_type="verification")
     if result.ok and linked_task and linked_plan_slug and plan_content:
         task_status.mark_plan_verified(int(linked_task["id"]), linked_plan_slug)
     return result
@@ -93,11 +96,10 @@ def run_task_start(
     orchestration_job_id = ""
     try:
         from orchestration.service import repository_from_env
-        from orchestration.models import AgentRole
 
         repository = repository_from_env()
         if repository is not None:
-            root_job = repository.create_root_job(subject, description or subject, AgentRole.GENERAL)
+            root_job = repository.create_root_task(subject, description or subject)
             orchestration_job_id = root_job.id
     except Exception as error:
         return Result.failure(f"Task was not started because orchestration storage failed: {error}", code="orchestration_unavailable")

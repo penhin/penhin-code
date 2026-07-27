@@ -1,12 +1,15 @@
+import json
 import os
+import subprocess
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
 from orchestration.models import AgentJob, AgentRole, Artifact, JobStatus
 from orchestration.repository import PostgresOrchestrationRepository
-from orchestration.service import run_recorded_subagent
-from result import Result
+from orchestration.service import create_isolated_agent_job
+from orchestration.artifacts import HANDOFF_PROTOCOL_VERSION, normalize_subagent_result
 
 
 @pytest.fixture
@@ -61,14 +64,43 @@ def test_postgres_rejects_invalid_terminal_transition(repository: PostgresOrches
         repository.start_attempt(job.id)
 
 
-def test_recorded_subagent_persists_normalized_handoff(repository: PostgresOrchestrationRepository, monkeypatch) -> None:
-    monkeypatch.setattr("subagent.run_subagent", lambda task, agent_type: Result.success("worker found a concrete fact"))
+def test_isolated_agent_job_gets_own_worktree_and_branch(repository: PostgresOrchestrationRepository) -> None:
+    job = create_isolated_agent_job(repository, "inspect service boundaries", "explore")
+    worktree = Path(job.worktree_path)
+    try:
+        assert job.workspace_mode == "readonly"
+        assert worktree.is_dir()
+        assert (worktree / "README.md").exists()
+        assert job.worktree_branch.startswith("penhin/agent-")
+    finally:
+        subprocess.run(["git", "worktree", "remove", "--force", str(worktree)], check=True)
+        subprocess.run(["git", "branch", "-D", job.worktree_branch], check=True)
 
-    result = run_recorded_subagent("inspect service boundaries", agent_type="explore")
 
-    assert result.ok is True
-    job = repository.get_job(result.meta["agent_job_id"])
-    assert job.status == JobStatus.SUCCEEDED
-    artifact = repository.get_artifact(result.meta["artifact_id"])
-    assert artifact.content["summary"] == "worker found a concrete fact"
-    assert artifact.content["changed_files"] == []
+def test_handoff_protocol_accepts_complete_structured_payload() -> None:
+    text = json.dumps({
+        "protocol_version": HANDOFF_PROTOCOL_VERSION,
+        "summary": "Repository entrypoint identified.",
+        "findings": [{
+            "title": "CLI entrypoint", "detail": "main.py owns the interactive loop.", "severity": "info",
+            "evidence": [{"path": "main.py", "location": "main", "detail": "defines the CLI loop."}],
+        }],
+        "commands_run": [{"command": "pytest -q", "outcome": "passed", "detail": "197 tests passed."}],
+        "changed_files": [],
+        "risks": [],
+        "handoff": {"recommended_next_action": "Schedule implementation.", "suggested_roles": ["implement"], "blocking_questions": []},
+    })
+
+    content, valid = normalize_subagent_result(text, producer={"job_id": "job-1", "role": "explore"})
+
+    assert valid is True
+    assert content["protocol_valid"] is True
+    assert content["producer"]["job_id"] == "job-1"
+
+
+def test_handoff_protocol_rejects_incomplete_payload_without_losing_raw_text() -> None:
+    content, valid = normalize_subagent_result('{"summary": "not enough"}')
+
+    assert valid is False
+    assert content["protocol_valid"] is False
+    assert content["raw_text"] == '{"summary": "not enough"}'

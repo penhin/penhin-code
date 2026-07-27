@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS agent_jobs (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     started_at TIMESTAMPTZ,
     finished_at TIMESTAMPTZ,
-    CHECK (workspace_mode = 'readonly')
+    CHECK (workspace_mode IN ('readonly', 'isolated_write'))
 );
 CREATE TABLE IF NOT EXISTS job_dependencies (
     job_id UUID NOT NULL REFERENCES agent_jobs(id) ON DELETE CASCADE,
@@ -84,6 +84,10 @@ ALTER TABLE agent_jobs ADD COLUMN IF NOT EXISTS max_attempts INTEGER NOT NULL DE
 ALTER TABLE agent_jobs ADD COLUMN IF NOT EXISTS cancel_requested BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE agent_jobs ADD COLUMN IF NOT EXISTS worker_pid INTEGER;
 ALTER TABLE agent_jobs ADD COLUMN IF NOT EXISTS worker_token TEXT NOT NULL DEFAULT '';
+ALTER TABLE agent_jobs ADD COLUMN IF NOT EXISTS worktree_path TEXT NOT NULL DEFAULT '';
+ALTER TABLE agent_jobs ADD COLUMN IF NOT EXISTS worktree_branch TEXT NOT NULL DEFAULT '';
+ALTER TABLE agent_jobs DROP CONSTRAINT IF EXISTS agent_jobs_workspace_mode_check;
+ALTER TABLE agent_jobs ADD CONSTRAINT agent_jobs_workspace_mode_check CHECK (workspace_mode IN ('readonly', 'isolated_write'));
 """
 
 
@@ -118,16 +122,28 @@ class PostgresOrchestrationRepository:
             instruction=instruction,
         ))
 
+    def create_root_task(self, subject: str, instruction: str) -> AgentJob:
+        """Create a completed coordination root that is never claimed by a Worker."""
+        job_id = str(uuid4())
+        return self.create_job(AgentJob(
+            id=job_id,
+            root_task_id=job_id,
+            role=AgentRole.GENERAL,
+            subject=subject,
+            instruction=instruction,
+            status=JobStatus.SUCCEEDED,
+        ))
+
     def create_job(self, job: AgentJob) -> AgentJob:
-        if job.workspace_mode != "readonly":
-            raise ValueError("First-stage jobs must use readonly workspace mode")
+        if job.workspace_mode not in {"readonly", "isolated_write"}:
+            raise ValueError("workspace_mode must be readonly or isolated_write")
         with self._connection() as connection, connection.cursor() as cursor:
             cursor.execute(
                 """INSERT INTO agent_jobs
                 (id, parent_id, root_task_id, role, subject, instruction, status, priority, workspace_mode,
-                 max_turns, max_tokens, timeout_seconds, max_attempts)
+                 max_turns, max_tokens, timeout_seconds, max_attempts, worktree_path, worktree_branch)
                 VALUES (%(id)s, %(parent_id)s, %(root_task_id)s, %(role)s, %(subject)s, %(instruction)s,
-                        %(status)s, %(priority)s, %(workspace_mode)s, %(max_turns)s, %(max_tokens)s, %(timeout_seconds)s, %(max_attempts)s)""",
+                        %(status)s, %(priority)s, %(workspace_mode)s, %(max_turns)s, %(max_tokens)s, %(timeout_seconds)s, %(max_attempts)s, %(worktree_path)s, %(worktree_branch)s)""",
                 {**job.to_dict(), "role": str(job.role), "status": str(job.status)},
             )
             for dependency_id in job.depends_on:
@@ -180,7 +196,7 @@ class PostgresOrchestrationRepository:
         with self._connection() as connection, connection.cursor() as cursor:
             cursor.execute(
                 """SELECT job.* FROM agent_jobs AS job
-                WHERE job.status = 'queued' AND NOT job.cancel_requested
+                WHERE job.status = 'queued' AND NOT job.cancel_requested AND job.worktree_path <> ''
                   AND NOT EXISTS (
                     SELECT 1 FROM job_dependencies dependency
                     JOIN agent_jobs prerequisite ON prerequisite.id = dependency.dependency_job_id
@@ -340,7 +356,7 @@ class PostgresOrchestrationRepository:
             id=str(row["id"]), parent_id=str(row["parent_id"]) if row["parent_id"] else None,
             root_task_id=str(row["root_task_id"]), role=AgentRole(row["role"]), subject=row["subject"], instruction=row["instruction"],
             status=JobStatus(row["status"]), priority=row["priority"], depends_on=[str(item["dependency_job_id"]) for item in cursor.fetchall()],
-            workspace_mode=row["workspace_mode"], max_turns=row["max_turns"], max_tokens=row["max_tokens"], timeout_seconds=row["timeout_seconds"], max_attempts=row["max_attempts"],
+            workspace_mode=row["workspace_mode"], worktree_path=row["worktree_path"], worktree_branch=row["worktree_branch"], max_turns=row["max_turns"], max_tokens=row["max_tokens"], timeout_seconds=row["timeout_seconds"], max_attempts=row["max_attempts"],
             attempt_count=row["attempt_count"], cancel_requested=row["cancel_requested"], worker_pid=row["worker_pid"], worker_token=row["worker_token"], result_artifact_id=str(row["result_artifact_id"]) if row["result_artifact_id"] else None,
             error=row["error"], created_at=_time(row["created_at"]), started_at=_time(row["started_at"]), finished_at=_time(row["finished_at"]),
         )

@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -38,10 +39,24 @@ def wait_for(repository: PostgresOrchestrationRepository, job_id: str, status: J
     raise AssertionError(f"job {job_id} did not reach {status}")
 
 
+def executable_job(repository: PostgresOrchestrationRepository, subject: str, **kwargs):
+    job_id = str(uuid4())
+    return repository.create_job(AgentJob(
+        id=job_id,
+        root_task_id=job_id,
+        role=AgentRole.EXPLORE,
+        subject=subject,
+        instruction=subject,
+        worktree_path=str(Path.cwd()),
+        worktree_branch="test-worktree",
+        **kwargs,
+    ))
+
+
 def test_scheduler_marks_worker_exit_as_failure(repository: PostgresOrchestrationRepository) -> None:
     scheduler = SchedulerForTest(repository)
     scheduler.start()
-    job = repository.create_root_job("queued", "queued", AgentRole.EXPLORE)
+    job = executable_job(repository, "queued")
     scheduler.dispatch()
     wait_for(repository, job.id, JobStatus.FAILED)
     scheduler.shutdown(wait=True)
@@ -57,10 +72,7 @@ def test_scheduler_recovers_running_job_without_duplicate_claim(repository: Post
 
 
 def test_scheduler_retries_failed_job_up_to_attempt_budget(repository: PostgresOrchestrationRepository) -> None:
-    job_id = str(uuid4())
-    job = repository.create_job(AgentJob(
-        id=job_id, root_task_id=job_id, role=AgentRole.EXPLORE, subject="retry", instruction="retry", max_attempts=2,
-    ))
+    job = executable_job(repository, "retry", max_attempts=2)
     scheduler = SchedulerForTest(repository)
     scheduler.start()
     wait_for(repository, job.id, JobStatus.FAILED)
@@ -69,7 +81,7 @@ def test_scheduler_retries_failed_job_up_to_attempt_budget(repository: PostgresO
 
 
 def test_scheduler_cancels_queued_job(repository: PostgresOrchestrationRepository) -> None:
-    job = repository.create_root_job("cancel", "cancel", AgentRole.EXPLORE)
+    job = executable_job(repository, "cancel")
     scheduler = SchedulerForTest(repository, sleep_seconds=10)
     scheduler.start()
     scheduler.dispatch()
@@ -84,10 +96,7 @@ def test_scheduler_cancels_queued_job(repository: PostgresOrchestrationRepositor
 
 
 def test_scheduler_timeout_terminates_worker_process(repository: PostgresOrchestrationRepository) -> None:
-    job_id = str(uuid4())
-    job = repository.create_job(AgentJob(
-        id=job_id, root_task_id=job_id, role=AgentRole.EXPLORE, subject="timeout", instruction="timeout", timeout_seconds=1,
-    ))
+    job = executable_job(repository, "timeout", timeout_seconds=1)
     scheduler = SchedulerForTest(repository, sleep_seconds=10)
     scheduler.start()
     wait_for(repository, job.id, JobStatus.TIMED_OUT)

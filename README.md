@@ -50,6 +50,14 @@ The first stage records only read-only agent jobs. `task` and `verify` preserve 
 
 `PENHIN_SCHEDULER_WORKERS` controls the local worker limit (default: `2`), and `PENHIN_WORKER_KILL_GRACE_SECONDS` sets the SIGTERM-to-SIGKILL grace interval (default: `2`). Every scheduled Agent runs in an independent Worker process. The database queue uses transactional claims, and a new scheduler terminates verifiably orphaned Workers before recovering their jobs. Cancellation and timeout terminate the Worker process group, so a stalled provider call cannot keep the task alive.
 
+### Collaboration handoff protocol
+
+Agent results use `penhin.handoff/v1`. A valid handoff is one JSON object containing `summary`, evidence-backed `findings`, `commands_run`, `changed_files`, `risks`, and a `handoff` with the recommended next action, suggested roles, and blocking questions. `agent_artifact_show` exposes `protocol_valid` and `protocol_errors`; orchestrators must only automate downstream work from artifacts with `protocol_valid: true`. Invalid output is retained verbatim in `raw_text` for review or retry.
+
+### Isolated agent worktrees
+
+Every executable Agent Job receives a dedicated Git worktree under `.penhin/worktrees/<job-id>` and a `penhin/agent-<job>` branch. `general` Agents can write only inside their own worktree; `explore`, `plan`, and `verify` Agents run in readonly mode, where file writes, edits, and non-readonly shell commands are rejected. Worktrees are created from the committed `HEAD`, so changes that must be visible to delegated Agents should be committed first. Completed worktrees are intentionally retained for review and later integration.
+
 ### 当前工具
 
 ```text
@@ -180,6 +188,14 @@ Set `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_PORT`, and `P
 The first stage records only read-only agent jobs. `task` and `verify` preserve their existing behavior while recording attempts and artifacts. `background_start` now enqueues durable work through a bounded scheduler. `agent_job_show`, `agent_job_list`, `agent_artifact_show`, and `agent_job_cancel` provide inspection and cancellation.
 
 `PENHIN_SCHEDULER_WORKERS` controls the local worker limit (default: `2`), and `PENHIN_WORKER_KILL_GRACE_SECONDS` sets the SIGTERM-to-SIGKILL grace interval (default: `2`). Every scheduled Agent runs in an independent Worker process. The database queue uses transactional claims, and a new scheduler terminates verifiably orphaned Workers before recovering their jobs. Cancellation and timeout terminate the Worker process group, so a stalled provider call cannot keep the task alive.
+
+### Collaboration handoff protocol
+
+Agent results use `penhin.handoff/v1`. A valid handoff is one JSON object containing `summary`, evidence-backed `findings`, `commands_run`, `changed_files`, `risks`, and a `handoff` with the recommended next action, suggested roles, and blocking questions. `agent_artifact_show` exposes `protocol_valid` and `protocol_errors`; orchestrators must only automate downstream work from artifacts with `protocol_valid: true`. Invalid output is retained verbatim in `raw_text` for review or retry.
+
+### Isolated agent worktrees
+
+Every executable Agent Job receives a dedicated Git worktree under `.penhin/worktrees/<job-id>` and a `penhin/agent-<job>` branch. `general` Agents can write only inside their own worktree; `explore`, `plan`, and `verify` Agents run in readonly mode, where file writes, edits, and non-readonly shell commands are rejected. Worktrees are created from the committed `HEAD`, so changes that must be visible to delegated Agents should be committed first. Completed worktrees are intentionally retained for review and later integration.
 
 ### Current Tools
 

@@ -59,9 +59,12 @@ def main() -> int:
 
         result: Result = run_subagent(job.instruction, agent_type=agent_type_for_role(str(job.role)))
         if result.ok:
-            content, schema_valid = normalize_subagent_result(result.message)
+            content, schema_valid = normalize_subagent_result(
+                result.message,
+                producer={"job_id": job.id, "role": str(job.role), "attempt_id": args.attempt_id},
+            )
             artifact = Artifact(
-                id=str(uuid4()), job_id=job.id, kind="subagent_result", content=content, schema_valid=schema_valid,
+                id=str(uuid4()), job_id=job.id, kind="agent_handoff.v1", content=content, schema_valid=schema_valid,
             )
             repository.finish_attempt(args.attempt_id, JobStatus.SUCCEEDED, artifact=artifact, terminal_reason="completed")
             return 0

@@ -2,6 +2,7 @@ import re
 import subprocess
 
 from result import Result
+from orchestration.permissions import readonly_command_is_allowed, write_is_allowed
 
 from .workspace import IGNORED_PATH_PARTS, WORKDIR
 
@@ -36,6 +37,11 @@ def command_is_dangerous(command: str) -> str | None:
 
 
 def run_bash(command: str) -> Result:
+    if not write_is_allowed() and not readonly_command_is_allowed(command):
+        return Result.failure(
+            "Error: command is not allowed in a readonly agent worktree",
+            code="readonly_workspace",
+        )
     dangerous_command = command_is_dangerous(command)
     if dangerous_command:
         return Result.failure(

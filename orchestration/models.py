@@ -44,6 +44,8 @@ class AgentJob:
     priority: int = 0
     depends_on: list[str] = field(default_factory=list)
     workspace_mode: str = "readonly"
+    worktree_path: str = ""
+    worktree_branch: str = ""
     max_turns: int | None = None
     max_tokens: int | None = None
     timeout_seconds: int | None = None

@@ -125,20 +125,12 @@ def approval_required_tools(tool_names: set[str]) -> set[str]:
 
 
 PARENT_AGENT_ALLOW = tool_names_for("parent")
-CHILD_AGENT_ALLOW = tool_names_for("child")
 
 
 PARENT_AGENT_POLICY = PermissionPolicy(
     allow=PARENT_AGENT_ALLOW,
     deny=set(),
 )
-PARENT_AGENT_APPROVAL_FLOW = ApprovalFlow.preapproved(PARENT_AGENT_ALLOW)
-
-
-CHILD_AGENT_POLICY = PermissionPolicy(
-    allow=CHILD_AGENT_ALLOW,
-)
-CHILD_AGENT_APPROVAL_FLOW = ApprovalFlow.preapproved(CHILD_AGENT_ALLOW)
 
 
 def policy_for_runtime_mode(mode: str) -> PermissionPolicy:

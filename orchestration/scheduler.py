@@ -83,6 +83,9 @@ class PersistentScheduler:
     def _spawn_worker(self, job: AgentJob, attempt: JobAttempt) -> subprocess.Popen:
         environment = os.environ.copy()
         environment["PENHIN_DATABASE_URL"] = self.repository.database_url
+        environment["PENHIN_WORKSPACE_MODE"] = job.workspace_mode
+        if not job.worktree_path:
+            raise RuntimeError(f"Worker job {job.id} has no isolated worktree")
         return subprocess.Popen(
             [
                 sys.executable, "-m", "orchestration.worker",
@@ -90,7 +93,7 @@ class PersistentScheduler:
                 "--attempt-id", attempt.id,
                 "--worker-token", job.worker_token,
             ],
-            cwd=os.getcwd(),
+            cwd=job.worktree_path,
             env=environment,
             start_new_session=True,
             stdout=subprocess.DEVNULL,
