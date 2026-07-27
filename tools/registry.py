@@ -8,6 +8,7 @@ from todo import run_todo
 from . import tasks as task_tools
 from .files import run_edit, run_list, run_read, run_search, run_write
 from .glob import run_glob
+from .orchestration import run_agent_artifact_show, run_agent_job_list, run_agent_job_show
 from .plan_mode import run_enter_plan, run_exit_plan
 from .shell import run_bash
 from .types import ApprovalKey, ToolApproval, ToolCategory, ToolSchema, ToolSpec, tool_schema
@@ -233,6 +234,39 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         input_schema=object_schema({"id": {"type": "integer"}}, ["id"]),
         category=ToolCategory.state,
         handler=lambda **kwargs: task_tools.task_status(action="background_show", id=kwargs["id"]),
+        parallel_safe=True,
+        available_to_child=False,
+        available_to_parent=True,
+        approval=ToolApproval(),
+    ),
+    "agent_job_show": ToolSpec(
+        name="agent_job_show",
+        description="Show the persistent coordination state for one agent job.",
+        input_schema=object_schema({"id": {"type": "string"}}, ["id"]),
+        category=ToolCategory.readonly,
+        handler=lambda **kwargs: run_agent_job_show(kwargs["id"]),
+        parallel_safe=True,
+        available_to_child=False,
+        available_to_parent=True,
+        approval=ToolApproval(),
+    ),
+    "agent_job_list": ToolSpec(
+        name="agent_job_list",
+        description="List persistent agent jobs, optionally filtered by root task or status.",
+        input_schema=object_schema({"root_task_id": {"type": "string"}, "status": {"type": "string"}}),
+        category=ToolCategory.readonly,
+        handler=lambda **kwargs: run_agent_job_list(kwargs.get("root_task_id", ""), kwargs.get("status", "")),
+        parallel_safe=True,
+        available_to_child=False,
+        available_to_parent=True,
+        approval=ToolApproval(),
+    ),
+    "agent_artifact_show": ToolSpec(
+        name="agent_artifact_show",
+        description="Show the structured result artifact for a completed agent job.",
+        input_schema=object_schema({"job_id": {"type": "string"}}, ["job_id"]),
+        category=ToolCategory.readonly,
+        handler=lambda **kwargs: run_agent_artifact_show(kwargs["job_id"]),
         parallel_safe=True,
         available_to_child=False,
         available_to_parent=True,

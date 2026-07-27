@@ -35,6 +35,19 @@ requirements.txt     Python 依赖
 `~/.penhin/config.json` 和 `~/.penhin/.env` 是用户级配置，不随工作区移动。`~/.penhin/.env` 用于 `ANTHROPIC_API_KEY`、`MODEL_ID` 等环境变量。
 `.penhin_todos.json`、`.tasks/` 和 `.transcripts/` 是本地运行状态，会被文件工具和 git 忽略。
 
+### PostgreSQL orchestration store
+
+The first multi-agent foundation persists agent jobs, attempts, structured artifacts, and immutable events in PostgreSQL. Start the local database with Docker Compose:
+
+```bash
+cp .env.example .env  # only when .env does not exist
+docker compose up -d postgres
+```
+
+Set `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_PORT`, and `PENHIN_DATABASE_URL` in `.env`. The supplied development defaults expose PostgreSQL on `localhost:55432` and retain data in the `penhin-postgres` Docker volume. The runtime creates the schema on first orchestration operation.
+
+The first stage records only read-only agent jobs. `task`, `verify`, and `background_start` preserve their existing behavior while recording attempts and artifacts. `agent_job_show`, `agent_job_list`, and `agent_artifact_show` provide read-only inspection.
+
 ### 当前工具
 
 ```text
@@ -150,6 +163,19 @@ requirements.txt     Python dependencies
 
 `~/.penhin/config.json` and `~/.penhin/.env` are user-level config and do not move with the workspace. Use `~/.penhin/.env` for `ANTHROPIC_API_KEY`, `MODEL_ID`, and similar environment variables.
 `.penhin_todos.json`, `.tasks/`, and `.transcripts/` are local runtime state. They are ignored by file tools and git.
+
+### PostgreSQL orchestration store
+
+The first multi-agent foundation persists agent jobs, attempts, structured artifacts, and immutable events in PostgreSQL. Start the local database with Docker Compose:
+
+```bash
+cp .env.example .env  # only when .env does not exist
+docker compose up -d postgres
+```
+
+Set `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_PORT`, and `PENHIN_DATABASE_URL` in `.env`. The supplied development defaults expose PostgreSQL on `localhost:55432` and retain data in the `penhin-postgres` Docker volume. The runtime creates the schema on first orchestration operation.
+
+The first stage records only read-only agent jobs. `task`, `verify`, and `background_start` preserve their existing behavior while recording attempts and artifacts. `agent_job_show`, `agent_job_list`, and `agent_artifact_show` provide read-only inspection.
 
 ### Current Tools
 

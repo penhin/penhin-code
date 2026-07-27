@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-penhin}
+      POSTGRES_USER: ${POSTGRES_USER:-penhin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-penhin-dev-password}
+    ports:
+      - "${POSTGRES_PORT:-55432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    volumes:
+      - penhin-postgres:/var/lib/postgresql/data
+
+volumes:
+  penhin-postgres:

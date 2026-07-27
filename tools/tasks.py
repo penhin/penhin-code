@@ -12,8 +12,10 @@ BACKGROUND_THREAD_PREFIX = "background-task-"
 
 
 def run_task(task: str, agent_type: str = "general") -> Result:
-    from subagent import run_subagent
-    return run_subagent(task, agent_type=agent_type)
+    from orchestration.service import run_recorded_subagent
+    current = current_running_task()
+    root_task_id = str(current.get("orchestration_job_id", "")) if current else None
+    return run_recorded_subagent(task, agent_type=agent_type, root_task_id=root_task_id or None)
 
 
 def run_verify(
@@ -23,7 +25,7 @@ def run_verify(
     changes: str = "",
     test_hint: str = "",
 ) -> Result:
-    from subagent import run_subagent
+    from orchestration.service import run_recorded_subagent
 
     plan_content = plan.strip()
     linked_task = current_running_task()
@@ -51,7 +53,12 @@ def run_verify(
         "Return a concise verdict with checks run, failures, residual risks, "
         "and recommended next actions. Do not modify files."
     )
-    result = run_subagent("\n\n".join(sections), agent_type="verification")
+    root_task_id = str(linked_task.get("orchestration_job_id", "")) if linked_task else None
+    result = run_recorded_subagent(
+        "\n\n".join(sections),
+        agent_type="verification",
+        root_task_id=root_task_id or None,
+    )
     if result.ok and linked_task and linked_plan_slug and plan_content:
         task_status.mark_plan_verified(int(linked_task["id"]), linked_plan_slug)
     return result
@@ -83,12 +90,25 @@ def run_task_start(
             data={"current_task": current},
         )
 
+    orchestration_job_id = ""
+    try:
+        from orchestration.service import repository_from_env
+        from orchestration.models import AgentRole
+
+        repository = repository_from_env()
+        if repository is not None:
+            root_job = repository.create_root_job(subject, description or subject, AgentRole.GENERAL)
+            orchestration_job_id = root_job.id
+    except Exception as error:
+        return Result.failure(f"Task was not started because orchestration storage failed: {error}", code="orchestration_unavailable")
+
     result = task_status(
         action="start",
         subject=subject,
         description=description,
         note=note,
         plan_slug=plan_slug,
+        orchestration_job_id=orchestration_job_id,
     )
 
     if not result.ok:
@@ -159,9 +179,9 @@ def run_task_complete(note: str = None) -> Result:
 
 def finish_background_task(task_id: int, task: str) -> None:
     try:
-        from subagent import run_subagent
+        from orchestration.service import run_recorded_subagent
 
-        result = run_subagent(task)
+        result = run_recorded_subagent(task)
         status = "completed" if result.ok else "failed"
         task_status.finish_background(task_id, status, result.message, result.error)
     except Exception as error:

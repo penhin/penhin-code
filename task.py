@@ -25,6 +25,7 @@ class TaskStatus:
     blocked_by: list[int] = field(default_factory=list)
     plan_slug: str = ""
     verified_plan_slug: str = ""
+    orchestration_job_id: str = ""
     note: str = ""
     error: str = ""
     result: str = ""
@@ -46,6 +47,7 @@ class TaskStatus:
             blocked_by=list(blocked_by),
             plan_slug=str(data.get("plan_slug", "")),
             verified_plan_slug=str(data.get("verified_plan_slug", "")),
+            orchestration_job_id=str(data.get("orchestration_job_id", "")),
             note=str(data.get("note", "")),
             error=str(data.get("error", "")),
             result=str(data.get("result", "")),
@@ -104,6 +106,7 @@ class TaskStatusManager:
         description: str = "",
         note: str = "",
         plan_slug: str = "",
+        orchestration_job_id: str = "",
     ) -> TaskStatus:
         with self._lock:
             task = TaskStatus(
@@ -112,6 +115,7 @@ class TaskStatusManager:
                 description=description,
                 note=note,
                 plan_slug=plan_slug,
+                orchestration_job_id=orchestration_job_id,
                 status="running",
             )
             self._save(task)
@@ -201,12 +205,13 @@ class TaskStatusManager:
         description: str = "",
         note: str = None,
         plan_slug: str = "",
+        orchestration_job_id: str = "",
     ) -> Result:
         try:
             if action == "start":
                 if not subject:
                     return Result.failure("Error: subject is required for start", code="missing_subject")
-                task = self.start(subject, description, note or "", plan_slug)
+                task = self.start(subject, description, note or "", plan_slug, orchestration_job_id)
                 return Result.success(task.to_json(), data=task.to_dict(), action=action)
 
             if action == "show":
