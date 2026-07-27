@@ -123,7 +123,7 @@ class TaskStatusManager:
             self._next_id += 1
             return task
 
-    def start_background(self, subject: str, description: str = "", note: str = "") -> TaskStatus:
+    def start_background(self, subject: str, description: str = "", note: str = "", orchestration_job_id: str = "") -> TaskStatus:
         with self._lock:
             task = TaskStatus(
                 id=self._next_id,
@@ -131,6 +131,7 @@ class TaskStatusManager:
                 kind="background",
                 description=description,
                 note=note,
+                orchestration_job_id=orchestration_job_id,
                 status="running",
             )
             self._save(task)

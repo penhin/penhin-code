@@ -53,3 +53,14 @@ def run_agent_artifact_show(job_id: str) -> Result:
         return Result.failure(f"Result artifact {job.result_artifact_id} not found", code="artifact_not_found")
     data = {"id": artifact.id, "job_id": artifact.job_id, "kind": artifact.kind, "content": artifact.content, "schema_valid": artifact.schema_valid, "created_at": artifact.created_at}
     return Result.success(json.dumps(data, ensure_ascii=False, indent=2), data=data)
+
+
+def run_agent_job_cancel(id: str) -> Result:
+    repository, failure = _repository_or_failure()
+    if failure:
+        return failure
+    try:
+        job = repository.request_cancel(id)
+    except KeyError:
+        return Result.failure(f"Agent job {id} not found", code="not_found")
+    return Result.success(json.dumps(job.to_dict(), ensure_ascii=False, indent=2), data=job.to_dict())

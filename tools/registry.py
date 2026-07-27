@@ -8,7 +8,7 @@ from todo import run_todo
 from . import tasks as task_tools
 from .files import run_edit, run_list, run_read, run_search, run_write
 from .glob import run_glob
-from .orchestration import run_agent_artifact_show, run_agent_job_list, run_agent_job_show
+from .orchestration import run_agent_artifact_show, run_agent_job_cancel, run_agent_job_list, run_agent_job_show
 from .plan_mode import run_enter_plan, run_exit_plan
 from .shell import run_bash
 from .types import ApprovalKey, ToolApproval, ToolCategory, ToolSchema, ToolSpec, tool_schema
@@ -222,7 +222,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         description="Show all background tasks and their current statuses.",
         input_schema=object_schema(),
         category=ToolCategory.state,
-        handler=lambda **kwargs: task_tools.task_status(action="background_list"),
+        handler=lambda **kwargs: task_tools.run_background_list(),
         parallel_safe=True,
         available_to_child=False,
         available_to_parent=True,
@@ -233,7 +233,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         description="Show one background task with its result or error.",
         input_schema=object_schema({"id": {"type": "integer"}}, ["id"]),
         category=ToolCategory.state,
-        handler=lambda **kwargs: task_tools.task_status(action="background_show", id=kwargs["id"]),
+        handler=lambda **kwargs: task_tools.run_background_show(id=kwargs["id"]),
         parallel_safe=True,
         available_to_child=False,
         available_to_parent=True,
@@ -268,6 +268,17 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         category=ToolCategory.readonly,
         handler=lambda **kwargs: run_agent_artifact_show(kwargs["job_id"]),
         parallel_safe=True,
+        available_to_child=False,
+        available_to_parent=True,
+        approval=ToolApproval(),
+    ),
+    "agent_job_cancel": ToolSpec(
+        name="agent_job_cancel",
+        description="Request cancellation of a queued or running agent job.",
+        input_schema=object_schema({"id": {"type": "string"}}, ["id"]),
+        category=ToolCategory.state,
+        handler=lambda **kwargs: run_agent_job_cancel(kwargs["id"]),
+        parallel_safe=False,
         available_to_child=False,
         available_to_parent=True,
         approval=ToolApproval(),

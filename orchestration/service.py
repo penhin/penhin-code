@@ -8,6 +8,7 @@ from result import Result
 from .artifacts import normalize_subagent_result
 from .models import AgentJob, AgentRole, Artifact, JobStatus
 from .repository import PostgresOrchestrationRepository, database_url_from_env
+from .scheduler import PersistentScheduler
 
 
 logger = logging.getLogger("penhin.orchestration")
@@ -28,6 +29,51 @@ ROLE_BY_AGENT_TYPE = {
     "verification": AgentRole.VERIFY,
     "general": AgentRole.GENERAL,
 }
+
+
+def agent_type_for_role(role: AgentRole) -> str:
+    return {
+        AgentRole.PLANNER: "plan",
+        AgentRole.EXPLORE: "explore",
+        AgentRole.VERIFY: "verification",
+    }.get(role, "general")
+
+
+_scheduler: PersistentScheduler | None = None
+
+
+def scheduler_from_env() -> PersistentScheduler | None:
+    global _scheduler
+    if _scheduler is not None:
+        return _scheduler
+    repository = repository_from_env()
+    if repository is None:
+        return None
+    _scheduler = PersistentScheduler(repository)
+    _scheduler.start()
+    return _scheduler
+
+
+def enqueue_subagent_job(
+    task: str,
+    agent_type: str = "general",
+    root_task_id: str | None = None,
+    dispatch: bool = True,
+) -> AgentJob:
+    scheduler = scheduler_from_env()
+    if scheduler is None:
+        raise RuntimeError("PENHIN_DATABASE_URL is not configured")
+    role = ROLE_BY_AGENT_TYPE.get(agent_type, AgentRole.GENERAL)
+    if root_task_id:
+        job = scheduler.repository.create_job(AgentJob(
+            id=str(uuid4()), root_task_id=root_task_id, parent_id=root_task_id,
+            role=role, subject=task[:160], instruction=task,
+        ))
+    else:
+        job = scheduler.repository.create_root_job(task[:160], task, role)
+    if dispatch:
+        scheduler.dispatch()
+    return job
 
 
 def run_recorded_subagent(task: str, agent_type: str = "general", root_task_id: str | None = None) -> Result:

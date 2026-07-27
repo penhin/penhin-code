@@ -47,7 +47,11 @@ class AgentJob:
     max_turns: int | None = None
     max_tokens: int | None = None
     timeout_seconds: int | None = None
+    max_attempts: int = 1
     attempt_count: int = 0
+    cancel_requested: bool = False
+    worker_pid: int | None = None
+    worker_token: str = ""
     result_artifact_id: str | None = None
     error: str = ""
     created_at: str | None = None

@@ -27,7 +27,11 @@ CREATE TABLE IF NOT EXISTS agent_jobs (
     max_turns INTEGER,
     max_tokens INTEGER,
     timeout_seconds INTEGER,
+    max_attempts INTEGER NOT NULL DEFAULT 1 CHECK (max_attempts >= 1),
     attempt_count INTEGER NOT NULL DEFAULT 0,
+    cancel_requested BOOLEAN NOT NULL DEFAULT FALSE,
+    worker_pid INTEGER,
+    worker_token TEXT NOT NULL DEFAULT '',
     result_artifact_id UUID,
     error TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -76,6 +80,10 @@ CREATE INDEX IF NOT EXISTS agent_jobs_parent_idx ON agent_jobs (parent_id);
 CREATE INDEX IF NOT EXISTS job_events_job_created_idx ON job_events (job_id, created_at);
 CREATE INDEX IF NOT EXISTS job_attempts_job_created_idx ON job_attempts (job_id, started_at);
 CREATE INDEX IF NOT EXISTS job_dependencies_dependency_idx ON job_dependencies (dependency_job_id);
+ALTER TABLE agent_jobs ADD COLUMN IF NOT EXISTS max_attempts INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE agent_jobs ADD COLUMN IF NOT EXISTS cancel_requested BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE agent_jobs ADD COLUMN IF NOT EXISTS worker_pid INTEGER;
+ALTER TABLE agent_jobs ADD COLUMN IF NOT EXISTS worker_token TEXT NOT NULL DEFAULT '';
 """
 
 
@@ -117,9 +125,9 @@ class PostgresOrchestrationRepository:
             cursor.execute(
                 """INSERT INTO agent_jobs
                 (id, parent_id, root_task_id, role, subject, instruction, status, priority, workspace_mode,
-                 max_turns, max_tokens, timeout_seconds)
+                 max_turns, max_tokens, timeout_seconds, max_attempts)
                 VALUES (%(id)s, %(parent_id)s, %(root_task_id)s, %(role)s, %(subject)s, %(instruction)s,
-                        %(status)s, %(priority)s, %(workspace_mode)s, %(max_turns)s, %(max_tokens)s, %(timeout_seconds)s)""",
+                        %(status)s, %(priority)s, %(workspace_mode)s, %(max_turns)s, %(max_tokens)s, %(timeout_seconds)s, %(max_attempts)s)""",
                 {**job.to_dict(), "role": str(job.role), "status": str(job.status)},
             )
             for dependency_id in job.depends_on:
@@ -167,6 +175,98 @@ class PostgresOrchestrationRepository:
             self._append_event(cursor, job_id, "job_started", {"attempt_id": attempt.id, "number": number})
             return attempt
 
+    def claim_next_job(self, model: str = "") -> tuple[AgentJob, JobAttempt] | None:
+        """Atomically claim one dependency-ready job; safe for multiple scheduler processes."""
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """SELECT job.* FROM agent_jobs AS job
+                WHERE job.status = 'queued' AND NOT job.cancel_requested
+                  AND NOT EXISTS (
+                    SELECT 1 FROM job_dependencies dependency
+                    JOIN agent_jobs prerequisite ON prerequisite.id = dependency.dependency_job_id
+                    WHERE dependency.job_id = job.id AND prerequisite.status <> 'succeeded'
+                  )
+                ORDER BY job.priority DESC, job.created_at
+                FOR UPDATE SKIP LOCKED LIMIT 1"""
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            job = self._job_from_row(cursor, row)
+            number = job.attempt_count + 1
+            attempt = JobAttempt(id=str(uuid4()), job_id=job.id, number=number, model=model)
+            worker_token = str(uuid4())
+            cursor.execute(
+                "UPDATE agent_jobs SET status = 'running', attempt_count = %s, started_at = now(), worker_token = %s WHERE id = %s",
+                (number, worker_token, job.id),
+            )
+            cursor.execute(
+                "INSERT INTO job_attempts (id, job_id, number, status, model) VALUES (%s, %s, %s, 'running', %s)",
+                (attempt.id, job.id, number, model),
+            )
+            self._append_event(cursor, job.id, "job_claimed", {"attempt_id": attempt.id, "number": number})
+            return self._get_job(cursor, job.id), attempt
+
+    def register_worker_pid(self, job_id: str, attempt_id: str, worker_token: str, pid: int) -> None:
+        with self._connection() as connection, connection.cursor() as cursor:
+            job = self._get_job(cursor, job_id, for_update=True)
+            if job.status != JobStatus.RUNNING or job.worker_token != worker_token:
+                raise ValueError("Worker is no longer authorized for this job")
+            cursor.execute("SELECT id FROM job_attempts WHERE id = %s AND job_id = %s AND status = 'running'", (attempt_id, job_id))
+            if cursor.fetchone() is None:
+                raise ValueError("Worker attempt is no longer active")
+            cursor.execute("UPDATE agent_jobs SET worker_pid = %s WHERE id = %s", (pid, job_id))
+            self._append_event(cursor, job_id, "worker_started", {"pid": pid, "attempt_id": attempt_id})
+
+    def running_worker_processes(self) -> list[tuple[str, int]]:
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT id, worker_pid FROM agent_jobs WHERE status = 'running' AND worker_pid IS NOT NULL")
+            return [(str(row["id"]), int(row["worker_pid"])) for row in cursor.fetchall()]
+
+    def request_cancel(self, job_id: str) -> AgentJob:
+        with self._connection() as connection, connection.cursor() as cursor:
+            job = self._get_job(cursor, job_id, for_update=True)
+            if job.status == JobStatus.QUEUED:
+                cursor.execute("UPDATE agent_jobs SET status = 'cancelled', cancel_requested = TRUE, finished_at = now(), worker_pid = NULL, worker_token = '' WHERE id = %s", (job_id,))
+                self._append_event(cursor, job_id, "job_cancelled", {"phase": "queued"})
+            elif job.status == JobStatus.RUNNING:
+                cursor.execute("UPDATE agent_jobs SET cancel_requested = TRUE WHERE id = %s", (job_id,))
+                self._append_event(cursor, job_id, "job_cancel_requested", {})
+            return self._get_job(cursor, job_id)
+
+    def timeout_attempt(self, attempt_id: str) -> AgentJob | None:
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT * FROM job_attempts WHERE id = %s FOR UPDATE", (attempt_id,))
+            attempt = cursor.fetchone()
+            if attempt is None:
+                return None
+            job = self._get_job(cursor, str(attempt["job_id"]), for_update=True)
+            if job.status != JobStatus.RUNNING:
+                return job
+            cursor.execute("UPDATE job_attempts SET status = 'timed_out', terminal_reason = 'timeout', finished_at = now() WHERE id = %s", (attempt_id,))
+            cursor.execute("UPDATE agent_jobs SET status = 'timed_out', error = 'Job exceeded timeout', finished_at = now(), worker_pid = NULL, worker_token = '' WHERE id = %s", (job.id,))
+            self._append_event(cursor, job.id, "job_timed_out", {"attempt_id": attempt_id})
+            return self._get_job(cursor, job.id)
+
+    def recover_interrupted_jobs(self) -> int:
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT id FROM agent_jobs WHERE status = 'running' FOR UPDATE")
+            job_ids = [str(row["id"]) for row in cursor.fetchall()]
+            for job_id in job_ids:
+                cursor.execute("UPDATE agent_jobs SET status = 'interrupted', error = 'Scheduler restarted', finished_at = now(), worker_pid = NULL, worker_token = '' WHERE id = %s", (job_id,))
+                cursor.execute("UPDATE job_attempts SET status = 'interrupted', terminal_reason = 'scheduler_restart', finished_at = now() WHERE job_id = %s AND status = 'running'", (job_id,))
+                self._append_event(cursor, job_id, "job_interrupted", {"reason": "scheduler_restart"})
+            return len(job_ids)
+
+    def requeue_retryable_jobs(self) -> int:
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT id FROM agent_jobs WHERE status IN ('failed', 'interrupted') AND attempt_count < max_attempts AND NOT cancel_requested FOR UPDATE")
+            job_ids = [str(row["id"]) for row in cursor.fetchall()]
+            for job_id in job_ids:
+                cursor.execute("UPDATE agent_jobs SET status = 'queued', error = '', finished_at = NULL WHERE id = %s", (job_id,))
+                self._append_event(cursor, job_id, "job_requeued", {})
+            return len(job_ids)
+
     def finish_attempt(
         self,
         attempt_id: str,
@@ -186,6 +286,9 @@ class PostgresOrchestrationRepository:
             job = self._get_job(cursor, str(attempt["job_id"]), for_update=True)
             if job.status != JobStatus.RUNNING:
                 raise ValueError(f"Cannot finish job in {job.status} state")
+            if job.cancel_requested:
+                status = JobStatus.CANCELLED
+                terminal_reason = "cancel_requested"
             artifact_id = None
             if artifact is not None:
                 artifact_id = artifact.id
@@ -199,7 +302,7 @@ class PostgresOrchestrationRepository:
             )
             cursor.execute(
                 """UPDATE agent_jobs SET status = %s, result_artifact_id = %s, error = %s,
-                finished_at = now() WHERE id = %s""",
+                finished_at = now(), worker_pid = NULL, worker_token = '' WHERE id = %s""",
                 (str(status), artifact_id, error, job.id),
             )
             self._append_event(cursor, job.id, f"job_{status}", {"attempt_id": attempt_id, "error": error})
@@ -237,7 +340,7 @@ class PostgresOrchestrationRepository:
             id=str(row["id"]), parent_id=str(row["parent_id"]) if row["parent_id"] else None,
             root_task_id=str(row["root_task_id"]), role=AgentRole(row["role"]), subject=row["subject"], instruction=row["instruction"],
             status=JobStatus(row["status"]), priority=row["priority"], depends_on=[str(item["dependency_job_id"]) for item in cursor.fetchall()],
-            workspace_mode=row["workspace_mode"], max_turns=row["max_turns"], max_tokens=row["max_tokens"], timeout_seconds=row["timeout_seconds"],
-            attempt_count=row["attempt_count"], result_artifact_id=str(row["result_artifact_id"]) if row["result_artifact_id"] else None,
+            workspace_mode=row["workspace_mode"], max_turns=row["max_turns"], max_tokens=row["max_tokens"], timeout_seconds=row["timeout_seconds"], max_attempts=row["max_attempts"],
+            attempt_count=row["attempt_count"], cancel_requested=row["cancel_requested"], worker_pid=row["worker_pid"], worker_token=row["worker_token"], result_artifact_id=str(row["result_artifact_id"]) if row["result_artifact_id"] else None,
             error=row["error"], created_at=_time(row["created_at"]), started_at=_time(row["started_at"]), finished_at=_time(row["finished_at"]),
         )

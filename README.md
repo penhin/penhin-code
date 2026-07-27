@@ -46,7 +46,9 @@ docker compose up -d postgres
 
 Set `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_PORT`, and `PENHIN_DATABASE_URL` in `.env`. The supplied development defaults expose PostgreSQL on `localhost:55432` and retain data in the `penhin-postgres` Docker volume. The runtime creates the schema on first orchestration operation.
 
-The first stage records only read-only agent jobs. `task`, `verify`, and `background_start` preserve their existing behavior while recording attempts and artifacts. `agent_job_show`, `agent_job_list`, and `agent_artifact_show` provide read-only inspection.
+The first stage records only read-only agent jobs. `task` and `verify` preserve their existing behavior while recording attempts and artifacts. `background_start` now enqueues durable work through a bounded scheduler. `agent_job_show`, `agent_job_list`, `agent_artifact_show`, and `agent_job_cancel` provide inspection and cancellation.
+
+`PENHIN_SCHEDULER_WORKERS` controls the local worker limit (default: `2`), and `PENHIN_WORKER_KILL_GRACE_SECONDS` sets the SIGTERM-to-SIGKILL grace interval (default: `2`). Every scheduled Agent runs in an independent Worker process. The database queue uses transactional claims, and a new scheduler terminates verifiably orphaned Workers before recovering their jobs. Cancellation and timeout terminate the Worker process group, so a stalled provider call cannot keep the task alive.
 
 ### 当前工具
 
@@ -175,7 +177,9 @@ docker compose up -d postgres
 
 Set `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_PORT`, and `PENHIN_DATABASE_URL` in `.env`. The supplied development defaults expose PostgreSQL on `localhost:55432` and retain data in the `penhin-postgres` Docker volume. The runtime creates the schema on first orchestration operation.
 
-The first stage records only read-only agent jobs. `task`, `verify`, and `background_start` preserve their existing behavior while recording attempts and artifacts. `agent_job_show`, `agent_job_list`, and `agent_artifact_show` provide read-only inspection.
+The first stage records only read-only agent jobs. `task` and `verify` preserve their existing behavior while recording attempts and artifacts. `background_start` now enqueues durable work through a bounded scheduler. `agent_job_show`, `agent_job_list`, `agent_artifact_show`, and `agent_job_cancel` provide inspection and cancellation.
+
+`PENHIN_SCHEDULER_WORKERS` controls the local worker limit (default: `2`), and `PENHIN_WORKER_KILL_GRACE_SECONDS` sets the SIGTERM-to-SIGKILL grace interval (default: `2`). Every scheduled Agent runs in an independent Worker process. The database queue uses transactional claims, and a new scheduler terminates verifiably orphaned Workers before recovering their jobs. Cancellation and timeout terminate the Worker process group, so a stalled provider call cannot keep the task alive.
 
 ### Current Tools
 
