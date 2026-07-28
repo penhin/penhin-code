@@ -3,7 +3,7 @@ from __future__ import annotations
 import subprocess
 from uuid import uuid4
 
-from .models import IntegrationItem, IntegrationRun, JobStatus
+from .models import IntegrationItem, IntegrationItemStatus, IntegrationRun, IntegrationRunStatus, JobStatus
 from .repository import PostgresOrchestrationRepository
 from .worktrees import provision_integration_worktree
 
@@ -57,23 +57,23 @@ def apply_integration(repository: PostgresOrchestrationRepository, run_id: str) 
     run = repository.get_integration_run(run_id)
     if run is None:
         raise KeyError(run_id)
-    if run.status not in {"created", "needs_resolution"}:
+    if run.status != IntegrationRunStatus.CREATED:
         raise ValueError(f"Integration run {run_id} is already {run.status}")
+    repository.transition_integration_run(run.id, IntegrationRunStatus.APPLYING)
     for item in repository.list_integration_items(run_id):
-        if item.status == "applied":
+        if item.status == IntegrationItemStatus.APPLIED:
             continue
-        if item.status == "conflict":
-            raise ValueError("Resolve the recorded conflict in the integration worktree before retrying")
+        repository.transition_integration_item(item.id, IntegrationItemStatus.APPLYING)
         try:
             for commit in item.commits:
                 _git(run.worktree_path, "cherry-pick", commit)
         except RuntimeError as error:
-            repository.update_integration_item(item.id, "conflict", str(error))
-            repository.finish_integration_run(run.id, "needs_resolution", error=str(error))
+            repository.transition_integration_item(item.id, IntegrationItemStatus.CONFLICT, str(error))
+            repository.transition_integration_run(run.id, IntegrationRunStatus.NEEDS_RESOLUTION, error=str(error))
             return repository.get_integration_run(run.id)
-        repository.update_integration_item(item.id, "applied")
+        repository.transition_integration_item(item.id, IntegrationItemStatus.APPLIED)
     result_commit = _git(run.worktree_path, "rev-parse", "HEAD")
-    repository.finish_integration_run(run.id, "integrated", result_commit=result_commit)
+    repository.transition_integration_run(run.id, IntegrationRunStatus.INTEGRATED, result_commit=result_commit)
     return repository.get_integration_run(run.id)
 
 
@@ -81,14 +81,15 @@ def verify_integration(repository: PostgresOrchestrationRepository, run_id: str,
     run = repository.get_integration_run(run_id)
     if run is None:
         raise KeyError(run_id)
-    if run.status != "integrated":
+    if run.status not in {IntegrationRunStatus.INTEGRATED, IntegrationRunStatus.VERIFICATION_FAILED}:
         raise ValueError("Only an integrated run can be verified")
     if not command:
         raise ValueError("command must not be empty")
+    repository.transition_integration_run(run.id, IntegrationRunStatus.VERIFYING, result_commit=run.result_commit)
     result = subprocess.run(command, cwd=run.worktree_path, capture_output=True, text=True, timeout=900, check=False)
     if result.returncode:
         error = (result.stdout + "\n" + result.stderr).strip()[-4000:]
-        repository.finish_integration_run(run.id, "verification_failed", result_commit=run.result_commit, error=error)
+        repository.transition_integration_run(run.id, IntegrationRunStatus.VERIFICATION_FAILED, result_commit=run.result_commit, error=error)
     else:
-        repository.finish_integration_run(run.id, "verified", result_commit=run.result_commit)
+        repository.transition_integration_run(run.id, IntegrationRunStatus.VERIFIED, result_commit=run.result_commit)
     return repository.get_integration_run(run.id)

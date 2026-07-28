@@ -10,8 +10,8 @@ from uuid import uuid4
 import psycopg
 from psycopg.rows import dict_row
 
-from .models import AgentJob, AgentRole, Artifact, IntegrationItem, IntegrationRun, JobAttempt, JobEvent, JobStatus
-from .state_machine import transition_is_allowed
+from .models import AgentJob, AgentRole, Artifact, IntegrationItem, IntegrationItemStatus, IntegrationRun, IntegrationRunStatus, JobAttempt, JobEvent, JobStatus
+from .state_machine import integration_item_transition_is_allowed, integration_run_transition_is_allowed, transition_is_allowed
 
 
 SCHEMA_SQL = """
@@ -205,13 +205,13 @@ class PostgresOrchestrationRepository:
             cursor.execute(
                 """INSERT INTO integration_runs (id, root_task_id, base_commit, worktree_path, worktree_branch, status)
                    VALUES (%s, %s, %s, %s, %s, %s)""",
-                (run.id, run.root_task_id, run.base_commit, run.worktree_path, run.worktree_branch, run.status),
+                (run.id, run.root_task_id, run.base_commit, run.worktree_path, run.worktree_branch, str(run.status)),
             )
             for item in items:
                 cursor.execute(
                     """INSERT INTO integration_items (id, run_id, job_id, ordinal, source_branch, commits, status)
                        VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s)""",
-                    (item.id, item.run_id, item.job_id, item.ordinal, item.source_branch, json.dumps(item.commits), item.status),
+                    (item.id, item.run_id, item.job_id, item.ordinal, item.source_branch, json.dumps(item.commits), str(item.status)),
                 )
             return self._get_integration_run(cursor, run.id)
 
@@ -224,15 +224,25 @@ class PostgresOrchestrationRepository:
             cursor.execute("SELECT * FROM integration_items WHERE run_id = %s ORDER BY ordinal", (run_id,))
             return [self._integration_item_from_row(row) for row in cursor.fetchall()]
 
-    def update_integration_item(self, item_id: str, status: str, error: str = "") -> None:
+    def transition_integration_item(self, item_id: str, status: IntegrationItemStatus, error: str = "") -> None:
         with self._connection() as connection, connection.cursor() as cursor:
-            cursor.execute("UPDATE integration_items SET status = %s, error = %s WHERE id = %s", (status, error, item_id))
+            cursor.execute("SELECT * FROM integration_items WHERE id = %s FOR UPDATE", (item_id,))
+            row = cursor.fetchone()
+            if row is None:
+                raise KeyError(item_id)
+            current = IntegrationItemStatus(row["status"])
+            if not integration_item_transition_is_allowed(current, status):
+                raise ValueError(f"Cannot transition integration item from {current} to {status}")
+            cursor.execute("UPDATE integration_items SET status = %s, error = %s WHERE id = %s", (str(status), error, item_id))
 
-    def finish_integration_run(self, run_id: str, status: str, result_commit: str = "", error: str = "") -> None:
+    def transition_integration_run(self, run_id: str, status: IntegrationRunStatus, result_commit: str = "", error: str = "") -> None:
         with self._connection() as connection, connection.cursor() as cursor:
+            run = self._get_integration_run(cursor, run_id)
+            if not integration_run_transition_is_allowed(run.status, status):
+                raise ValueError(f"Cannot transition integration run from {run.status} to {status}")
             cursor.execute(
                 "UPDATE integration_runs SET status = %s, result_commit = %s, error = %s, finished_at = now() WHERE id = %s",
-                (status, result_commit, error, run_id),
+                (str(status), result_commit, error, run_id),
             )
 
     def start_attempt(self, job_id: str, model: str = "") -> JobAttempt:
@@ -421,7 +431,7 @@ class PostgresOrchestrationRepository:
             return None
         return IntegrationRun(
             id=str(row["id"]), root_task_id=str(row["root_task_id"]), base_commit=row["base_commit"],
-            worktree_path=row["worktree_path"], worktree_branch=row["worktree_branch"], status=row["status"],
+            worktree_path=row["worktree_path"], worktree_branch=row["worktree_branch"], status=IntegrationRunStatus(row["status"]),
             result_commit=row["result_commit"], error=row["error"], created_at=_time(row["created_at"]),
             finished_at=_time(row["finished_at"]),
         )
@@ -430,7 +440,7 @@ class PostgresOrchestrationRepository:
     def _integration_item_from_row(row: dict[str, Any]) -> IntegrationItem:
         return IntegrationItem(
             id=str(row["id"]), run_id=str(row["run_id"]), job_id=str(row["job_id"]), ordinal=row["ordinal"],
-            source_branch=row["source_branch"], commits=list(row["commits"]), status=row["status"], error=row["error"],
+            source_branch=row["source_branch"], commits=list(row["commits"]), status=IntegrationItemStatus(row["status"]), error=row["error"],
         )
 
     def _job_from_row(self, cursor, row: dict[str, Any]) -> AgentJob:

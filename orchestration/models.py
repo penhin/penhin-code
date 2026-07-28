@@ -24,6 +24,23 @@ class JobStatus(StrEnum):
     INTERRUPTED = "interrupted"
 
 
+class IntegrationRunStatus(StrEnum):
+    CREATED = "created"
+    APPLYING = "applying"
+    NEEDS_RESOLUTION = "needs_resolution"
+    INTEGRATED = "integrated"
+    VERIFYING = "verifying"
+    VERIFICATION_FAILED = "verification_failed"
+    VERIFIED = "verified"
+
+
+class IntegrationItemStatus(StrEnum):
+    PENDING = "pending"
+    APPLYING = "applying"
+    APPLIED = "applied"
+    CONFLICT = "conflict"
+
+
 TERMINAL_JOB_STATUSES = {
     JobStatus.SUCCEEDED,
     JobStatus.FAILED,
@@ -105,7 +122,7 @@ class IntegrationRun:
     base_commit: str
     worktree_path: str
     worktree_branch: str
-    status: str = "created"
+    status: IntegrationRunStatus = IntegrationRunStatus.CREATED
     result_commit: str = ""
     error: str = ""
     created_at: str | None = None
@@ -123,7 +140,7 @@ class IntegrationItem:
     ordinal: int
     source_branch: str
     commits: list[str]
-    status: str = "pending"
+    status: IntegrationItemStatus = IntegrationItemStatus.PENDING
     error: str = ""
 
     def to_dict(self) -> dict[str, Any]:

@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import pytest
 
-from orchestration.models import AgentJob, AgentRole, Artifact, IntegrationItem, IntegrationRun, JobStatus
+from orchestration.models import AgentJob, AgentRole, Artifact, IntegrationItem, IntegrationItemStatus, IntegrationRun, IntegrationRunStatus, JobStatus
 from orchestration.repository import PostgresOrchestrationRepository
 from orchestration.planning import DAG_PROTOCOL_VERSION, parse_dag_plan
 from orchestration.service import create_isolated_agent_job, materialize_dag_plan
@@ -208,13 +208,26 @@ def test_postgres_records_integration_run_and_ordered_items(repository: Postgres
     )
 
     stored = repository.create_integration_run(run, [item])
-    repository.update_integration_item(item.id, "applied")
-    repository.finish_integration_run(run.id, "integrated", result_commit="c" * 40)
+    repository.transition_integration_item(item.id, IntegrationItemStatus.APPLYING)
+    repository.transition_integration_item(item.id, IntegrationItemStatus.APPLIED)
+    repository.transition_integration_run(run.id, IntegrationRunStatus.APPLYING)
+    repository.transition_integration_run(run.id, IntegrationRunStatus.INTEGRATED, result_commit="c" * 40)
 
-    assert stored.status == "created"
+    assert stored.status == IntegrationRunStatus.CREATED
     assert repository.get_integration_run(run.id).result_commit == "c" * 40
     assert repository.list_integration_items(run.id)[0].commits == ["b" * 40]
-    assert repository.list_integration_items(run.id)[0].status == "applied"
+    assert repository.list_integration_items(run.id)[0].status == IntegrationItemStatus.APPLIED
+
+
+def test_postgres_rejects_invalid_integration_transitions(repository: PostgresOrchestrationRepository) -> None:
+    root = repository.create_root_task("integration transitions", "integration transitions")
+    run = repository.create_integration_run(IntegrationRun(
+        id=str(uuid4()), root_task_id=root.id, base_commit="a" * 40,
+        worktree_path="/tmp/integration", worktree_branch="penhin/integration-transitions",
+    ), [])
+
+    with pytest.raises(ValueError, match="Cannot transition integration run"):
+        repository.transition_integration_run(run.id, IntegrationRunStatus.VERIFIED)
 
 
 def test_worker_marks_invalid_handoff_as_failed(monkeypatch: pytest.MonkeyPatch) -> None:
