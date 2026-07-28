@@ -15,7 +15,8 @@ from tool_runtime import runtime_permission_setup
 from tools.registry import tool_names
 from tools.workspace import workspace_info
 from transcript import transcripts
-from ui import prompt_input
+from ui import print_error, print_info, print_user_message, prompt_input
+from quality_gate import run_quality_gate
 
 
 logger = logging.getLogger("penhin.main")
@@ -57,6 +58,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--inspect-session", "-i", metavar="ID", help="show details for a session")
     parser.add_argument("--events", "-e", type=non_negative_int, default=8, metavar="N", help="number of inspect events to show")
     parser.add_argument("--resume", "-r", metavar="ID", help="resume a specific session")
+    parser.add_argument("--quality-gate", action="store_true", help="run syntax, diff, and test quality gates")
     return parser.parse_args(args)
 
 
@@ -71,10 +73,22 @@ def main() -> None:
         print_session_inspect(args.inspect_session, event_limit=args.events)
         return
 
+    if args.quality_gate:
+        failures = []
+        for check in run_quality_gate():
+            printer = print_info if check.passed else print_error
+            printer(f"[quality] {'PASS' if check.passed else 'FAIL'} {check.name}: {check.detail}")
+            if not check.passed:
+                failures.append(check)
+        if failures:
+            raise SystemExit(1)
+        return
+
     init_runtime()
     logger.info(workspace_summary_line())
 
     if args.once:
+        print_user_message(" ".join(args.once))
         run_once(" ".join(args.once))
         return
     
@@ -117,6 +131,7 @@ def main() -> None:
             break
 
         context.add_user_message(user_input)
+        print_user_message(user_input)
         agent_loop(context)
         context.session_path = transcripts.save_session(context.session_path, context.messages)
 

@@ -104,6 +104,15 @@ def main() -> int:
             artifact = Artifact(
                 id=str(uuid4()), job_id=job.id, kind=artifact_kind, content=content, schema_valid=schema_valid,
             )
+            if not schema_valid:
+                repository.finish_attempt(
+                    args.attempt_id,
+                    JobStatus.FAILED,
+                    artifact=artifact,
+                    error="Agent returned an invalid structured protocol artifact",
+                    terminal_reason="invalid_protocol",
+                )
+                return 1
             repository.finish_attempt(args.attempt_id, JobStatus.SUCCEEDED, artifact=artifact, terminal_reason="completed")
             return 0
         finish_failure(repository, args.attempt_id, result.error, result.meta.get("code", "failed"))

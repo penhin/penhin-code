@@ -101,3 +101,14 @@ def test_scheduler_timeout_terminates_worker_process(repository: PostgresOrchest
     scheduler.start()
     wait_for(repository, job.id, JobStatus.TIMED_OUT)
     scheduler.shutdown(wait=True)
+
+
+def test_scheduler_shutdown_stops_callback_dispatch(repository: PostgresOrchestrationRepository) -> None:
+    scheduler = SchedulerForTest(repository, sleep_seconds=0.05)
+    scheduler.start()
+    job = executable_job(repository, "shutdown")
+    scheduler.dispatch()
+    scheduler.shutdown(wait=False)
+    time.sleep(0.1)
+    assert scheduler._started is False
+    assert repository.get_job(job.id).status in {JobStatus.RUNNING, JobStatus.FAILED}

@@ -144,6 +144,10 @@ class PersistentScheduler:
         return job
 
     def shutdown(self, wait: bool = False) -> None:
+        with self._lock:
+            if not self._started:
+                return
+            self._started = False
         if wait:
             for active in list(self._active.values()):
                 self._terminate(active.process)

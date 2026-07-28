@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import time
@@ -34,6 +35,11 @@ ROLE_BY_AGENT_TYPE = {
 _scheduler: PersistentScheduler | None = None
 
 
+def _shutdown_scheduler_at_exit() -> None:
+    if _scheduler is not None:
+        _scheduler.shutdown(wait=False)
+
+
 def scheduler_from_env() -> PersistentScheduler | None:
     global _scheduler
     if _scheduler is not None:
@@ -43,6 +49,7 @@ def scheduler_from_env() -> PersistentScheduler | None:
         return None
     _scheduler = PersistentScheduler(repository)
     _scheduler.start()
+    atexit.register(_shutdown_scheduler_at_exit)
     return _scheduler
 
 

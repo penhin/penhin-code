@@ -130,6 +130,8 @@ def call_llm(context: RunContext, runtime):
 
     def on_stream_text(text: str) -> None:
         nonlocal streamed
+        if not streamed:
+            ui.start_assistant_message()
         streamed = True
         ui.print_stream_delta(text)
 

@@ -1,6 +1,9 @@
 import json
 import os
 import subprocess
+import sys
+import types
+from argparse import Namespace
 from pathlib import Path
 from uuid import uuid4
 
@@ -12,6 +15,7 @@ from orchestration.planning import DAG_PROTOCOL_VERSION, parse_dag_plan
 from orchestration.service import create_isolated_agent_job, materialize_dag_plan
 from orchestration.worktrees import AgentWorktree
 from orchestration.artifacts import HANDOFF_PROTOCOL_VERSION, normalize_subagent_result
+from result import Result
 
 
 @pytest.fixture
@@ -211,3 +215,37 @@ def test_postgres_records_integration_run_and_ordered_items(repository: Postgres
     assert repository.get_integration_run(run.id).result_commit == "c" * 40
     assert repository.list_integration_items(run.id)[0].commits == ["b" * 40]
     assert repository.list_integration_items(run.id)[0].status == "applied"
+
+
+def test_worker_marks_invalid_handoff_as_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    from orchestration import worker
+
+    job = AgentJob(
+        id=str(uuid4()), root_task_id=str(uuid4()), role=AgentRole.EXPLORE, subject="invalid", instruction="invalid",
+        worktree_path=str(Path.cwd()), worktree_branch="test",
+    )
+
+    class Repository:
+        def initialize(self):
+            pass
+
+        def register_worker_pid(self, *args):
+            pass
+
+        def get_job(self, _job_id):
+            return job
+
+        def finish_attempt(self, *args, **kwargs):
+            self.finished = (args, kwargs)
+
+    repository = Repository()
+    monkeypatch.setattr(worker, "PostgresOrchestrationRepository", lambda _url: repository)
+    monkeypatch.setattr(worker, "parse_args", lambda: Namespace(database_url="postgresql://test", job_id=job.id, attempt_id="attempt", worker_token="token"))
+    monkeypatch.setattr(worker, "init_runtime", lambda: None)
+    monkeypatch.setitem(sys.modules, "subagent", types.SimpleNamespace(run_subagent=lambda *_args, **_kwargs: Result.success('{"summary":"invalid"}')))
+
+    assert worker.main() == 1
+    args, kwargs = repository.finished
+    assert args[1] == JobStatus.FAILED
+    assert kwargs["terminal_reason"] == "invalid_protocol"
+    assert kwargs["artifact"].schema_valid is False
