@@ -47,10 +47,13 @@ def start_integration(repository: OrchestrationRepository, root_task_id: str, jo
         )
         for index, (job, change_set) in enumerate(selected)
     ]
-    return repository.create_integration_run(IntegrationRun(
+    stored = repository.create_integration_run(IntegrationRun(
         id=run_id, root_task_id=root_task_id, base_commit=base_commit,
         worktree_path=worktree.path, worktree_branch=worktree.branch,
     ), items)
+    from evaluation.observer import emit
+    emit("integration_started", integration_id=stored.id, root_task_id=root_task_id, item_count=len(items))
+    return stored
 
 
 def apply_integration(repository: OrchestrationRepository, run_id: str) -> IntegrationRun:
@@ -70,10 +73,14 @@ def apply_integration(repository: OrchestrationRepository, run_id: str) -> Integ
         except RuntimeError as error:
             repository.transition_integration_item(item.id, IntegrationItemStatus.CONFLICT, str(error))
             repository.transition_integration_run(run.id, IntegrationRunStatus.NEEDS_RESOLUTION, error=str(error))
+            from evaluation.observer import emit
+            emit("integration_completed", integration_id=run.id, status="needs_resolution", conflict_item_id=item.id)
             return repository.get_integration_run(run.id)
         repository.transition_integration_item(item.id, IntegrationItemStatus.APPLIED)
     result_commit = _git(run.worktree_path, "rev-parse", "HEAD")
     repository.transition_integration_run(run.id, IntegrationRunStatus.INTEGRATED, result_commit=result_commit)
+    from evaluation.observer import emit
+    emit("integration_completed", integration_id=run.id, status="integrated", item_count=len(repository.list_integration_items(run_id)))
     return repository.get_integration_run(run.id)
 
 

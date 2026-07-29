@@ -230,10 +230,7 @@ def available_tools_section() -> str:
 
 def available_skills_section() -> str:
     if os.getenv("PENHIN_ADVERTISE_SKILLS", "").strip().lower() not in {"1", "true", "yes", "on"}:
-        return (
-            "Available skills:\n"
-            "(not advertised for this workspace; use load_skill only when the user explicitly names a skill)"
-        )
+        return "Available skills:\n(use load_skill when the user names a skill)"
     return "Available skills:\n" + load_skill.get_descriptions()
 
 

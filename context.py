@@ -111,21 +111,31 @@ class RunContext:
 
     def micro_compact(self) -> None:
         from compact import COMPACT_THRESHOLD
+        previous = self.collapse_keep_recent
         self.collapse_keep_recent = micro_compact_if_needed(self.messages, limit=COMPACT_THRESHOLD)
+        if self.collapse_keep_recent is not None and self.collapse_keep_recent != previous:
+            from evaluation.observer import emit
+            emit("context_compacted", mode="micro", keep_recent=self.collapse_keep_recent)
 
     def auto_compact_if_needed(self) -> None:
         if log_compact_watermark(self.messages, self.collapse_keep_recent) in {"compact", "blocking"}:
+            before = len(self.messages)
             self.messages[:] = auto_compact_messages(
                 self.messages,
                 collapse_keep_recent=self.collapse_keep_recent,
             )
+            from evaluation.observer import emit
+            emit("context_compacted", mode="automatic", messages_before=before, messages_after=len(self.messages))
 
     def force_auto_compact(self, hint: str | None = None) -> None:
+        before = len(self.messages)
         self.messages[:] = auto_compact_messages(
             self.messages,
             hint=hint,
             collapse_keep_recent=self.collapse_keep_recent,
         )
+        from evaluation.observer import emit
+        emit("context_compacted", mode="forced", messages_before=before, messages_after=len(self.messages), has_hint=bool(hint))
 
     def force_snip_turns(self, selectors: list[int | tuple[int, int]]) -> int:
         ranges = conversation_turn_ranges(self.messages)

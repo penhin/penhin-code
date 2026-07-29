@@ -51,7 +51,6 @@ TOOL_PROMPTS = {
     "todo_done": "Call the `todo_done` tool with index 1.",
     "todo_clear": "Call the `todo_clear` tool with an empty input object.",
     "workspace": "Call the `workspace` tool with an empty input object.",
-    "load_skill": "Call the `load_skill` tool with name exactly `code-review`.",
 }
 
 EXECUTE_HANDLER_TOOLS = {
@@ -66,7 +65,6 @@ EXECUTE_HANDLER_TOOLS = {
     "todo_done",
     "todo_clear",
     "workspace",
-    "load_skill",
     "task_start",
     "task_show",
     "task_complete",

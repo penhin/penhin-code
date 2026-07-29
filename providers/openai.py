@@ -84,4 +84,13 @@ def response_from_parts(text: str, calls: list[dict[str, str]], usage: Any) -> L
         except json.JSONDecodeError:
             arguments = {}
         content.append({"type": "tool_use", "id": call["id"], "name": call["name"], "input": arguments})
-    return LLMResponse(content=content, stop_reason="tool_use" if calls else "end_turn", usage=LLMUsage(input_tokens=int(getattr(usage, "input_tokens", 0) or 0), output_tokens=int(getattr(usage, "output_tokens", 0) or 0)))
+    input_details = getattr(usage, "input_tokens_details", None)
+    output_details = getattr(usage, "output_tokens_details", None)
+    cached = getattr(input_details, "cached_tokens", None)
+    reasoning = getattr(output_details, "reasoning_tokens", None)
+    return LLMResponse(content=content, stop_reason="tool_use" if calls else "end_turn", usage=LLMUsage(
+        input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
+        output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
+        cache_read_input_tokens=int(cached) if cached is not None else None,
+        reasoning_tokens=int(reasoning) if reasoning is not None else None,
+    ))

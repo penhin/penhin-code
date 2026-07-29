@@ -117,3 +117,7 @@ workspace / compact / snip / load_skill
 ```
 
 本地状态位于 `.penhin/`、`.tasks/`、`.transcripts/` 与 `.penhin_todos.json`，均不会被文件工具扫描或写入版本控制。
+
+## Agent 评测
+
+项目内置确定性与独立 Judge 结合的评测框架，覆盖主 Agent、角色型子 Agent和多 Agent 编排。离线检查可运行 `penhin-eval validate --suite baseline-v1`；真实基线、预算配置、报告和回归比较见 [docs/evaluation.md](docs/evaluation.md)。

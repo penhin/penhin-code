@@ -416,6 +416,12 @@ def run_tool(
             duration_ms,
             "approval_required" if access_run.approval_required else "blocked",
         )
+        from evaluation.observer import emit
+        emit(
+            "tool_call_completed", tool_name=tool_name, input_digest=short_hash(tool_input),
+            status="approval_required" if access_run.approval_required else "blocked",
+            duration_ms=duration_ms, code=access_run.result.meta.get("code"),
+        )
         return access_run
 
     unknown_fields = unknown_tool_input_fields(tool_name, tool_input)
@@ -430,5 +436,11 @@ def run_tool(
 
     duration_ms = (time.perf_counter() - start) * 1000
     log_tool_done(call_id, tool_name, tool_run, duration_ms)
+    from evaluation.observer import emit
+    emit(
+        "tool_call_completed", tool_name=tool_name, input_digest=short_hash(tool_input),
+        status="ok" if tool_run.result.ok else "error", duration_ms=duration_ms,
+        code=tool_run.result.meta.get("code"), unknown_input_fields=unknown_fields,
+    )
 
     return tool_run

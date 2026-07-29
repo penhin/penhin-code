@@ -62,8 +62,15 @@ def normalize_response(response) -> LLMResponse:
         usage=LLMUsage(
             input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
             output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
+            cache_read_input_tokens=_optional_int(usage, "cache_read_input_tokens"),
+            cache_creation_input_tokens=_optional_int(usage, "cache_creation_input_tokens"),
         ),
     )
+
+
+def _optional_int(value: Any, name: str) -> int | None:
+    item = getattr(value, name, None)
+    return int(item) if item is not None else None
 
 
 def normalize_content_block(block) -> dict[str, Any]:

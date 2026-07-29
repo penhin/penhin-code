@@ -190,6 +190,9 @@ def run_parallel_safe_calls(
     if not calls:
         return [], False
 
+    from evaluation.observer import emit
+    emit("parallel_tool_batch_started", tool_names=[call.tool_name for call in calls], call_count=len(calls))
+
     blocked_results: dict[int, tuple[dict[str, Any], bool]] = {}
     runnable_calls = []
     for call in calls:
