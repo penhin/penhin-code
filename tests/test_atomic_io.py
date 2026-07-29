@@ -6,7 +6,6 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tests.helpers import Result
 import atomic_io
 
 
@@ -45,14 +44,3 @@ def test_atomic_jsonl_round_trip() -> None:
         atomic_io.write_jsonl_atomic(path, items)
 
         assert atomic_io.read_jsonl(path) == items
-
-
-def run_all() -> None:
-    test_atomic_write_cleans_temp_file_on_replace_failure()
-    test_atomic_json_round_trip()
-    test_atomic_jsonl_round_trip()
-
-
-if __name__ == "__main__":
-    run_all()
-    print("ok")

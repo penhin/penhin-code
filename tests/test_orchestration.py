@@ -14,7 +14,7 @@ from orchestration.repositories.postgres_repository import PostgresOrchestration
 from orchestration.planning import DAG_PROTOCOL_VERSION, parse_dag_plan
 from orchestration.service import create_isolated_agent_job, materialize_dag_plan
 from orchestration.worktrees import AgentWorktree
-from orchestration.artifacts import HANDOFF_PROTOCOL_VERSION, build_handoff, normalize_subagent_result
+from orchestration.artifacts import build_handoff
 from result import Result
 
 
@@ -81,35 +81,6 @@ def test_isolated_agent_job_gets_own_worktree_and_branch(repository: PostgresOrc
     finally:
         subprocess.run(["git", "worktree", "remove", "--force", str(worktree)], check=True)
         subprocess.run(["git", "branch", "-D", job.worktree_branch], check=True)
-
-
-def test_handoff_protocol_accepts_complete_structured_payload() -> None:
-    text = json.dumps({
-        "protocol_version": HANDOFF_PROTOCOL_VERSION,
-        "summary": "Repository entrypoint identified.",
-        "findings": [{
-            "title": "CLI entrypoint", "detail": "main.py owns the interactive loop.", "severity": "info",
-            "evidence": [{"path": "main.py", "location": "main", "detail": "defines the CLI loop."}],
-        }],
-        "commands_run": [{"command": "pytest -q", "outcome": "passed", "detail": "197 tests passed."}],
-        "changed_files": [],
-        "risks": [],
-        "handoff": {"recommended_next_action": "Schedule implementation.", "suggested_roles": ["implement"], "blocking_questions": []},
-    })
-
-    content, valid = normalize_subagent_result(text, producer={"job_id": "job-1", "role": "explore"})
-
-    assert valid is True
-    assert content["protocol_valid"] is True
-    assert content["producer"]["job_id"] == "job-1"
-
-
-def test_handoff_protocol_rejects_incomplete_payload_without_losing_raw_text() -> None:
-    content, valid = normalize_subagent_result('{"summary": "not enough"}')
-
-    assert valid is False
-    assert content["protocol_valid"] is False
-    assert content["raw_text"] == '{"summary": "not enough"}'
 
 
 def test_runtime_builds_valid_handoff_from_plain_text_and_tool_results() -> None:

@@ -155,20 +155,3 @@ def test_exit_plan_requires_context() -> None:
 
 
 # ── Runner ──────────────────────────────────────────────────────────────
-
-
-def run_all() -> None:
-    test_enter_plan_requires_context()
-    test_enter_plan_switches_to_plan()
-    test_enter_plan_already_in_plan()
-    test_enter_plan_unknown_mode()
-    test_enter_plan_keeps_pre_plan_across_noop()
-    test_exit_plan_restores_mode_and_saves_plan()
-    test_exit_plan_not_in_plan_mode()
-    test_exit_plan_missing_plan_content()
-    test_exit_plan_requires_context()
-
-
-if __name__ == "__main__":
-    run_all()
-    print("ok")

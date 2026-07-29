@@ -15,12 +15,6 @@ from observability import cli_status_line
 
 console = Console()
 prompt_session = None
-prompt_completer = None
-
-
-def set_prompt_completer(completer) -> None:
-    global prompt_completer
-    prompt_completer = completer
 
 
 def get_prompt_session() -> PromptSession:
@@ -36,12 +30,8 @@ def get_prompt_session() -> PromptSession:
 def prompt_input(prompt: str = "❯ ", completer=None) -> str:
     return get_prompt_session().prompt(
         ANSI(f"\x1b[1;36m{prompt}\x1b[0m"),
-        completer=prompt_completer if completer is None else completer,
+        completer=completer,
     )
-
-
-def print_text(message: str) -> None:
-    console.print(message)
 
 
 def print_welcome(*, version: str, api: str, model: str, workspace: str) -> None:
@@ -101,11 +91,6 @@ def start_assistant_message() -> AssistantStream:
     return stream
 
 
-def print_stream_delta(text: str) -> None:
-    """Compatibility fallback for non-streaming callers."""
-    console.print(text, end="", highlight=False, markup=False)
-
-
 def finish_stream(stream: AssistantStream | None = None) -> None:
     if stream is not None:
         stream.finish()
@@ -120,10 +105,6 @@ def print_user_message(message: str) -> None:
 
 def print_info(message: str) -> None:
     console.print(message, style="cyan")
-
-
-def print_warning(message: str) -> None:
-    console.print(message, style="yellow")
 
 
 def print_error(message: str) -> None:

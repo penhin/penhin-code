@@ -120,7 +120,7 @@ glob / list / search / read / edit / write / bash
 workspace / compact / snip / load_skill
 ```
 
-本地状态位于 `.penhin/`、`.tasks/`、`.transcripts/` 与 `.penhin_todos.json`，均不会被文件工具扫描或写入版本控制。
+本地状态位于 `.penhin/`、`.tasks/` 与 `.transcripts/`，均不会被文件工具扫描或写入版本控制。任务待办保存在对应的 `.tasks/task_*.json` 中，不会跨任务残留。
 
 ## Agent 评测
 

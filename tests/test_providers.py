@@ -21,12 +21,3 @@ def test_anthropic_normalize_preserves_thinking_block_fields() -> None:
         "thinking": "reasoning summary",
         "signature": "sig",
     }
-
-
-def run_all() -> None:
-    test_anthropic_normalize_preserves_thinking_block_fields()
-
-
-if __name__ == "__main__":
-    run_all()
-    print("ok")

@@ -54,7 +54,7 @@ def test_workspace_summary_line() -> None:
         {
             "git_branch": "main",
             "dirty_files_count": 2,
-            "test_command_hint": ".venv/bin/python tests/test_smoke.py",
+            "test_command_hint": ".venv/bin/python -m pytest -q",
             "has_agents_md": True,
         }
     )
@@ -62,7 +62,7 @@ def test_workspace_summary_line() -> None:
     assert line == (
         "[workspace] branch=main "
         "dirty=2 "
-        "test=.venv/bin/python tests/test_smoke.py "
+        "test=.venv/bin/python -m pytest -q "
         "agents=true"
     )
 
@@ -208,22 +208,3 @@ def test_session_inspect_counts_tool_results() -> None:
             "user | now summarize",
             "assistant | done",
         ]
-
-
-def run_all() -> None:
-    test_parse_session_args()
-    test_parse_help_command()
-    test_workspace_summary_line()
-    test_load_initial_messages_new_session_flag()
-    test_load_initial_messages_without_history()
-    test_load_initial_messages_resumes_latest_transcript()
-    test_load_initial_messages_resumes_specific_session()
-    test_load_initial_session_returns_resumed_path()
-    test_save_session_messages_updates_existing_session()
-    test_print_session_list_marks_latest()
-    test_session_inspect_counts_tool_results()
-
-
-if __name__ == "__main__":
-    run_all()
-    print("ok")

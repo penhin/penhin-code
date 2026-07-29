@@ -118,18 +118,3 @@ def test_build_verification_system_defines_boundary() -> None:
     assert "Verdict: PASS | FAIL | BLOCKED" in system
     assert "Did I merely inspect code and call it verified?" in system
     assert "concise verdict" in system
-
-
-def run_all() -> None:
-    test_build_main_system_without_project_instructions()
-    test_main_system_sections_use_xml_tags()
-    test_build_main_system_does_not_include_project_instructions()
-    test_project_instructions_are_first_user_message()
-    test_build_subagent_system_does_not_include_project_instructions()
-    test_build_subagent_final_system_keeps_final_instruction()
-    test_build_verification_system_defines_boundary()
-
-
-if __name__ == "__main__":
-    run_all()
-    print("ok")

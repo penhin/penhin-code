@@ -80,10 +80,8 @@ def git_dirty_files_count() -> int | None:
 
 
 def test_command_hint() -> str:
-    if (WORKDIR / "tests" / "test_smoke.py").exists():
-        return ".venv/bin/python tests/test_smoke.py"
     if (WORKDIR / "pytest.ini").exists() or (WORKDIR / "pyproject.toml").exists():
-        return "pytest"
+        return ".venv/bin/python -m pytest -q"
     return "-"
 
 

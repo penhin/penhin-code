@@ -7,7 +7,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from result import Result
 from task import TaskStatusManager
-from todo import TODO_FILE
 from tools import PARENT_TOOLS, TOOL_SPECS
 from tools import tasks as task_tools
 from message_flow import block_get
@@ -159,7 +158,7 @@ def call_expected_tool(runtime, expected_tool: str):
     return tool_use, response, messages
 
 
-def prepare_handler_state() -> tuple[TaskStatusManager, str | None]:
+def prepare_handler_state() -> TaskStatusManager:
     manager = TaskStatusManager(Path(tempfile.mkdtemp(prefix="penhin-llm-tools-")))
     main_task = manager.start("existing main task")
     background = manager.start_background("existing background task")
@@ -167,19 +166,12 @@ def prepare_handler_state() -> tuple[TaskStatusManager, str | None]:
     assert main_task.id == 1
     assert background.id == 2
 
-    original_todo = TODO_FILE.read_text(encoding="utf-8") if TODO_FILE.exists() else None
-    return manager, original_todo
+    return manager
 
 
-def restore_handler_state(original_todo: str | None) -> None:
+def restore_handler_state() -> None:
     for path in (Path(".llm_tool_test.txt"), Path(".llm_tool_test_edit.txt")):
         path.unlink(missing_ok=True)
-
-    if original_todo is None:
-        TODO_FILE.unlink(missing_ok=True)
-    else:
-        TODO_FILE.write_text(original_todo, encoding="utf-8")
-
 
 def execute_handler(tool_use) -> Result:
     tool_name = block_get(tool_use, "name")
@@ -202,7 +194,7 @@ def test_llm_calls_requested_tool() -> None:
 
     init_runtime()
     runtime = get_runtime()
-    manager, original_todo = prepare_handler_state()
+    manager = prepare_handler_state()
     original_task_status = task_tools.task_status
 
     try:
@@ -217,7 +209,7 @@ def test_llm_calls_requested_tool() -> None:
                     raise AssertionError(f"{tool_name} handler failed: {handler_result.to_json()}")
     finally:
         task_tools.task_status = original_task_status
-        restore_handler_state(original_todo)
+        restore_handler_state()
 
 
 def test_llm_calls_requested_tool_and_finishes() -> None:

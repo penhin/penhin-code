@@ -58,16 +58,3 @@ def test_transition_rejects_missing_matrix_entry() -> None:
         raised = True
 
     assert raised is True
-
-
-def run_all() -> None:
-    test_permission_modes_are_runtime_parent_modes_only()
-    test_normalize_permission_mode_rejects_unknown_mode()
-    test_transition_between_parent_modes()
-    test_transition_same_mode_is_noop()
-    test_transition_rejects_missing_matrix_entry()
-
-
-if __name__ == "__main__":
-    run_all()
-    print("ok")

@@ -355,19 +355,8 @@ def handle_force_snip_command(args: list[str], context: RunContext | None = None
     ui.print_info(f"snip: marked {snipped} messages")
 
 
-def complete_local_command(text: str, state: int) -> str | None:
-    matches = [
-        name for name in LOCAL_COMMANDS
-        if name.startswith(text)
-    ]
-
-    if state < len(matches):
-        return matches[state]
-    return None
-
-
 class LocalCommandCompleter(Completer):
-    def get_completions(self, document, complete_event):
+    def get_completions(self, document, _complete_event):
         text = document.text_before_cursor
         if not text.startswith("/") or " " in text:
             return
@@ -378,9 +367,7 @@ class LocalCommandCompleter(Completer):
 
 
 def setup_command_completion() -> LocalCommandCompleter:
-    completer = LocalCommandCompleter()
-    ui.set_prompt_completer(completer)
-    return completer
+    return LocalCommandCompleter()
 
     
 LOCAL_COMMANDS = {

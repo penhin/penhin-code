@@ -216,21 +216,3 @@ def test_human_message_resets_delegation_guard() -> None:
 
     assert context.post_delegation_read_budget is None
     assert context.post_delegation_source == ""
-
-
-def run_all() -> None:
-    test_add_tool_result_cache_control_marks_last_large_result()
-    test_add_tool_result_cache_control_skips_small_results()
-    test_collect_tool_calls_preserves_original_indexes_and_inputs()
-    test_collect_tool_calls_skips_non_list_content()
-    test_build_tool_execution_context_groups_shared_execution_inputs()
-    test_delegation_guard_blocks_broad_tools_and_limits_reads()
-    test_parallel_safe_tool_calls_preserve_result_order()
-    test_tool_execution_context_limits_total_tool_calls()
-    test_non_parallel_tool_splits_parallel_batches()
-    test_human_message_resets_delegation_guard()
-
-
-if __name__ == "__main__":
-    run_all()
-    print("ok")

@@ -33,13 +33,3 @@ def test_result_summary_reports_sizes_without_content() -> None:
         "meta_keys": ["cached"],
     }
     assert "secret output" not in json.dumps(summary)
-
-
-def run_all() -> None:
-    test_result_json()
-    test_result_summary_reports_sizes_without_content()
-
-
-if __name__ == "__main__":
-    run_all()
-    print("ok")

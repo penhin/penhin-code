@@ -69,14 +69,3 @@ def test_post_delegation_guard_blocks_bypass_tools() -> None:
     assert task_start_block.meta["code"] == "post_delegation_broad_tool_blocked"
     assert todo_set_block is not None
     assert todo_set_block.meta["code"] == "post_delegation_broad_tool_blocked"
-
-
-def run_all() -> None:
-    test_run_context_adds_messages()
-    test_run_context_stores_session_path()
-    test_post_delegation_guard_blocks_bypass_tools()
-
-
-if __name__ == "__main__":
-    run_all()
-    print("ok")

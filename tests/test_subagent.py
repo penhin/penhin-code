@@ -445,30 +445,3 @@ def test_run_verify_explicit_plan_overrides_current_task_plan_slug() -> None:
         for path in test_tasks_dir.glob("*"):
             path.unlink()
         test_tasks_dir.rmdir()
-
-
-def run_all() -> None:
-    test_run_subagent_defaults_to_general_type()
-    test_run_subagent_uses_verification_type()
-    test_run_subagent_uses_exploration_type()
-    test_run_subagent_uses_plan_type()
-    test_subagent_initial_messages_are_isolated_to_task_and_project_instructions()
-    test_run_subagent_rejects_unknown_type()
-    test_run_subagent_returns_failure_when_circuit_is_open()
-    test_run_subagent_requests_final_summary_when_final_response_has_no_text()
-    test_run_subagent_requests_final_summary_when_final_response_hits_max_tokens()
-    test_task_tool_exposes_limited_agent_types()
-    test_run_task_uses_general_subagent()
-    test_run_task_uses_requested_subagent_type()
-    test_task_tool_handler_uses_general_subagent()
-    test_task_tool_handler_uses_requested_subagent_type()
-    test_run_verify_uses_verification_subagent()
-    test_verify_tool_handler_uses_verification_subagent()
-    test_run_verify_loads_current_task_plan_slug()
-    test_run_verify_loads_explicit_plan_slug()
-    test_run_verify_explicit_plan_overrides_current_task_plan_slug()
-
-
-if __name__ == "__main__":
-    run_all()
-    print("ok")

@@ -143,7 +143,7 @@ def test_workspace_tool() -> None:
     assert "git_branch" in data
     assert isinstance(data["dirty_files_count"], int) or data["dirty_files_count"] is None
     assert data["has_agents_md"] is (Path.cwd() / "AGENTS.md").exists()
-    assert data["test_command_hint"] == ".venv/bin/python tests/test_smoke.py"
+    assert data["test_command_hint"] == ".venv/bin/python -m pytest -q"
     assert ".venv" in data["ignored"]
     assert ".penhin_todos.json" in data["ignored"]
     assert "workspace" in data["tools"]
@@ -174,8 +174,6 @@ def test_verify_tool_registered() -> None:
 
 
 def test_task_start_with_plan_sets_todos() -> None:
-    run_spec_tool("todo_clear")
-
     result = run_spec_tool(
         "task_start",
         subject="Build workflow",
@@ -190,11 +188,9 @@ def test_task_start_with_plan_sets_todos() -> None:
     assert "3. [ ] run smoke" in todos.message
 
     run_spec_tool("task_complete")
-    run_spec_tool("todo_clear")
 
 
 def test_task_show_includes_current_todos() -> None:
-    run_spec_tool("todo_clear")
     run_spec_tool(
         "task_start",
         subject="Show planner state",
@@ -213,11 +209,9 @@ def test_task_show_includes_current_todos() -> None:
     assert "inspect code" in result.message
 
     run_spec_tool("task_complete")
-    run_spec_tool("todo_clear")
 
 
 def test_task_complete_includes_todo_summary() -> None:
-    run_spec_tool("todo_clear")
     run_spec_tool(
         "task_start",
         subject="Complete planner state",
@@ -239,9 +233,6 @@ def test_task_complete_includes_todo_summary() -> None:
         "done": 1,
         "remaining": 1,
     }
-
-    run_spec_tool("todo_clear")
-
 
 def test_task_start_rejects_when_current_task_is_running() -> None:
     first = run_spec_tool("task_start", subject="Current task")
@@ -351,33 +342,3 @@ def test_plan_mode_tools_are_parent_only() -> None:
     assert "exit_plan" in parent_tool_names
     assert "enter_plan" not in child_tool_names
     assert "exit_plan" not in child_tool_names
-
-
-def run_all() -> None:
-    test_list_ignores_internal_files()
-    test_list_ignored_path_returns_hint()
-    test_read_cache_returns_placeholder_for_large_hit()
-    test_write_invalidates_read_cache()
-    test_list_glob_search_cache_hits()
-    test_glob_cache_uses_directory_changes_not_file_content()
-    test_bash_blocks_dangerous_commands()
-    test_workspace_tool()
-    test_skill_loader()
-    test_task_tool_registered()
-    test_verify_tool_registered()
-    test_task_start_with_plan_sets_todos()
-    test_task_show_includes_current_todos()
-    test_task_complete_includes_todo_summary()
-    test_task_start_rejects_when_current_task_is_running()
-    test_tool_schemas_match_handlers()
-    test_tool_specs_have_one_category()
-    test_tool_specs_declare_parallel_safety()
-    test_compact_tool_is_parent_only()
-    test_snip_tool_is_parent_only()
-    test_plan_mode_tools_are_not_registered()
-    test_plan_mode_tools_are_not_available()
-
-
-if __name__ == "__main__":
-    run_all()
-    print("ok")

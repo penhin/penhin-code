@@ -29,6 +29,7 @@ class TaskStatus:
     note: str = ""
     error: str = ""
     result: str = ""
+    todos: list[dict[str, Any]] = field(default_factory=list)
     created_at: int = field(default_factory=time.time_ns)
     updated_at: int = field(default_factory=time.time_ns)
 
@@ -51,6 +52,11 @@ class TaskStatus:
             note=str(data.get("note", "")),
             error=str(data.get("error", "")),
             result=str(data.get("result", "")),
+            todos=[
+                {"text": str(todo["text"]), "done": bool(todo.get("done", False))}
+                for todo in data.get("todos", [])
+                if isinstance(todo, dict) and "text" in todo
+            ],
             created_at=int(data.get("created_at", time.time_ns())),
             updated_at=int(data.get("updated_at", time.time_ns())),
         )
@@ -107,6 +113,7 @@ class TaskStatusManager:
         note: str = "",
         plan_slug: str = "",
         orchestration_job_id: str = "",
+        todos: list[str] | None = None,
     ) -> TaskStatus:
         with self._lock:
             task = TaskStatus(
@@ -116,6 +123,7 @@ class TaskStatusManager:
                 note=note,
                 plan_slug=plan_slug,
                 orchestration_job_id=orchestration_job_id,
+                todos=[{"text": item, "done": False} for item in todos or []],
                 status="running",
             )
             self._save(task)
@@ -166,6 +174,55 @@ class TaskStatusManager:
             self._save(task)
             return task
 
+    @staticmethod
+    def _todo_data(task: TaskStatus) -> list[dict[str, Any]]:
+        return [
+            {"index": index, "text": todo["text"], "done": bool(todo["done"])}
+            for index, todo in enumerate(task.todos, start=1)
+        ]
+
+    @staticmethod
+    def _format_todos(task: TaskStatus) -> str:
+        if not task.todos:
+            return "(no todos)"
+        return "\n".join(
+            f"{index}. [{'x' if todo['done'] else ' '}] {todo['text']}"
+            for index, todo in enumerate(task.todos, start=1)
+        )
+
+    def update_todos(
+        self,
+        action: str,
+        items: list[str] | None = None,
+        index: int | None = None,
+    ) -> Result:
+        with self._lock:
+            try:
+                task = self._require_current()
+            except FileNotFoundError as error:
+                return Result.failure(f"Error: {error}", code="not_found")
+
+            if action == "set":
+                if not items:
+                    return Result.failure("Error: items are required for set", code="missing_items")
+                task.todos = [{"text": item, "done": False} for item in items]
+            elif action == "clear":
+                task.todos = []
+            elif action == "done":
+                if index is None:
+                    return Result.failure("Error: index is required for done", code="missing_index")
+                if index < 1 or index > len(task.todos):
+                    return Result.failure(f"Error: todo index out of range: {index}", code="index_out_of_range")
+                task.todos[index - 1]["done"] = True
+            elif action != "show":
+                return Result.failure(f"Error: unknown todo action: {action}", code="unknown_action")
+
+            if action != "show":
+                task.updated_at = time.time_ns()
+                self._save(task)
+            message = "Cleared todos" if action == "clear" else self._format_todos(task)
+            return Result.success(message, data=self._todo_data(task), action=action)
+
     def finish_background(self, id: int, status: str, result: str = "", error: str = "") -> TaskStatus:
         with self._lock:
             task = self._load(id)
@@ -207,12 +264,13 @@ class TaskStatusManager:
         note: str = None,
         plan_slug: str = "",
         orchestration_job_id: str = "",
+        todos: list[str] | None = None,
     ) -> Result:
         try:
             if action == "start":
                 if not subject:
                     return Result.failure("Error: subject is required for start", code="missing_subject")
-                task = self.start(subject, description, note or "", plan_slug, orchestration_job_id)
+                task = self.start(subject, description, note or "", plan_slug, orchestration_job_id, todos)
                 return Result.success(task.to_json(), data=task.to_dict(), action=action)
 
             if action == "show":

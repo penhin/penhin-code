@@ -3,8 +3,6 @@ import json
 from typing import Any
 
 from skills import load_skill
-from todo import run_todo
-
 from . import tasks as task_tools
 from .files import run_edit, run_list, run_read, run_search, run_write
 from .glob import run_glob
@@ -451,7 +449,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
             ["items"],
         ),
         category=ToolCategory.state,
-        handler=lambda **kwargs: run_todo("set", kwargs["items"]),
+        handler=lambda **kwargs: task_tools.run_todo("set", kwargs["items"]),
         parallel_safe=False,
         approval=ToolApproval(),
     ),
@@ -460,7 +458,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         description="Show the current todo list.",
         input_schema=object_schema(),
         category=ToolCategory.state,
-        handler=lambda **kwargs: run_todo("show"),
+        handler=lambda **kwargs: task_tools.run_todo("show"),
         parallel_safe=True,
         approval=ToolApproval(),
     ),
@@ -469,7 +467,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         description="Mark one todo item as done by 1-based index.",
         input_schema=object_schema({"index": {"type": "integer"}}, ["index"]),
         category=ToolCategory.state,
-        handler=lambda **kwargs: run_todo("done", index=kwargs["index"]),
+        handler=lambda **kwargs: task_tools.run_todo("done", index=kwargs["index"]),
         parallel_safe=False,
         approval=ToolApproval(),
     ),
@@ -478,7 +476,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         description="Clear the current todo list.",
         input_schema=object_schema(),
         category=ToolCategory.state,
-        handler=lambda **kwargs: run_todo("clear"),
+        handler=lambda **kwargs: task_tools.run_todo("clear"),
         parallel_safe=False,
         approval=ToolApproval(),
     ),

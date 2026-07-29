@@ -347,24 +347,3 @@ def test_tool_runtime_logs_unknown_input_fields_without_blocking() -> None:
     assert "status=ok" in output
     assert "extra=<hidden:str>" in output
     assert "value" not in output
-
-
-def run_all() -> None:
-    test_tool_runtime_policy_and_control_signals()
-    test_snip_tool_marks_selected_turns()
-    test_snip_tool_requires_context()
-    test_runtime_permission_setup_for_parent_modes()
-    test_tool_runtime_input_summary_hides_sensitive_values()
-    test_tool_runtime_logs_result_status()
-    test_tool_runtime_logs_input_summary()
-    test_tool_runtime_logs_blocked_access()
-    test_tool_runtime_logs_manual_compact_flag()
-    test_tool_runtime_reports_missing_required_input()
-    test_tool_runtime_reports_invalid_input_type()
-    test_tool_runtime_reports_invalid_enum_value()
-    test_tool_runtime_logs_unknown_input_fields_without_blocking()
-
-
-if __name__ == "__main__":
-    run_all()
-    print("ok")

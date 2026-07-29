@@ -174,27 +174,6 @@ class Runtime:
             stream_callback=stream_callback,
         )
 
-    def call_llm_once(
-        self,
-        system: str,
-        user_content: str,
-        max_tokens: int | None = None,
-        label: str = "llm",
-    ) -> str:
-        response = self.call_with_retry(
-            system=system,
-            messages=[{"role": "user", "content": user_content}],
-            max_tokens=max_tokens or self.max_tokens,
-        )
-
-        log_usage(label, response)
-
-        return "\n".join(
-            block.get("text", "")
-            for block in response.content
-            if block.get("type") == "text"
-        )
-
     def call_compact_once(
         self,
         system: str,

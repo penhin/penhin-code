@@ -116,9 +116,6 @@ TASK_WORKFLOW_SECTION = (
     "- Do not create tasks or todos for simple questions, tiny lookups, or one-step responses."
 )
 
-PLANNING_WORKFLOW_SECTION = ""
-
-
 VERIFICATION_AGENT_BOUNDARY_SECTION = (
     "Verification agent boundary:\n"
     "- Verify whether the completed work satisfies the user's request and the saved plan.\n"
@@ -249,7 +246,6 @@ def build_main_system_base() -> str:
     return "\n\n".join(section.strip() for section in build_main_system_sections() if section.strip())
 
 
-TASK_WORKFLOW = "\n\n" + TASK_WORKFLOW_SECTION
 MAIN_SYSTEM = build_main_system_base()
 
 

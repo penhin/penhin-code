@@ -3,7 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from message_projection import mark_block_collapsed, mark_message_snipped, messages_for_api
+from message_projection import mark_message_snipped, messages_for_api
 
 from tests.helpers import ToolUseBlock
 
@@ -20,13 +20,21 @@ def test_messages_for_api_filters_snipped_messages() -> None:
     assert snipped["content"] == "old"
 
 
-def test_messages_for_api_collapses_blocks_without_mutating_original() -> None:
+def test_messages_for_api_reads_legacy_collapsed_block_metadata() -> None:
     block = {
         "type": "tool_result",
         "tool_use_id": "tool-1",
         "content": "x" * 200,
+        "_meta": {
+            "id": "block-1",
+            "collapse": {
+                "id": "block-1",
+                "label": "tool_result read",
+                "reason": "micro_compact",
+                "original_chars": 200,
+            },
+        },
     }
-    mark_block_collapsed(block, label="tool_result read")
     messages = [{"role": "user", "content": [block]}]
 
     projected = messages_for_api(messages)
@@ -56,14 +64,3 @@ def test_messages_for_api_dynamic_collapse_is_read_only() -> None:
         "content": "x" * 200,
     }
     assert projected[1]["content"][0]["content"].startswith("[collapsed tool_result search;")
-
-
-def run_all() -> None:
-    test_messages_for_api_filters_snipped_messages()
-    test_messages_for_api_collapses_blocks_without_mutating_original()
-    test_messages_for_api_dynamic_collapse_is_read_only()
-
-
-if __name__ == "__main__":
-    run_all()
-    print("ok")

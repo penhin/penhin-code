@@ -343,22 +343,3 @@ def test_compact_context_for_llm_consumes_pending_force_compact() -> None:
     mocked_micro_compact.assert_not_called()
     mocked_auto_compact.assert_not_called()
     assert context.pending_force_compact_hint is None
-
-
-def run_all() -> None:
-    test_resolve_approval_approves_for_session()
-    test_agent_loop_updates_run_context_messages()
-    test_agent_loop_prepares_context_before_llm_call()
-    test_agent_loop_records_message_when_circuit_is_open()
-    test_call_llm_uses_run_context_messages()
-    test_record_llm_response_updates_context_and_logs_usage()
-    test_should_continue_with_tools()
-    test_execute_tool_uses_returns_tool_results()
-    test_execute_tool_uses_caches_large_tool_result()
-    test_record_tool_results_updates_context_and_compacts()
-    test_compact_context_for_llm_consumes_pending_force_compact()
-
-
-if __name__ == "__main__":
-    run_all()
-    print("ok")

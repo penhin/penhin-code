@@ -252,24 +252,3 @@ def test_build_compact_circuit_breaker_from_env_uses_config_values() -> None:
     assert breaker.failure_threshold == 4
     assert breaker.recovery_timeout == 90
     assert breaker.success_threshold == 2
-
-
-def run_all() -> None:
-    test_circuit_breaker_opens_after_threshold()
-    test_circuit_breaker_rejects_while_open()
-    test_circuit_breaker_half_open_success_closes()
-    test_circuit_breaker_half_open_failure_reopens()
-    test_circuit_breaker_success_resets_failure_count()
-    test_circuit_breaker_snapshot_includes_retry_after()
-    test_runtime_counts_only_final_retry_failure()
-    test_runtime_open_circuit_skips_client_call()
-    test_runtime_compact_breaker_is_independent_from_main_breaker()
-    test_runtime_streams_text_deltas_and_returns_final_message()
-    test_build_circuit_breaker_from_env_can_disable()
-    test_build_circuit_breaker_from_env_uses_config_values()
-    test_build_compact_circuit_breaker_from_env_uses_config_values()
-
-
-if __name__ == "__main__":
-    run_all()
-    print("ok")

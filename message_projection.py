@@ -26,28 +26,11 @@ def ensure_message_id(message: dict[str, Any]) -> str:
     return message_id
 
 
-def ensure_block_id(block: dict[str, Any]) -> str:
-    meta = block.setdefault(INTERNAL_META, {})
-    block_id = meta.get("id")
-    if not isinstance(block_id, str) or not block_id:
-        block_id = f"block_{uuid.uuid4().hex}"
-        meta["id"] = block_id
-    return block_id
-
-
 def message_meta(message: dict[str, Any]) -> dict[str, Any]:
     meta = message.get(INTERNAL_META)
     if not isinstance(meta, dict):
         meta = {}
         message[INTERNAL_META] = meta
-    return meta
-
-
-def block_meta(block: dict[str, Any]) -> dict[str, Any]:
-    meta = block.get(INTERNAL_META)
-    if not isinstance(meta, dict):
-        meta = {}
-        block[INTERNAL_META] = meta
     return meta
 
 
@@ -62,19 +45,6 @@ def mark_message_snipped(message: dict[str, Any], reason: str = "compact") -> No
 def is_snipped(message: dict[str, Any]) -> bool:
     meta = message.get(INTERNAL_META)
     return isinstance(meta, dict) and meta.get("snipped") is True
-
-
-def mark_block_collapsed(block: dict[str, Any], label: str, reason: str = "micro_compact") -> None:
-    block_id = ensure_block_id(block)
-    content = block.get("content")
-    original_chars = len(content) if isinstance(content, str) else 0
-    meta = block_meta(block)
-    meta["collapse"] = {
-        "id": block_id,
-        "label": label,
-        "reason": reason,
-        "original_chars": original_chars,
-    }
 
 
 def collapsed_content(block: dict[str, Any]) -> str | None:

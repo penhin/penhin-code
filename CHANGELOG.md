@@ -18,5 +18,11 @@ All notable changes to this project will be documented in this file. The format 
 - Deterministic and judge-based evaluation framework with the `penhin-eval` CLI.
 - Python package metadata, console entry points, and trusted PyPI publishing workflow.
 
+### Changed
+
+- Unified task and todo persistence so each task owns its checklist.
+- Standardized project verification on pytest and removed the obsolete smoke-test runner.
+- Removed superseded compatibility helpers and unused runtime APIs.
+
 [Unreleased]: https://github.com/penhin/penhin-code/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/penhin/penhin-code/releases/tag/v0.1.0

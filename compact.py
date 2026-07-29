@@ -11,11 +11,8 @@ from transcript import serialize_for_json, transcripts
 WARNING_THRESHOLD = 80000
 COMPACT_THRESHOLD = 120000
 BLOCKING_THRESHOLD = 160000
-THRESHOLD = COMPACT_THRESHOLD
 SUMMARY_HEAD_CHARS = 40000
 SUMMARY_TAIL_CHARS = 40000
-KEEP_RECENT = 3
-KEEP_HEAD_MESSAGES = 2
 KEEP_LAST_MESSAGES = 8
 
 logger = logging.getLogger("penhin.compact")
@@ -64,13 +61,6 @@ def micro_compact_if_needed(messages: list[dict[str, Any]], limit: int = COMPACT
     return micro_compact_keep_recent(messages, limit)
 
 
-def micro_compact_text(
-    messages: list[dict[str, Any]],
-    keep_recent: int = KEEP_RECENT,
-) -> list[dict[str, Any]]:
-    return messages_for_api(messages, collapse_keep_recent=keep_recent)
-
-
 def compact_watermark(
     messages: list[dict[str, Any]],
     collapse_keep_recent: int | None = None,
@@ -108,14 +98,6 @@ def log_compact_watermark(
     return watermark
 
 
-def should_auto_compact(
-    messages: list[dict[str, Any]],
-    threshold: int = COMPACT_THRESHOLD,
-    collapse_keep_recent: int | None = None,
-) -> bool:
-    return estimate_api_tokens(messages, collapse_keep_recent=collapse_keep_recent) >= threshold
-
-
 def is_tool_result_message(message: dict[str, Any]) -> bool:
     content = message.get("content")
     if not isinstance(content, list):
@@ -138,7 +120,6 @@ def safe_recent_messages(messages: list[dict[str, Any]], keep_last: int) -> list
 
 def auto_compact_messages(
     messages: list[dict[str, Any]],
-    keep_head: int = KEEP_HEAD_MESSAGES,
     keep_last: int = KEEP_LAST_MESSAGES,
     hint: str | None = None,
     collapse_keep_recent: int | None = None,

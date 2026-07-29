@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 
@@ -18,30 +17,6 @@ HANDOFF_REQUIRED_FIELDS = {
 SEVERITIES = {"info", "warning", "critical"}
 COMMAND_OUTCOMES = {"passed", "failed", "blocked", "not_run"}
 CHANGE_KINDS = {"created", "modified", "deleted", "none"}
-
-
-def collaboration_protocol_instructions() -> str:
-    return """
-Every terminal response, including a normal end_turn response, must be the final handoff below. Return one JSON object only, without Markdown fences or surrounding prose. Markdown headings, bullet lists, and an answer that begins with any text other than `{` are invalid.
-It must conform to penhin.handoff/v1:
-{
-  "protocol_version": "penhin.handoff/v1",
-  "summary": "non-empty concise conclusion",
-  "findings": [{"title": "finding", "detail": "evidence-backed detail", "severity": "info|warning|critical", "evidence": [{"path": "relative/path", "location": "line or symbol", "detail": "what proves it"}]}],
-  "commands_run": [{"command": "exact command", "outcome": "passed|failed|blocked|not_run", "detail": "observed result"}],
-  "changed_files": [{"path": "relative/path", "change": "created|modified|deleted|none", "detail": "what changed"}],
-  "risks": [{"title": "risk", "detail": "why it matters", "severity": "info|warning|critical"}],
-  "handoff": {"recommended_next_action": "specific next action", "suggested_roles": ["explore|planner|implement|verify|review"], "blocking_questions": []}
-}
-Use empty arrays when a section has no items. Never invent command output, file changes, or evidence.
-Keep every string value short plain text. Do not embed code blocks, JSON examples, command output, or literal double quotes inside string values; paraphrase them instead. Before sending the response, verify that every required top-level field is present and that the entire response is valid JSON. This protocol requirement overrides any request to provide a prose summary.
-""".strip()
-
-
-def _json_candidate(text: str) -> str:
-    stripped = text.strip()
-    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", stripped, flags=re.DOTALL | re.IGNORECASE)
-    return fenced.group(1) if fenced else stripped
 
 
 def _string(value: Any, path: str, errors: list[str], required: bool = True) -> None:
@@ -115,34 +90,6 @@ def validate_handoff(payload: Any) -> list[str]:
         _list(handoff.get("suggested_roles"), "handoff.suggested_roles", errors)
         _list(handoff.get("blocking_questions"), "handoff.blocking_questions", errors)
     return errors
-
-
-def normalize_subagent_result(text: str, *, producer: dict[str, str] | None = None) -> tuple[dict[str, Any], bool]:
-    """Parse a versioned handoff and retain raw text plus diagnostics on failure."""
-    raw_text = text.strip()
-    try:
-        payload = json.loads(_json_candidate(raw_text))
-    except json.JSONDecodeError as error:
-        payload = None
-        errors = [f"invalid JSON: {error.msg}"]
-    else:
-        errors = validate_handoff(payload)
-    if errors:
-        return {
-            "protocol_version": HANDOFF_PROTOCOL_VERSION,
-            "protocol_valid": False,
-            "protocol_errors": errors,
-            "producer": producer or {},
-            "summary": raw_text or "Worker returned no final handoff.",
-            "raw_text": text,
-        }, False
-    assert isinstance(payload, dict)
-    payload = dict(payload)
-    payload["protocol_valid"] = True
-    payload["protocol_errors"] = []
-    payload["producer"] = producer or {}
-    payload["raw_text"] = text
-    return payload, True
 
 
 def build_handoff(

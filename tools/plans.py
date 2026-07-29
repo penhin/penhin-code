@@ -30,10 +30,6 @@ def read_plan(slug: str) -> str | None:
     return path.read_text(encoding="utf-8") if path.exists() else None
 
 
-def list_plans() -> list[Path]:
-    return sorted(PLANS_DIR.glob("*.md"))
-
-
 _WORDS = [
     "gentle", "swift", "quiet", "bold", "calm",
     "bright", "dark", "deep", "dry", "damp",

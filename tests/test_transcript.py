@@ -53,13 +53,3 @@ def test_transcript_read_rejects_unsafe_paths() -> None:
             raise AssertionError("Expected outside path to be rejected")
         except ValueError as error:
             assert "escapes transcript directory" in str(error)
-
-
-def run_all() -> None:
-    test_save_transcript_writes_jsonl()
-    test_transcript_read_rejects_unsafe_paths()
-
-
-if __name__ == "__main__":
-    run_all()
-    print("ok")

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import atexit
 import json
-import os
 import time
 from uuid import uuid4
 

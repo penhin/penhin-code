@@ -307,55 +307,7 @@ def test_handle_force_snip_marks_selected_turns() -> None:
     mocked_print_info.assert_called_once_with("snip: marked 2 messages")
 
 
-def test_complete_local_command_matches_prefix() -> None:
-    assert commands.complete_local_command("/w", 0) == "/workspace"
-    assert commands.complete_local_command("/wo", 0) == "/workspace"
-    assert commands.complete_local_command("/h", 0) == "/help"
-    assert commands.complete_local_command("/st", 0) == "/status"
-    assert commands.complete_local_command("/mo", 0) == "/model"
-    assert commands.complete_local_command("/pr", 0) == "/provider"
-    assert commands.complete_local_command("/api", 0) == "/api-key"
-    assert commands.complete_local_command("/co", 0) == "/compact"
-    assert commands.complete_local_command("/force", 0) == "/force-snip"
-    assert commands.complete_local_command("/x", 0) is None
-    assert commands.complete_local_command("/workspace", 1) is None
-
-
-def test_setup_command_completion_registers_completer() -> None:
-    with patch("commands.ui.set_prompt_completer") as mocked_set_prompt_completer:
-        completer = commands.setup_command_completion()
-
-    mocked_set_prompt_completer.assert_called_once_with(completer)
-
+def test_setup_command_completion_returns_completer() -> None:
+    completer = commands.setup_command_completion()
     completions = list(completer.get_completions(Document("/wo"), None))
     assert [completion.text for completion in completions] == ["/workspace"]
-
-
-def run_all() -> None:
-    test_handle_local_command_ignores_normal_input()
-    test_handle_local_command_shows_help()
-    test_handle_local_command_shows_workspace()
-    test_handle_local_command_shows_status()
-    test_status_uses_openai_compatible_base_url()
-    test_handle_local_command_reports_unknown_command()
-    test_handle_permission_command_shows_current_mode()
-    test_handle_permission_command_updates_config_and_context()
-    test_handle_permission_command_rejects_unknown_mode()
-    test_handle_circuit_command_shows_disabled_state()
-    test_handle_circuit_command_shows_breaker_snapshot()
-    test_handle_compact_command_requires_context()
-    test_handle_compact_command_uses_hint()
-    test_handle_model_command_updates_config_and_runtime()
-    test_handle_api_key_command_saves_without_echoing_secret()
-    test_handle_api_key_command_saves_a_non_active_provider_key()
-    test_handle_provider_command_switches_provider_and_model()
-    test_handle_provider_command_requires_a_matching_model_and_key()
-    test_handle_force_snip_lists_turns()
-    test_handle_force_snip_marks_selected_turns()
-    test_complete_local_command_matches_prefix()
-    test_setup_command_completion_registers_completer()
-
-
-if __name__ == "__main__":
-    run_all()
-    print("ok")

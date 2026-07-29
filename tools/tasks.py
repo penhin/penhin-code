@@ -4,7 +4,6 @@ from typing import Any
 
 from result import Result
 from task import task_status
-from todo import run_todo
 from tools.plans import read_plan
 
 
@@ -111,19 +110,11 @@ def run_task_start(
         note=note,
         plan_slug=plan_slug,
         orchestration_job_id=orchestration_job_id,
+        todos=plan,
     )
 
     if not result.ok:
         return result
-
-    if plan:
-        todo_result = run_todo("set", plan)
-        if not todo_result.ok:
-            return Result.failure(
-                f"Task started, but plan setup failed: {todo_result.error}",
-                code="task_plan_failed",
-                data=result.data,
-            )
 
     return result
 
@@ -134,7 +125,10 @@ def run_task_show(id: int = None) -> Result:
         return result
 
     data = dict(result.data)
-    data["todos"] = current_todos()
+    data["todos"] = [
+        {"index": index, "text": todo["text"], "done": bool(todo["done"])}
+        for index, todo in enumerate(data.get("todos", []), start=1)
+    ]
     return Result.success(
         json.dumps(data, ensure_ascii=False, indent=2),
         data=data,
@@ -189,6 +183,10 @@ def current_todos() -> list[dict[str, Any]]:
     if not todos.ok:
         return []
     return todos.data
+
+
+def run_todo(action: str, items: list[str] | None = None, index: int | None = None) -> Result:
+    return task_status.update_todos(action, items=items, index=index)
 
 
 def todo_summary(todos: list[dict[str, Any]]) -> dict[str, int]:

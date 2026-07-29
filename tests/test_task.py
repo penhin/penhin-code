@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from task import TaskStatusManager
+from task import TaskStatus, TaskStatusManager
 from orchestration.models import AgentJob, AgentRole
 from tools import CHILD_TOOLS, PARENT_TOOLS, TOOL_SPECS
 from tools import tasks as task_tools
@@ -40,7 +40,9 @@ def test_task_status_manager_flow() -> None:
             description="track task state",
             note="initial",
             plan_slug="calm-bright-plan",
+            todos=["inspect", "verify"],
         )
+        manager.update_todos("done", index=1)
         manager.mark_plan_verified(started.id, "calm-bright-plan")
         shown = manager.show()
         completed = manager.complete(note="done")
@@ -54,7 +56,17 @@ def test_task_status_manager_flow() -> None:
     assert shown.verified_plan_slug == "calm-bright-plan"
     assert completed.status == "completed"
     assert completed.note == "done"
+    assert completed.todos == [
+        {"text": "inspect", "done": True},
+        {"text": "verify", "done": False},
+    ]
     assert no_current is None
+
+
+def test_old_task_without_todos_loads_with_empty_list() -> None:
+    restored = TaskStatus.from_dict({"id": 1, "subject": "legacy task"})
+
+    assert restored.todos == []
 
 
 def test_task_status_write_cleans_temp_file_on_failure() -> None:
@@ -241,19 +253,20 @@ def test_task_complete_reports_verified_plan() -> None:
     assert result.data["unverified_plan"] is False
 
 
-def run_all() -> None:
-    test_task_status_tool_registered()
-    test_task_status_manager_flow()
-    test_task_status_write_cleans_temp_file_on_failure()
-    test_task_status_current_write_cleans_temp_file_on_failure()
-    test_background_task_manager_flow()
-    test_background_start_rejects_nested_background_tasks()
-    test_background_start_uses_daemon_thread()
-    test_task_status_tool_handler()
-    test_task_complete_reports_unverified_plan()
-    test_task_complete_reports_verified_plan()
+def test_task_show_uses_requested_tasks_todos() -> None:
+    original_task_status = task_tools.task_status
 
+    with tempfile.TemporaryDirectory() as tmpdir:
+        try:
+            task_tools.task_status = TaskStatusManager(Path(tmpdir))
+            first = task_tools.task_status.start("first", todos=["first todo"])
+            task_tools.task_status.complete()
+            task_tools.task_status.start("second", todos=["second todo"])
 
-if __name__ == "__main__":
-    run_all()
-    print("ok")
+            result = task_tools.run_task_show(first.id)
+        finally:
+            task_tools.task_status = original_task_status
+
+    assert result.data["todos"] == [
+        {"index": 1, "text": "first todo", "done": False},
+    ]
