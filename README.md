@@ -4,6 +4,8 @@
 
 版本变更见 [CHANGELOG.md](CHANGELOG.md)。
 
+本项目采用 [MIT License](LICENSE)。
+
 ## 快速开始
 
 作为命令行工具安装（发布到 PyPI 后）：

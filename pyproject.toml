@@ -8,6 +8,8 @@ version = "0.1.0"
 description = "面向本地开发的轻量 coding agent"
 readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
 keywords = ["ai", "coding-agent", "cli", "developer-tools"]
 classifiers = [
   "Development Status :: 3 - Alpha",
