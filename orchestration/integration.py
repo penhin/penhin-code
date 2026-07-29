@@ -4,7 +4,7 @@ import subprocess
 from uuid import uuid4
 
 from .models import IntegrationItem, IntegrationItemStatus, IntegrationRun, IntegrationRunStatus, JobStatus
-from .repository import PostgresOrchestrationRepository
+from .repositories import OrchestrationRepository
 from .worktrees import provision_integration_worktree
 
 
@@ -15,7 +15,7 @@ def _git(worktree: str, *args: str) -> str:
     return result.stdout.strip()
 
 
-def _change_set_for_job(repository: PostgresOrchestrationRepository, job_id: str) -> tuple[object, dict]:
+def _change_set_for_job(repository: OrchestrationRepository, job_id: str) -> tuple[object, dict]:
     job = repository.get_job(job_id)
     if job is None:
         raise ValueError(f"Job {job_id} does not exist")
@@ -30,7 +30,7 @@ def _change_set_for_job(repository: PostgresOrchestrationRepository, job_id: str
     return job, change_set
 
 
-def start_integration(repository: PostgresOrchestrationRepository, root_task_id: str, job_ids: list[str]) -> IntegrationRun:
+def start_integration(repository: OrchestrationRepository, root_task_id: str, job_ids: list[str]) -> IntegrationRun:
     if not job_ids:
         raise ValueError("job_ids must not be empty")
     selected = [_change_set_for_job(repository, job_id) for job_id in job_ids]
@@ -53,7 +53,7 @@ def start_integration(repository: PostgresOrchestrationRepository, root_task_id:
     ), items)
 
 
-def apply_integration(repository: PostgresOrchestrationRepository, run_id: str) -> IntegrationRun:
+def apply_integration(repository: OrchestrationRepository, run_id: str) -> IntegrationRun:
     run = repository.get_integration_run(run_id)
     if run is None:
         raise KeyError(run_id)
@@ -77,7 +77,7 @@ def apply_integration(repository: PostgresOrchestrationRepository, run_id: str) 
     return repository.get_integration_run(run.id)
 
 
-def verify_integration(repository: PostgresOrchestrationRepository, run_id: str, command: list[str]) -> IntegrationRun:
+def verify_integration(repository: OrchestrationRepository, run_id: str, command: list[str]) -> IntegrationRun:
     run = repository.get_integration_run(run_id)
     if run is None:
         raise KeyError(run_id)

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import json
 from contextlib import contextmanager
 from datetime import datetime
@@ -10,8 +9,8 @@ from uuid import uuid4
 import psycopg
 from psycopg.rows import dict_row
 
-from .models import AgentJob, AgentRole, Artifact, IntegrationItem, IntegrationItemStatus, IntegrationRun, IntegrationRunStatus, JobAttempt, JobEvent, JobStatus
-from .state_machine import integration_item_transition_is_allowed, integration_run_transition_is_allowed, transition_is_allowed
+from ..models import AgentJob, AgentRole, Artifact, IntegrationItem, IntegrationItemStatus, IntegrationRun, IntegrationRunStatus, JobAttempt, JobEvent, JobStatus
+from ..state_machine import integration_item_transition_is_allowed, integration_run_transition_is_allowed, transition_is_allowed
 
 
 SCHEMA_SQL = """
@@ -118,15 +117,13 @@ ALTER TABLE agent_jobs ADD CONSTRAINT agent_jobs_workspace_mode_check CHECK (wor
 """
 
 
-def database_url_from_env() -> str | None:
-    return os.getenv("PENHIN_DATABASE_URL") or None
-
-
 def _time(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
 
 class PostgresOrchestrationRepository:
+    backend_name = "postgresql"
+
     def __init__(self, database_url: str):
         self.database_url = database_url
 

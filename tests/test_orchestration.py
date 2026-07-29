@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 
 from orchestration.models import AgentJob, AgentRole, Artifact, IntegrationItem, IntegrationItemStatus, IntegrationRun, IntegrationRunStatus, JobStatus
-from orchestration.repository import PostgresOrchestrationRepository
+from orchestration.repositories.postgres_repository import PostgresOrchestrationRepository
 from orchestration.planning import DAG_PROTOCOL_VERSION, parse_dag_plan
 from orchestration.service import create_isolated_agent_job, materialize_dag_plan
 from orchestration.worktrees import AgentWorktree
@@ -252,7 +252,7 @@ def test_worker_marks_invalid_handoff_as_failed(monkeypatch: pytest.MonkeyPatch)
             self.finished = (args, kwargs)
 
     repository = Repository()
-    monkeypatch.setattr(worker, "PostgresOrchestrationRepository", lambda _url: repository)
+    monkeypatch.setattr(worker, "repository_from_database_url", lambda _url: repository)
     monkeypatch.setattr(worker, "parse_args", lambda: Namespace(database_url="postgresql://test", job_id=job.id, attempt_id="attempt", worker_token="token"))
     monkeypatch.setattr(worker, "init_runtime", lambda: None)
     monkeypatch.setitem(sys.modules, "subagent", types.SimpleNamespace(run_subagent=lambda *_args, **_kwargs: Result.success('{"summary":"invalid"}')))

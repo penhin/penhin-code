@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 
 from orchestration.models import AgentJob, AgentRole, JobStatus
-from orchestration.repository import PostgresOrchestrationRepository
+from orchestration.repositories.postgres_repository import PostgresOrchestrationRepository
 from orchestration.scheduler import PersistentScheduler
 
 

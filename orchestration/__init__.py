@@ -1,7 +1,7 @@
 """Persistent coordination primitives for multi-agent work."""
 
 from .models import AgentJob, AgentRole, Artifact, IntegrationItem, IntegrationItemStatus, IntegrationRun, IntegrationRunStatus, JobAttempt, JobEvent, JobStatus
-from .repository import PostgresOrchestrationRepository
+from .repositories import OrchestrationRepository, PostgresOrchestrationRepository, SqliteOrchestrationRepository
 
 __all__ = [
     "AgentJob",
@@ -15,4 +15,6 @@ __all__ = [
     "JobEvent",
     "JobStatus",
     "PostgresOrchestrationRepository",
+    "OrchestrationRepository",
+    "SqliteOrchestrationRepository",
 ]

@@ -10,16 +10,14 @@ from result import Result
 
 from .models import AgentJob, AgentRole, JobStatus, TERMINAL_JOB_STATUSES
 from .planning import DAG_PROTOCOL_VERSION
-from .repository import PostgresOrchestrationRepository, database_url_from_env
+from .repositories import OrchestrationRepository, database_url_from_env, repository_from_database_url
 from .scheduler import PersistentScheduler
 from .worktrees import provision_worktree
 
 
-def repository_from_env() -> PostgresOrchestrationRepository | None:
+def repository_from_env() -> OrchestrationRepository:
     database_url = database_url_from_env()
-    if not database_url:
-        return None
-    repository = PostgresOrchestrationRepository(database_url)
+    repository = repository_from_database_url(database_url)
     repository.initialize()
     return repository
 
@@ -40,13 +38,11 @@ def _shutdown_scheduler_at_exit() -> None:
         _scheduler.shutdown(wait=False)
 
 
-def scheduler_from_env() -> PersistentScheduler | None:
+def scheduler_from_env() -> PersistentScheduler:
     global _scheduler
     if _scheduler is not None:
         return _scheduler
     repository = repository_from_env()
-    if repository is None:
-        return None
     _scheduler = PersistentScheduler(repository)
     _scheduler.start()
     atexit.register(_shutdown_scheduler_at_exit)
@@ -60,8 +56,6 @@ def enqueue_subagent_job(
     dispatch: bool = True,
 ) -> AgentJob:
     scheduler = scheduler_from_env()
-    if scheduler is None:
-        raise RuntimeError("PENHIN_DATABASE_URL is not configured")
     job = create_isolated_agent_job(scheduler.repository, task, agent_type, root_task_id)
     if dispatch:
         scheduler.dispatch()
@@ -73,7 +67,7 @@ def workspace_mode_for_agent(agent_type: str) -> str:
 
 
 def create_isolated_agent_job(
-    repository: PostgresOrchestrationRepository,
+    repository: OrchestrationRepository,
     task: str,
     agent_type: str,
     root_task_id: str | None = None,
@@ -98,7 +92,7 @@ def create_isolated_agent_job(
     ))
 
 
-def wait_for_job(repository: PostgresOrchestrationRepository, job_id: str, timeout_seconds: int) -> Result:
+def wait_for_job(repository: OrchestrationRepository, job_id: str, timeout_seconds: int) -> Result:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         job = repository.get_job(job_id)
@@ -118,7 +112,7 @@ def wait_for_job(repository: PostgresOrchestrationRepository, job_id: str, timeo
     return Result.failure("Timed out waiting for agent job", code="agent_wait_timeout", agent_job_id=job_id)
 
 
-def materialize_dag_plan(repository: PostgresOrchestrationRepository, planner_job_id: str, plan: dict) -> dict:
+def materialize_dag_plan(repository: OrchestrationRepository, planner_job_id: str, plan: dict) -> dict:
     """Create isolated persistent jobs for a validated penhin.dag/v1 plan."""
     if plan.get("protocol_version") != DAG_PROTOCOL_VERSION:
         raise ValueError("DAG protocol version is not supported")
@@ -155,7 +149,6 @@ def create_dag_plan(goal: str) -> Result:
     except Exception as error:
         return Result.failure(f"Unable to start Planner: {error}", code="planner_start_failed")
     repository = repository_from_env()
-    assert repository is not None
     timeout_seconds = int(os.getenv("PENHIN_SYNC_AGENT_TIMEOUT_SECONDS", "900"))
     outcome = wait_for_job(repository, planner.id, timeout_seconds)
     if not outcome.ok:
@@ -189,7 +182,6 @@ def run_recorded_subagent(task: str, agent_type: str = "general", root_task_id: 
         return Result.failure(f"Unable to start isolated agent: {error}", code="agent_start_failed")
     timeout_seconds = int(os.getenv("PENHIN_SYNC_AGENT_TIMEOUT_SECONDS", "900"))
     repository = repository_from_env()
-    assert repository is not None
     outcome = wait_for_job(repository, job.id, timeout_seconds)
     if not outcome.ok:
         if outcome.meta.get("code") == "agent_wait_timeout":

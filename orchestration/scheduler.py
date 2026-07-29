@@ -10,7 +10,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 
 from .models import AgentJob, JobAttempt, JobStatus
-from .repository import PostgresOrchestrationRepository
+from .repositories import OrchestrationRepository
 
 
 logger = logging.getLogger("penhin.scheduler")
@@ -40,9 +40,9 @@ class ActiveJob:
 
 
 class PersistentScheduler:
-    """PostgreSQL-backed scheduler that executes every agent in a child process."""
+    """Persistent scheduler that executes every agent in a child process."""
 
-    def __init__(self, repository: PostgresOrchestrationRepository, max_workers: int | None = None):
+    def __init__(self, repository: OrchestrationRepository, max_workers: int | None = None):
         self.repository = repository
         self.max_workers = max_workers or scheduler_worker_count()
         self._monitor_pool = ThreadPoolExecutor(max_workers=self.max_workers, thread_name_prefix="penhin-monitor")

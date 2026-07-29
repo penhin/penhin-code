@@ -16,7 +16,7 @@ from runtime import init_runtime
 from .artifacts import normalize_subagent_result
 from .models import AgentRole, Artifact, JobStatus
 from .planning import DAG_PROTOCOL_VERSION, parse_dag_plan
-from .repository import PostgresOrchestrationRepository
+from .repositories import OrchestrationRepository, database_url_from_env, repository_from_database_url
 
 
 logger = logging.getLogger("penhin.worker")
@@ -35,7 +35,7 @@ def agent_type_for_role(role: str) -> str:
     return {"planner": "plan", "explore": "explore", "verify": "verification"}.get(role, "general")
 
 
-def finish_failure(repository: PostgresOrchestrationRepository, attempt_id: str, error: str, reason: str) -> None:
+def finish_failure(repository: OrchestrationRepository, attempt_id: str, error: str, reason: str) -> None:
     try:
         repository.finish_attempt(attempt_id, JobStatus.FAILED, error=error, terminal_reason=reason)
     except ValueError:
@@ -66,11 +66,9 @@ def checkpoint_change_set(job, base_commit: str | None = None) -> dict:
 
 def main() -> int:
     args = parse_args()
-    if not args.database_url:
-        raise RuntimeError("PENHIN_DATABASE_URL is required")
     load_dotenv(ENV_FILE, override=False)
     load_dotenv(".env", override=False)
-    repository = PostgresOrchestrationRepository(args.database_url)
+    repository = repository_from_database_url(args.database_url or database_url_from_env())
     repository.initialize()
     try:
         repository.register_worker_pid(args.job_id, args.attempt_id, args.worker_token, os.getpid())

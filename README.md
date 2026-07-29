@@ -35,16 +35,11 @@ requirements.txt     Python 依赖
 `~/.penhin/config.json` 和 `~/.penhin/.env` 是用户级配置，不随工作区移动。`~/.penhin/.env` 用于 `ANTHROPIC_API_KEY`、`MODEL_ID` 等环境变量。
 `.penhin_todos.json`、`.tasks/` 和 `.transcripts/` 是本地运行状态，会被文件工具和 git 忽略。
 
-### PostgreSQL orchestration store
+### SQLite orchestration store
 
-The first multi-agent foundation persists agent jobs, attempts, structured artifacts, and immutable events in PostgreSQL. Start the local database with Docker Compose:
+The multi-agent foundation persists agent jobs, attempts, structured artifacts, immutable events, and integration runs. It uses SQLite by default, creating `<project>/.penhin/orchestration.sqlite3` on the first orchestration operation; no database service or `PENHIN_DATABASE_URL` configuration is required. The local SQLite store is intended for one machine and uses WAL-backed transactional claims for scheduler and Worker processes.
 
-```bash
-cp .env.example .env  # only when .env does not exist
-docker compose up -d postgres
-```
-
-Set `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_PORT`, and `PENHIN_DATABASE_URL` in `.env`. The supplied development defaults expose PostgreSQL on `localhost:55432` and retain data in the `penhin-postgres` Docker volume. The runtime creates the schema on first orchestration operation.
+PostgreSQL remains available for shared or higher-concurrency deployments. Set `PENHIN_DATABASE_URL` to a `postgresql://` (or `postgres://`) URL, start the supplied Docker Compose service if desired, and configure `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_PORT`. An explicit SQLite file can be selected with `PENHIN_DATABASE_URL=sqlite:////absolute/path/to/orchestration.sqlite3`. Explicitly configured backends do not fall back to SQLite when unavailable.
 
 The first stage records only read-only agent jobs. `task` and `verify` preserve their existing behavior while recording attempts and artifacts. `background_start` now enqueues durable work through a bounded scheduler. `agent_job_show`, `agent_job_list`, `agent_artifact_show`, and `agent_job_cancel` provide inspection and cancellation.
 
@@ -178,16 +173,11 @@ requirements.txt     Python dependencies
 `~/.penhin/config.json` and `~/.penhin/.env` are user-level config and do not move with the workspace. Use `~/.penhin/.env` for `ANTHROPIC_API_KEY`, `MODEL_ID`, and similar environment variables.
 `.penhin_todos.json`, `.tasks/`, and `.transcripts/` are local runtime state. They are ignored by file tools and git.
 
-### PostgreSQL orchestration store
+### SQLite orchestration store
 
-The first multi-agent foundation persists agent jobs, attempts, structured artifacts, and immutable events in PostgreSQL. Start the local database with Docker Compose:
+The multi-agent foundation persists agent jobs, attempts, structured artifacts, immutable events, and integration runs. It uses SQLite by default, creating `<project>/.penhin/orchestration.sqlite3` on the first orchestration operation; no database service or `PENHIN_DATABASE_URL` configuration is required. The local SQLite store is intended for one machine and uses WAL-backed transactional claims for scheduler and Worker processes.
 
-```bash
-cp .env.example .env  # only when .env does not exist
-docker compose up -d postgres
-```
-
-Set `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_PORT`, and `PENHIN_DATABASE_URL` in `.env`. The supplied development defaults expose PostgreSQL on `localhost:55432` and retain data in the `penhin-postgres` Docker volume. The runtime creates the schema on first orchestration operation.
+PostgreSQL remains available for shared or higher-concurrency deployments. Set `PENHIN_DATABASE_URL` to a `postgresql://` (or `postgres://`) URL, start the supplied Docker Compose service if desired, and configure `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_PORT`. An explicit SQLite file can be selected with `PENHIN_DATABASE_URL=sqlite:////absolute/path/to/orchestration.sqlite3`. Explicitly configured backends do not fall back to SQLite when unavailable.
 
 The first stage records only read-only agent jobs. `task` and `verify` preserve their existing behavior while recording attempts and artifacts. `background_start` now enqueues durable work through a bounded scheduler. `agent_job_show`, `agent_job_list`, `agent_artifact_show`, and `agent_job_cancel` provide inspection and cancellation.
 

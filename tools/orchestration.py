@@ -2,15 +2,12 @@ from __future__ import annotations
 
 import json
 
-from orchestration.repository import database_url_from_env
 from orchestration.integration import apply_integration, start_integration, verify_integration
 from orchestration.service import create_dag_plan, repository_from_env, wait_for_job
 from result import Result
 
 
 def _repository_or_failure() -> tuple[object | None, Result | None]:
-    if not database_url_from_env():
-        return None, Result.failure("PENHIN_DATABASE_URL is not configured", code="orchestration_unavailable")
     try:
         return repository_from_env(), None
     except Exception as error:
