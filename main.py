@@ -8,7 +8,7 @@ import time
 
 from agent import agent_loop, run_once
 from commands import handle_local_command, setup_command_completion
-from config import get_permission_mode
+from config import get_permission_mode, get_version
 from context import RunContext
 from permissions import normalize_permission_mode
 from runtime import get_runtime, init_runtime
@@ -52,7 +52,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Penhin Code command line interface.",
     )
-    
+
+    parser.add_argument("--version", action="version", version=f"%(prog)s {get_version()}")
     parser.add_argument("--once", "-o", nargs="+", metavar="TEXT", help="run one prompt and exit")
     parser.add_argument("--sessions", "-s", action="store_true", help="list saved sessions")
     parser.add_argument("--new", "-n", action="store_true", help="start without resuming history")
@@ -126,7 +127,7 @@ def main() -> None:
     provider = os.getenv("LLM_PROVIDER", "").strip().lower() or "anthropic"
     api_label = {"anthropic": "Anthropic API", "openai": "OpenAI API", "gemini": "Gemini API"}.get(provider, provider or "Configured API")
     print_welcome(
-        version=os.getenv("PENHIN_VERSION", "dev"),
+        version=get_version(),
         api=api_label,
         model=get_runtime().model,
         workspace=str(workspace.get("cwd", ".")),

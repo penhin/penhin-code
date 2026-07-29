@@ -1,4 +1,6 @@
 import logging
+import hashlib
+import json
 import os
 import sys
 import time
@@ -79,6 +81,10 @@ class Runtime:
                 raise
 
         for attempt in range(len(delays) + 1):
+            started = time.perf_counter()
+            first_token_ms: float | None = None
+            reservation_id = None
+            budget = None
             try:
                 request = LLMRequest(
                     model=self.model,
@@ -87,14 +93,49 @@ class Runtime:
                     tools=tools,
                     max_tokens=max_tokens or self.max_tokens,
                 )
+                from evaluation.observer import anonymous_id, emit
+                from evaluation.shared_budget import budget_from_env, estimate_tokens, price_from_env
+                budget = budget_from_env()
+                if budget is not None:
+                    reservation_id = budget.reserve(
+                        estimate_tokens({"system": system, "messages": messages, "tools": tools}),
+                        request.max_tokens,
+                        price_from_env("primary"),
+                        "primary",
+                        os.getenv("PENHIN_EVAL_BUDGET_CASE_KEY", os.getenv("PENHIN_EVAL_CASE_ID", "")),
+                        int(os.getenv("PENHIN_EVAL_CURRENT_CASE_MAX_TOKENS", "0")) or None,
+                    )
+                request_digest = hashlib.sha256(json.dumps(
+                    {"system": system, "messages": messages, "tools": tools},
+                    ensure_ascii=False, sort_keys=True, default=str,
+                ).encode("utf-8")).hexdigest()[:16]
+                emit("llm_call_started", label=label, provider=configured_provider(), model_id_hash=anonymous_id(self.model), attempt=attempt + 1, max_tokens=request.max_tokens, request_digest=request_digest)
                 if stream_callback is None:
                     response = self.provider.create_message(request)
                 else:
-                    response = self.provider.stream_message(request, stream_callback)
+                    def observed_stream(text: str) -> None:
+                        nonlocal first_token_ms
+                        if first_token_ms is None:
+                            first_token_ms = (time.perf_counter() - started) * 1000
+                        stream_callback(text)
+                    response = self.provider.stream_message(request, observed_stream)
+                if budget is not None and reservation_id is not None:
+                    budget.settle(reservation_id, response.usage.input_tokens, response.usage.output_tokens, price_from_env("primary"))
+                    reservation_id = None
+                emit(
+                    "llm_call_completed", label=label, provider=configured_provider(), model_id_hash=anonymous_id(self.model),
+                    attempt=attempt + 1, duration_ms=(time.perf_counter() - started) * 1000,
+                    first_token_ms=first_token_ms, stop_reason=getattr(response, "stop_reason", ""),
+                    usage=getattr(response, "usage", None),
+                )
                 if breaker is not None:
                     breaker.record_success()
                 return response
             except retry_errors as error:
+                if budget is not None and reservation_id is not None:
+                    budget.release(reservation_id)
+                from evaluation.observer import emit
+                emit("llm_call_failed", label=label, attempt=attempt + 1, duration_ms=(time.perf_counter() - started) * 1000, error_type=type(error).__name__, retryable=True)
                 if attempt == len(delays):
                     if breaker is not None:
                         breaker.record_failure()
@@ -106,7 +147,14 @@ class Runtime:
                     f"retrying in {delay}s...\n"
                     f"[retry] Reconnecting...({attempt + 1}/{len(delays)})"
                 )
+                emit("llm_retry", label=label, attempt=attempt + 1, delay_seconds=delay, error_type=type(error).__name__)
                 time.sleep(delay)
+            except Exception as error:
+                if budget is not None and reservation_id is not None:
+                    budget.release(reservation_id)
+                from evaluation.observer import emit
+                emit("llm_call_failed", label=label, attempt=attempt + 1, duration_ms=(time.perf_counter() - started) * 1000, error_type=type(error).__name__, retryable=False)
+                raise
 
     def call_with_retry(
         self,

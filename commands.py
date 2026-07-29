@@ -7,7 +7,7 @@ from prompt_toolkit.completion import Completer, Completion
 
 import ui
 
-from config import CONFIG_FILE, ENV_FILE, get_permission_mode, set_env_value, set_permission_mode
+from config import CONFIG_FILE, ENV_FILE, get_permission_mode, get_version, set_env_value, set_permission_mode
 from context import RunContext, conversation_turn_ranges, parse_snip_selectors
 from permissions import PERMISSION_MODES, PermissionMode, transition_mode
 from runtime import (
@@ -126,7 +126,7 @@ def build_status_lines(context: RunContext | None = None) -> list[str]:
     key_name = provider_key_name(provider)
     base_url = provider_base_url(provider)
     lines = [
-        f"Version: {os.getenv('PENHIN_VERSION', 'dev')}",
+        f"Version: {get_version()}",
         "Session name: /rename to add a name",
         f"Session ID: {session_id(context)}",
         f"cwd: {workspace_info().get('cwd', '-')}",

@@ -64,6 +64,11 @@ class PersistentScheduler:
                 if claimed is None:
                     return
                 job, attempt = claimed
+                from evaluation.observer import emit
+                emit(
+                    "orchestration_job_claimed", job_id=job.id, attempt_id=attempt.id,
+                    role=str(job.role), priority=job.priority, created_at=job.created_at, started_at=job.started_at,
+                )
                 process = self._spawn_worker(job, attempt)
                 monitor = self._monitor_pool.submit(process.wait)
                 active = ActiveJob(job=job, attempt=attempt, process=process, monitor=monitor)
@@ -96,6 +101,8 @@ class PersistentScheduler:
         )
 
     def _timeout(self, job_id: str, attempt_id: str) -> None:
+        from evaluation.observer import emit
+        emit("orchestration_job_timed_out", job_id=job_id, attempt_id=attempt_id)
         active = self._active.get(job_id)
         if active is not None:
             self._terminate(active.process)
@@ -131,6 +138,8 @@ class PersistentScheduler:
 
     def request_cancel(self, job_id: str) -> AgentJob:
         job = self.repository.request_cancel(job_id)
+        from evaluation.observer import emit
+        emit("orchestration_job_cancel_requested", job_id=job_id, status=str(job.status))
         if job.status == JobStatus.RUNNING:
             with self._lock:
                 active = self._active.get(job_id)

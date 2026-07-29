@@ -2,6 +2,10 @@
 
 一个面向本地开发的轻量 coding agent：提供交互式 CLI、结构化工具、会话恢复、任务追踪、子 Agent、持久化编排和隔离 worktree。
 
+版本变更见 [CHANGELOG.md](CHANGELOG.md)。
+
+本项目采用 [MIT License](LICENSE)。
+
 ## 快速开始
 
 作为命令行工具安装（发布到 PyPI 后）：
@@ -14,7 +18,7 @@ penhin --help
 也可直接从 Git 仓库安装：
 
 ```bash
-pipx install git+https://github.com/<组织>/<仓库>.git
+pipx install git+https://github.com/penhin/penhin-code.git
 ```
 
 `pipx` 会为命令行工具创建独立虚拟环境；首次使用前仍需按下文配置 Provider、API Key 和模型。
@@ -117,3 +121,7 @@ workspace / compact / snip / load_skill
 ```
 
 本地状态位于 `.penhin/`、`.tasks/`、`.transcripts/` 与 `.penhin_todos.json`，均不会被文件工具扫描或写入版本控制。
+
+## Agent 评测
+
+项目内置确定性与独立 Judge 结合的评测框架，覆盖主 Agent、角色型子 Agent和多 Agent 编排。离线检查可运行 `penhin-eval validate --suite baseline-v1`；真实基线、预算配置、报告和回归比较见 [docs/evaluation.md](docs/evaluation.md)。

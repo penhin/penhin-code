@@ -508,7 +508,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     ),
     "load_skill": ToolSpec(
         name="load_skill",
-        description="Load the full content for a skill from skills/<name>/SKILL.md.",
+        description="Load a user-provided skill from skills/<name>/SKILL.md.",
         input_schema=object_schema({"name": {"type": "string"}}, ["name"]),
         category=ToolCategory.readonly,
         handler=lambda **kwargs: load_skill(kwargs["name"]),

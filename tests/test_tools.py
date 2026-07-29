@@ -4,7 +4,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from skills import load_skill
 from tools import CHILD_TOOLS, PARENT_TOOLS, TOOL_SPECS, ToolCategory
 from tools.cache import tool_result_cache
 from tools.files import run_list, run_read, run_search, run_write
@@ -26,7 +25,7 @@ def test_list_ignores_internal_files() -> None:
     assert not any(path == ".tasks" or path.startswith(".tasks/") for path in paths)
 
 
-def test_list_ignored_path_returns_hint() -> None:
+def test_list_ignored_skills_path_mentions_loader() -> None:
     result = run_list("skills")
 
     assert result.ok is True
@@ -151,16 +150,6 @@ def test_workspace_tool() -> None:
     assert "task" in data["tools"]
     assert result_data["cwd"] == data["cwd"]
     assert result_data["dirty_files_count"] == data["dirty_files_count"]
-
-
-def test_skill_loader() -> None:
-    descriptions = load_skill.get_descriptions()
-    assert "code-review" in descriptions
-
-    content = run_spec_tool("load_skill", name="code-review")
-    assert content.ok is True
-    assert "<skill name=\"code-review\">" in content.message
-    assert "Code Review" in content.message
 
 
 def test_task_tool_registered() -> None:

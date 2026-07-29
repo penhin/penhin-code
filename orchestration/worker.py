@@ -70,6 +70,8 @@ def main() -> int:
     load_dotenv(".env", override=False)
     repository = repository_from_database_url(args.database_url or database_url_from_env())
     repository.initialize()
+    from evaluation.observer import emit
+    emit("orchestration_worker_started", job_id=args.job_id, attempt_id=args.attempt_id)
     try:
         repository.register_worker_pid(args.job_id, args.attempt_id, args.worker_token, os.getpid())
         job = repository.get_job(args.job_id)
@@ -122,8 +124,10 @@ def main() -> int:
                 )
                 return 1
             repository.finish_attempt(args.attempt_id, JobStatus.SUCCEEDED, artifact=artifact, terminal_reason="completed")
+            emit("orchestration_worker_completed", job_id=job.id, attempt_id=args.attempt_id, status="succeeded", artifact_kind=artifact_kind)
             return 0
         finish_failure(repository, args.attempt_id, result.error, result.meta.get("code", "failed"))
+        emit("orchestration_worker_completed", job_id=job.id, attempt_id=args.attempt_id, status="failed", reason=result.meta.get("code", "failed"))
         return 1
     except SystemExit as error:
         finish_failure(repository, args.attempt_id, "Worker runtime configuration failed", "runtime_configuration")

@@ -79,12 +79,12 @@ def test_build_tool_execution_context_groups_shared_execution_inputs() -> None:
 def test_delegation_guard_blocks_broad_tools_and_limits_reads() -> None:
     context = RunContext(
         messages=[],
-        policy=PermissionPolicy(allow={"task", "load_skill", "read"}, deny=set()),
-        approval=ApprovalFlow.preapproved({"task", "load_skill", "read"}),
+        policy=PermissionPolicy(allow={"task", "search", "read"}, deny=set()),
+        approval=ApprovalFlow.preapproved({"task", "search", "read"}),
     )
     content = [
         {"type": "tool_use", "id": "task-1", "name": "task", "input": {"task": "inspect"}},
-        {"type": "tool_use", "id": "skill-1", "name": "load_skill", "input": {"name": "code-review"}},
+        {"type": "tool_use", "id": "search-1", "name": "search", "input": {"query": "needle"}},
         {"type": "tool_use", "id": "read-1", "name": "read", "input": {"path": "a.py"}},
         {"type": "tool_use", "id": "read-2", "name": "read", "input": {"path": "b.py"}},
         {"type": "tool_use", "id": "read-3", "name": "read", "input": {"path": "c.py"}},

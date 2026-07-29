@@ -1,4 +1,6 @@
 import json
+import os
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +11,17 @@ CONFIG_DIR = Path.home() / ".penhin"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 ENV_FILE = CONFIG_DIR / ".env"
 DEFAULT_CONFIG = {"permission_mode": "default"}
+PACKAGE_NAME = "penhin-code"
+
+
+def get_version() -> str:
+    override = os.getenv("PENHIN_VERSION", "").strip()
+    if override:
+        return override
+    try:
+        return version(PACKAGE_NAME)
+    except PackageNotFoundError:
+        return "dev"
 
 
 def load_config() -> dict[str, Any]:
