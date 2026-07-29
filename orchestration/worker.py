@@ -13,7 +13,7 @@ from config import ENV_FILE
 from result import Result
 from runtime import init_runtime
 
-from .artifacts import normalize_subagent_result
+from .artifacts import build_handoff
 from .models import AgentRole, Artifact, JobStatus
 from .planning import DAG_PROTOCOL_VERSION, parse_dag_plan
 from .repositories import OrchestrationRepository, database_url_from_env, repository_from_database_url
@@ -95,10 +95,20 @@ def main() -> int:
                 schema_valid = not errors
                 artifact_kind = "agent_dag_plan.v1"
             else:
-                content, schema_valid = normalize_subagent_result(result.message, producer=producer)
+                content = build_handoff(
+                    result.message,
+                    producer=producer,
+                    tool_results=result.meta.get("tool_results", []),
+                )
+                schema_valid = True
                 artifact_kind = "agent_handoff.v1"
                 if job.workspace_mode == "isolated_write":
-                    content["change_set"] = checkpoint_change_set(job, initial_commit)
+                    change_set = checkpoint_change_set(job, initial_commit)
+                    content["change_set"] = change_set
+                    content["changed_files"] = [
+                        {"path": path, "change": "modified", "detail": "Recorded in the agent change set."}
+                        for path in change_set["changed_files"]
+                    ]
             artifact = Artifact(
                 id=str(uuid4()), job_id=job.id, kind=artifact_kind, content=content, schema_valid=schema_valid,
             )

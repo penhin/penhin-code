@@ -3,7 +3,6 @@ from pathlib import Path
 
 from skills import load_skill
 from tools.registry import tool_description_lines
-from orchestration.artifacts import collaboration_protocol_instructions
 from orchestration.planning import dag_protocol_instructions
 
 
@@ -71,10 +70,8 @@ def build_subagent_system() -> str:
 def build_subagent_final_system() -> str:
     return SUBAGENT_SYSTEM + (
         "\n\n"
-        "The tool budget is exhausted. Use the available tool results and return the final handoff now. "
-        "This is a machine-consumed protocol, not a prose summary: output exactly one valid JSON object that "
-        "conforms to penhin.handoff/v1. Include every required field, including empty arrays where appropriate. "
-        "Do not call tools, do not emit tool-call markup, and do not use Markdown fences or explanatory text."
+        "The tool budget is exhausted. Use the available tool results and return a concise final report now. "
+        "Do not call tools or emit tool-call markup."
     )
 
 
@@ -85,10 +82,8 @@ def build_exploration_system() -> str:
 def build_exploration_final_system() -> str:
     return EXPLORATION_SYSTEM + (
         "\n\n"
-        "The tool budget is exhausted. Return the final handoff now. This is a machine-consumed protocol: "
-        "output exactly one valid JSON object that conforms to penhin.handoff/v1 and includes every required field. "
-        "Use empty arrays when there are no commands, changed files, risks, or questions. Do not call tools, "
-        "do not emit tool-call markup, and do not use Markdown fences or explanatory text. Keep string values concise."
+        "The tool budget is exhausted. Return a concise final report now. Do not call tools or emit tool-call markup. "
+        "Include only the strongest concrete findings, with file paths when known, and mark uncertain items as risks."
     )
 
 
@@ -266,7 +261,6 @@ SUBAGENT_SYSTEM = (
     "Complete the assigned task independently and return a concise summary. "
     "Follow project instructions, but keep the assigned task narrow and do not expand scope. "
     "Tool results are JSON with ok/message/data/error/meta fields; prefer data for structured facts and error for failures. "
-    + "\n\n" + collaboration_protocol_instructions()
 )
 
 
@@ -280,7 +274,6 @@ EXPLORATION_SYSTEM = (
     "Stop as soon as you have enough evidence for actionable findings; do not exhaustively audit the whole repo. "
     "If you cannot prove a finding quickly, label it as a risk instead of continuing to read widely. "
     "Tool results are JSON with ok/message/data/error/meta fields; prefer data for structured facts and error for failures. "
-    + "\n\n" + collaboration_protocol_instructions()
 )
 
 
@@ -301,7 +294,6 @@ VERIFICATION_SYSTEM = (
             VERIFICATION_SELF_CHECK_SECTION,
         ]
     )
-    + "\n\n" + collaboration_protocol_instructions()
 )
 
 

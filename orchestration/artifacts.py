@@ -143,3 +143,54 @@ def normalize_subagent_result(text: str, *, producer: dict[str, str] | None = No
     payload["producer"] = producer or {}
     payload["raw_text"] = text
     return payload, True
+
+
+def build_handoff(
+    summary: str,
+    *,
+    producer: dict[str, str] | None = None,
+    tool_results: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Build a valid handoff from runtime-owned data, not model-authored JSON."""
+    report = summary.strip() or "Agent completed without a textual report."
+    commands_run = []
+    for tool_result in tool_results or []:
+        name = str(tool_result.get("tool_name") or "unknown")
+        try:
+            result = json.loads(str(tool_result.get("content") or "{}"))
+        except json.JSONDecodeError:
+            result = {}
+        ok = result.get("ok") is True
+        detail = str(result.get("error") or result.get("message") or ("completed" if ok else "failed"))
+        commands_run.append({
+            "command": f"tool:{name}",
+            "outcome": "passed" if ok else "failed",
+            "detail": detail[:1000],
+        })
+
+    payload = {
+        "protocol_version": HANDOFF_PROTOCOL_VERSION,
+        "summary": report,
+        "findings": [{
+            "title": "Agent report",
+            "detail": report,
+            "severity": "info",
+            "evidence": [],
+        }],
+        "commands_run": commands_run,
+        "changed_files": [],
+        "risks": [],
+        "handoff": {
+            "recommended_next_action": "Review the agent report and continue the task if needed.",
+            "suggested_roles": [],
+            "blocking_questions": [],
+        },
+        "protocol_valid": True,
+        "protocol_errors": [],
+        "producer": producer or {},
+        "raw_text": summary,
+    }
+    errors = validate_handoff(payload)
+    if errors:
+        raise ValueError(f"Runtime-generated handoff is invalid: {errors}")
+    return payload
