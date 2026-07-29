@@ -4,6 +4,23 @@
 
 ## 快速开始
 
+作为命令行工具安装（发布到 PyPI 后）：
+
+```bash
+pipx install penhin-code
+penhin --help
+```
+
+也可直接从 Git 仓库安装：
+
+```bash
+pipx install git+https://github.com/<组织>/<仓库>.git
+```
+
+`pipx` 会为命令行工具创建独立虚拟环境；首次使用前仍需按下文配置 Provider、API Key 和模型。
+
+从源码运行：
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate

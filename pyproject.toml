@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "penhin-code"
+version = "0.1.0"
+description = "面向本地开发的轻量 coding agent"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "anthropic>=0.25.0",
+  "google-genai>=1.0.0",
+  "openai>=1.0.0",
+  "prompt_toolkit>=3.0.52",
+  "psycopg[binary]>=3.2.0",
+  "python-dotenv>=1.0.0",
+  "pyyaml>=6.0",
+  "rich>=13.7.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+penhin = "main:main"
+
+[tool.setuptools]
+py-modules = [
+  "agent",
+  "agent_state",
+  "approval_rules",
+  "atomic_io",
+  "circuit_breaker",
+  "commands",
+  "compact",
+  "config",
+  "context",
+  "main",
+  "message_flow",
+  "message_projection",
+  "observability",
+  "permissions",
+  "prompt",
+  "quality_gate",
+  "result",
+  "runtime",
+  "skills",
+  "subagent",
+  "task",
+  "todo",
+  "tool_runtime",
+  "transcript",
+  "ui",
+]
+
+[tool.setuptools.packages.find]
+include = ["orchestration*", "providers*", "tools*"]
