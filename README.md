@@ -35,6 +35,29 @@ requirements.txt     Python 依赖
 `~/.penhin/config.json` 和 `~/.penhin/.env` 是用户级配置，不随工作区移动。`~/.penhin/.env` 用于 `ANTHROPIC_API_KEY`、`MODEL_ID` 等环境变量。
 `.penhin_todos.json`、`.tasks/` 和 `.transcripts/` 是本地运行状态，会被文件工具和 git 忽略。
 
+### Provider configuration
+
+Like Claude Code's Bedrock and Vertex modes, Provider selection is a startup setting rather than an in-session command. Set one provider and its credentials in `~/.penhin/.env` (or the launch environment), then restart Penhin:
+
+```bash
+# Anthropic (default)
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=...
+MODEL_ID=claude-sonnet-4-6
+
+# OpenAI
+LLM_PROVIDER=openai
+OPENAI_API_KEY=...
+MODEL_ID=gpt-4.1
+
+# Gemini
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=...
+MODEL_ID=gemini-2.5-flash
+```
+
+Use `--model MODEL` for a one-session model override. `/model MODEL` changes the saved user-level model; `/api-key KEY` saves the key for the already selected provider. Provider changes take effect only after restart.
+
 ### SQLite orchestration store
 
 The multi-agent foundation persists agent jobs, attempts, structured artifacts, immutable events, and integration runs. It uses SQLite by default, creating `<project>/.penhin/orchestration.sqlite3` on the first orchestration operation; no database service or `PENHIN_DATABASE_URL` configuration is required. The local SQLite store is intended for one machine and uses WAL-backed transactional claims for scheduler and Worker processes.

@@ -235,7 +235,12 @@ def init_runtime() -> None:
     load_dotenv(ENV_FILE, override=False)
     load_dotenv(".env", override=False)
 
-    missing_env = [name for name in ("ANTHROPIC_API_KEY", "MODEL_ID") if not os.getenv(name)]
+    provider = os.getenv("LLM_PROVIDER", "anthropic").strip().lower()
+    key_name = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "gemini": "GEMINI_API_KEY"}.get(provider)
+    if key_name is None:
+        logger.error(f"Unsupported LLM_PROVIDER={provider!r}; choose anthropic, openai, or gemini")
+        raise SystemExit(1)
+    missing_env = [name for name in (key_name, "MODEL_ID") if not os.getenv(name)]
     if missing_env:
         logger.error(f"Please configure {', '.join(missing_env)} in {ENV_FILE} or .env")
         sys.exit(1)
@@ -263,14 +268,17 @@ def set_runtime_model(model: str) -> None:
 
 def set_runtime_api_key(api_key: str) -> None:
     if runtime is not None:
-        runtime.provider = AnthropicProvider(
-            api_key=api_key,
-            base_url=os.getenv("ANTHROPIC_BASE_URL"),
-        )
+        runtime.provider = build_provider_from_env()
 
 
 def build_provider_from_env() -> LLMProvider:
     provider = os.getenv("LLM_PROVIDER", "anthropic").strip().lower()
-    if provider != "anthropic":
-        logger.warning(f"[config] unsupported LLM_PROVIDER={provider!r}; using anthropic")
-    return AnthropicProvider.from_env()
+    if provider == "anthropic":
+        return AnthropicProvider.from_env()
+    if provider == "openai":
+        from providers.openai import OpenAIProvider
+        return OpenAIProvider.from_env()
+    if provider == "gemini":
+        from providers.gemini import GeminiProvider
+        return GeminiProvider.from_env()
+    raise ValueError(f"Unsupported LLM_PROVIDER={provider!r}")

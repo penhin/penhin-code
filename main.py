@@ -60,11 +60,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--events", "-e", type=non_negative_int, default=8, metavar="N", help="number of inspect events to show")
     parser.add_argument("--resume", "-r", metavar="ID", help="resume a specific session")
     parser.add_argument("--quality-gate", action="store_true", help="run syntax, diff, and test quality gates")
+    parser.add_argument("--model", metavar="MODEL", help="use a model for this session without changing saved configuration")
     return parser.parse_args(args)
 
 
 def main() -> None:
     args = parse_args()
+
+    if args.model:
+        os.environ["MODEL_ID"] = args.model
 
     if args.sessions:
         print_session_list()
@@ -132,6 +136,7 @@ def main() -> None:
             if user_input.startswith("/"):
                 handled = handle_local_command(user_input, context)
                 if handled:
+                    print_info("")
                     continue
         except (EOFError, KeyboardInterrupt):
             logger.info("")
@@ -144,6 +149,15 @@ def main() -> None:
         print_user_message(user_input)
         agent_loop(context)
         context.session_path = transcripts.save_session(context.session_path, context.messages)
+
+
+def run_cli() -> int:
+    """Run the CLI without surfacing normal terminal-exit signals as errors."""
+    try:
+        main()
+    except (EOFError, KeyboardInterrupt):
+        return 0
+    return 0
 
 
 def print_session_list() -> None:
@@ -194,4 +208,4 @@ def print_session_inspect(session_ref: str, event_limit: int = 8) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(run_cli())

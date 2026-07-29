@@ -57,6 +57,7 @@ def provider_label(provider: str) -> str:
     labels = {
         "anthropic": "Anthropic API",
         "openai": "OpenAI API",
+        "gemini": "Gemini API",
     }
     return labels.get(provider, provider or "-")
 
@@ -190,8 +191,13 @@ def mask_secret(value: str) -> str:
 
 
 def handle_api_key_command(args: list[str], context: RunContext | None = None):
+    provider = os.getenv("LLM_PROVIDER", "anthropic").strip().lower()
+    key_name = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "gemini": "GEMINI_API_KEY"}.get(provider)
+    if key_name is None:
+        ui.print_error(f"Unsupported provider: {provider}")
+        return
     if not args:
-        value = os.getenv("ANTHROPIC_API_KEY", "")
+        value = os.getenv(key_name, "")
         if value:
             ui.print_info(f"api-key: {mask_secret(value)}")
         else:
@@ -200,11 +206,11 @@ def handle_api_key_command(args: list[str], context: RunContext | None = None):
 
     api_key = " ".join(args).strip()
     if not api_key:
-        ui.print_error("Usage: /api-key ANTHROPIC_API_KEY")
+        ui.print_error(f"Usage: /api-key {key_name}")
         return
 
-    os.environ["ANTHROPIC_API_KEY"] = api_key
-    set_env_value("ANTHROPIC_API_KEY", api_key)
+    os.environ[key_name] = api_key
+    set_env_value(key_name, api_key)
     set_runtime_api_key(api_key)
     ui.print_info("api-key: saved")
 

@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from ..models import AgentJob, AgentRole, Artifact, IntegrationItem, IntegrationItemStatus, IntegrationRun, IntegrationRunStatus, JobAttempt, JobEvent, JobStatus
 from ..state_machine import integration_item_transition_is_allowed, integration_run_transition_is_allowed, transition_is_allowed
+from ..settings import sqlite_busy_timeout_ms, sqlite_connect_timeout_seconds
 
 
 SCHEMA_SQL = """
@@ -93,11 +94,11 @@ class SqliteOrchestrationRepository:
 
     @contextmanager
     def _connection(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
-        connection = sqlite3.connect(self.path, timeout=5, isolation_level=None)
+        connection = sqlite3.connect(self.path, timeout=sqlite_connect_timeout_seconds(), isolation_level=None)
         connection.row_factory = sqlite3.Row
         try:
             connection.execute("PRAGMA foreign_keys = ON")
-            connection.execute("PRAGMA busy_timeout = 5000")
+            connection.execute(f"PRAGMA busy_timeout = {sqlite_busy_timeout_ms()}")
             connection.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
             yield connection
             connection.commit()
@@ -109,9 +110,9 @@ class SqliteOrchestrationRepository:
 
     def initialize(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self.path, timeout=5) as connection:
+        with sqlite3.connect(self.path, timeout=sqlite_connect_timeout_seconds()) as connection:
             connection.execute("PRAGMA foreign_keys = ON")
-            connection.execute("PRAGMA busy_timeout = 5000")
+            connection.execute(f"PRAGMA busy_timeout = {sqlite_busy_timeout_ms()}")
             connection.execute("PRAGMA journal_mode = WAL")
             connection.executescript(SCHEMA_SQL)
 

@@ -9,6 +9,7 @@ from result import Result
 WORKDIR = Path.cwd().resolve()
 IGNORED_PATH_PARTS = [
     ".git",
+    ".penhin",
     ".penhin_todos.json",
     ".tasks",
     ".transcripts",

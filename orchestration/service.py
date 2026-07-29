@@ -12,6 +12,7 @@ from .models import AgentJob, AgentRole, JobStatus, TERMINAL_JOB_STATUSES
 from .planning import DAG_PROTOCOL_VERSION
 from .repositories import OrchestrationRepository, database_url_from_env, repository_from_database_url
 from .scheduler import PersistentScheduler
+from .settings import agent_poll_interval_seconds, sync_agent_timeout_seconds
 from .worktrees import provision_worktree
 
 
@@ -108,7 +109,7 @@ def wait_for_job(repository: OrchestrationRepository, job_id: str, timeout_secon
             )
         if job.status in TERMINAL_JOB_STATUSES:
             return Result.failure(job.error or f"Agent finished with status {job.status}", code=str(job.status), job=job.to_dict())
-        time.sleep(0.1)
+        time.sleep(agent_poll_interval_seconds())
     return Result.failure("Timed out waiting for agent job", code="agent_wait_timeout", agent_job_id=job_id)
 
 
@@ -149,7 +150,7 @@ def create_dag_plan(goal: str) -> Result:
     except Exception as error:
         return Result.failure(f"Unable to start Planner: {error}", code="planner_start_failed")
     repository = repository_from_env()
-    timeout_seconds = int(os.getenv("PENHIN_SYNC_AGENT_TIMEOUT_SECONDS", "900"))
+    timeout_seconds = sync_agent_timeout_seconds()
     outcome = wait_for_job(repository, planner.id, timeout_seconds)
     if not outcome.ok:
         return outcome
@@ -180,7 +181,7 @@ def run_recorded_subagent(task: str, agent_type: str = "general", root_task_id: 
         job = enqueue_subagent_job(task, agent_type=agent_type, root_task_id=root_task_id)
     except Exception as error:
         return Result.failure(f"Unable to start isolated agent: {error}", code="agent_start_failed")
-    timeout_seconds = int(os.getenv("PENHIN_SYNC_AGENT_TIMEOUT_SECONDS", "900"))
+    timeout_seconds = sync_agent_timeout_seconds()
     repository = repository_from_env()
     outcome = wait_for_job(repository, job.id, timeout_seconds)
     if not outcome.ok:

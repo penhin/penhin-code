@@ -11,23 +11,18 @@ from dataclasses import dataclass
 
 from .models import AgentJob, JobAttempt, JobStatus
 from .repositories import OrchestrationRepository
+from .settings import scheduler_workers, worker_kill_grace_seconds as configured_worker_kill_grace_seconds
 
 
 logger = logging.getLogger("penhin.scheduler")
 
 
 def scheduler_worker_count() -> int:
-    try:
-        return max(1, int(os.getenv("PENHIN_SCHEDULER_WORKERS", "2")))
-    except ValueError:
-        return 2
+    return scheduler_workers()
 
 
 def worker_kill_grace_seconds() -> float:
-    try:
-        return max(0.1, float(os.getenv("PENHIN_WORKER_KILL_GRACE_SECONDS", "2")))
-    except ValueError:
-        return 2.0
+    return configured_worker_kill_grace_seconds()
 
 
 @dataclass
