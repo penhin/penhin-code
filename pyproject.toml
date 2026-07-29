@@ -8,6 +8,17 @@ version = "0.1.0"
 description = "面向本地开发的轻量 coding agent"
 readme = "README.md"
 requires-python = ">=3.11"
+keywords = ["ai", "coding-agent", "cli", "developer-tools"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development",
+]
 dependencies = [
   "anthropic>=0.25.0",
   "google-genai>=1.0.0",
@@ -25,6 +36,12 @@ dev = ["pytest>=8.0"]
 [project.scripts]
 penhin = "main:main"
 penhin-eval = "evaluation.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/penhin/penhin-code"
+Repository = "https://github.com/penhin/penhin-code.git"
+Issues = "https://github.com/penhin/penhin-code/issues"
+Changelog = "https://github.com/penhin/penhin-code/blob/main/CHANGELOG.md"
 
 [tool.setuptools]
 py-modules = [
@@ -53,6 +70,7 @@ py-modules = [
   "tool_runtime",
   "transcript",
   "ui",
+  "penhin_version",
 ]
 
 [tool.setuptools.packages.find]

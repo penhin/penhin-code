@@ -1,0 +1,5 @@
+include CHANGELOG.md
+include README.md
+prune tests
+global-exclude __pycache__
+global-exclude *.py[cod]

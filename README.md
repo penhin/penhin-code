@@ -2,6 +2,8 @@
 
 一个面向本地开发的轻量 coding agent：提供交互式 CLI、结构化工具、会话恢复、任务追踪、子 Agent、持久化编排和隔离 worktree。
 
+版本变更见 [CHANGELOG.md](CHANGELOG.md)。
+
 ## 快速开始
 
 作为命令行工具安装（发布到 PyPI 后）：
@@ -14,7 +16,7 @@ penhin --help
 也可直接从 Git 仓库安装：
 
 ```bash
-pipx install git+https://github.com/<组织>/<仓库>.git
+pipx install git+https://github.com/penhin/penhin-code.git
 ```
 
 `pipx` 会为命令行工具创建独立虚拟环境；首次使用前仍需按下文配置 Provider、API Key 和模型。

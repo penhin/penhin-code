@@ -18,6 +18,7 @@ from tools.workspace import workspace_info
 from transcript import transcripts
 from ui import print_error, print_info, print_user_message, print_welcome, prompt_input
 from quality_gate import run_quality_gate
+from penhin_version import get_version
 
 
 logger = logging.getLogger("penhin.main")
@@ -52,7 +53,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Penhin Code command line interface.",
     )
-    
+
+    parser.add_argument("--version", action="version", version=f"%(prog)s {get_version()}")
     parser.add_argument("--once", "-o", nargs="+", metavar="TEXT", help="run one prompt and exit")
     parser.add_argument("--sessions", "-s", action="store_true", help="list saved sessions")
     parser.add_argument("--new", "-n", action="store_true", help="start without resuming history")
@@ -126,7 +128,7 @@ def main() -> None:
     provider = os.getenv("LLM_PROVIDER", "").strip().lower() or "anthropic"
     api_label = {"anthropic": "Anthropic API", "openai": "OpenAI API", "gemini": "Gemini API"}.get(provider, provider or "Configured API")
     print_welcome(
-        version=os.getenv("PENHIN_VERSION", "dev"),
+        version=get_version(),
         api=api_label,
         model=get_runtime().model,
         workspace=str(workspace.get("cwd", ".")),

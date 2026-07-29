@@ -24,6 +24,7 @@ from providers.models import validate_model
 from tool_runtime import runtime_permission_setup
 from tools.registry import tool_names
 from tools.workspace import workspace_info
+from penhin_version import get_version
 from transcript import session_id_from_path
 
 
@@ -126,7 +127,7 @@ def build_status_lines(context: RunContext | None = None) -> list[str]:
     key_name = provider_key_name(provider)
     base_url = provider_base_url(provider)
     lines = [
-        f"Version: {os.getenv('PENHIN_VERSION', 'dev')}",
+        f"Version: {get_version()}",
         "Session name: /rename to add a name",
         f"Session ID: {session_id(context)}",
         f"cwd: {workspace_info().get('cwd', '-')}",

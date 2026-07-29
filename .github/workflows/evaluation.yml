@@ -16,8 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: python -m pip install ".[dev]"
@@ -41,7 +41,7 @@ jobs:
           PENHIN_EVAL_MAX_TOTAL_TOKENS: "6000000"
           PENHIN_EVAL_MAX_USD: "30"
         run: penhin-eval run --suite baseline-v1 --repetitions "${{ inputs.repetitions }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: penhin-evaluation

@@ -1,6 +1,7 @@
 name: Publish to PyPI
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - "v*"
@@ -8,37 +9,46 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     name: Build distribution
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - name: Install project and test dependencies
-        run: python -m pip install ".[dev]"
+        run: python -m pip install --upgrade pip && python -m pip install ".[dev]"
       - name: Run test suite
         run: python -m pytest -q
       - name: Verify tag matches package version
+        if: github.ref_type == 'tag'
         run: |
           version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
           test "v${version}" = "${GITHUB_REF_NAME}"
-      - name: Build source distribution and wheel
-        run: python -m pip install build && python -m build
-      - name: Validate distribution metadata
-        run: python -m pip install twine && twine check dist/*
-      - uses: actions/upload-artifact@v4
+      - name: Verify release documentation
+        run: |
+          test -f LICENSE || test -f LICENSE.txt || test -f LICENSE.md
+          test -f CHANGELOG.md
+      - name: Build and validate source distribution and wheel
+        run: python -m pip install build twine && python -m build && twine check dist/*
+      - uses: actions/upload-artifact@v7
         with:
           name: python-package-distributions
           path: dist/
+          retention-days: 14
 
   publish:
     name: Publish distribution to PyPI
     needs: build
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -46,8 +56,24 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: python-package-distributions
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  release:
+    name: Create GitHub release
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: python-package-distributions
+          path: dist/
+      - name: Create release and attach distributions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" dist/* --verify-tag --generate-notes --title "${GITHUB_REF_NAME}"
