@@ -34,7 +34,7 @@ It must conform to penhin.handoff/v1:
   "handoff": {"recommended_next_action": "specific next action", "suggested_roles": ["explore|planner|implement|verify|review"], "blocking_questions": []}
 }
 Use empty arrays when a section has no items. Never invent command output, file changes, or evidence.
-Before sending the response, verify that every required top-level field is present and that the entire response is valid JSON. This protocol requirement overrides any request to provide a prose summary.
+Keep every string value short plain text. Do not embed code blocks, JSON examples, command output, or literal double quotes inside string values; paraphrase them instead. Before sending the response, verify that every required top-level field is present and that the entire response is valid JSON. This protocol requirement overrides any request to provide a prose summary.
 """.strip()
 
 
