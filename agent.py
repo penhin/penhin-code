@@ -127,13 +127,14 @@ def compact_context_for_llm(context: RunContext) -> None:
 def call_llm(context: RunContext, runtime):
     ensure_project_instructions_message(context.messages)
     streamed = False
+    stream = None
 
     def on_stream_text(text: str) -> None:
-        nonlocal streamed
+        nonlocal streamed, stream
         if not streamed:
-            ui.start_assistant_message()
+            stream = ui.start_assistant_message()
         streamed = True
-        ui.print_stream_delta(text)
+        stream.write(text)
 
     try:
         return runtime.call_with_retry(
@@ -148,7 +149,7 @@ def call_llm(context: RunContext, runtime):
         )
     finally:
         if streamed:
-            ui.finish_stream()
+            ui.finish_stream(stream)
 
 def record_llm_response(context: RunContext, response) -> None:
     context.add_assistant_message(response.content)

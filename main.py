@@ -2,6 +2,7 @@
 
 import argparse
 import logging
+import os
 import sys
 import time
 
@@ -10,12 +11,12 @@ from commands import handle_local_command, setup_command_completion
 from config import get_permission_mode
 from context import RunContext
 from permissions import normalize_permission_mode
-from runtime import init_runtime
+from runtime import get_runtime, init_runtime
 from tool_runtime import runtime_permission_setup
 from tools.registry import tool_names
 from tools.workspace import workspace_info
 from transcript import transcripts
-from ui import print_error, print_info, print_user_message, prompt_input
+from ui import print_error, print_info, print_user_message, print_welcome, prompt_input
 from quality_gate import run_quality_gate
 
 
@@ -113,6 +114,15 @@ def main() -> None:
         policy=policy,
         approval=approval,
         session_path=session_path,
+    )
+    workspace = workspace_info()
+    provider = os.getenv("LLM_PROVIDER", "anthropic").strip().lower()
+    api_label = {"anthropic": "Anthropic API", "openai": "OpenAI API"}.get(provider, provider or "Configured API")
+    print_welcome(
+        version=os.getenv("PENHIN_VERSION", "dev"),
+        api=api_label,
+        model=get_runtime().model,
+        workspace=str(workspace.get("cwd", ".")),
     )
 
     while True:
