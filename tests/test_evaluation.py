@@ -14,12 +14,13 @@ from evaluation.config import EvaluationConfig
 from evaluation.grader import grade_case
 from evaluation.io import read_json, write_json
 from evaluation.judge import judge_payload, parse_judge_score
-from evaluation.metrics import metrics_from_events, percentile, stability_by_case
+from evaluation.metrics import metrics_from_events, orchestration_metrics_from_events, percentile, stability_by_case
 from evaluation.models import CASE_SCHEMA_VERSION, EvaluationCase, EvaluationResult
 from evaluation.observer import EvaluationObserver, read_events
 from evaluation.observer import observing
 from evaluation.report import compare_reports, generate_report
 from evaluation.shared_budget import SharedBudget
+from evaluation.trace import build_trace_summary
 from providers.types import LLMResponse, LLMUsage
 
 
@@ -155,6 +156,21 @@ def test_observer_redacts_secrets_but_preserves_token_metrics(tmp_path: Path, mo
     assert event["payload"]["detail"] == "<redacted>"
 
 
+def test_observer_adds_cross_process_correlation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PENHIN_TRACE_ID", "trace-1")
+    monkeypatch.setenv("PENHIN_ROOT_TASK_ID", "root-1")
+    monkeypatch.setenv("PENHIN_JOB_ID", "job-1")
+    monkeypatch.setenv("PENHIN_ATTEMPT_ID", "attempt-1")
+    EvaluationObserver(tmp_path, "run", "case", 1).emit("orchestration_test")
+    event = read_events(tmp_path)[0]
+    assert event["schema_version"] == "penhin.eval.event/v2"
+    assert event["event_id"]
+    assert event["correlation"] == {
+        "trace_id": "trace-1", "root_task_id": "root-1",
+        "job_id": "job-1", "attempt_id": "attempt-1",
+    }
+
+
 def test_runtime_emits_llm_usage_and_first_token_latency(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import runtime
 
@@ -215,6 +231,45 @@ def test_metrics_capture_tools_tokens_latency_and_stability() -> None:
         {"case_id": "a", "deterministic_passed": False, "judge": None},
     ])
     assert stability["mixed_outcome_case_rate"] == 1.0
+
+
+def test_orchestration_metrics_and_trace_diagnose_protocol_failure() -> None:
+    events = [
+        {
+            "event_id": "1", "event_type": "orchestration_plan_started", "case_id": "multi",
+            "repetition": 1, "monotonic_ns": 1_000_000, "correlation": {"trace_id": "trace"}, "payload": {},
+        },
+        {
+            "event_id": "2", "event_type": "orchestration_job_created", "case_id": "multi",
+            "repetition": 1, "monotonic_ns": 2_000_000, "correlation": {"trace_id": "trace"},
+            "payload": {"root_task_id": "root", "job_id": "planner"},
+        },
+        {
+            "event_id": "3", "event_type": "orchestration_artifact_built", "case_id": "multi",
+            "repetition": 1, "monotonic_ns": 3_000_000, "correlation": {"trace_id": "trace"},
+            "payload": {"root_task_id": "root", "job_id": "planner", "artifact_id": "artifact", "schema_valid": False},
+        },
+        {
+            "event_id": "4", "event_type": "orchestration_worker_completed", "case_id": "multi",
+            "repetition": 1, "monotonic_ns": 4_000_000, "correlation": {"trace_id": "trace"},
+            "payload": {"root_task_id": "root", "job_id": "planner", "status": "failed", "stage": "protocol_validation", "error_code": "invalid_protocol", "protocol_errors": ["invalid JSON"]},
+        },
+        {
+            "event_id": "5", "event_type": "orchestration_plan_failed", "case_id": "multi",
+            "repetition": 1, "monotonic_ns": 5_000_000, "correlation": {"trace_id": "trace"},
+            "payload": {"root_task_id": "root", "stage": "planner_execution", "error_code": "failed"},
+        },
+    ]
+    metrics = orchestration_metrics_from_events(events)
+    assert metrics["plans_failed"] == 1
+    assert metrics["invalid_artifacts"] == 1
+    assert metrics["job_trace_completeness_rate"] == 1.0
+    assert metrics["failure_stages"] == {"planner_execution": 1, "protocol_validation": 1}
+    trace = build_trace_summary(events, case_id="multi", repetition=1)
+    assert trace["orchestration_event_count"] == 5
+    assert trace["root_cause"]["error_code"] == "invalid_protocol"
+    assert any(item.get("code") == "invalid_protocol" for item in trace["diagnostics"])
+    assert trace["timeline"][3]["protocol_errors"] == ["invalid JSON"]
 
 
 def test_judge_parser_is_strict_and_payload_is_anonymous(monkeypatch: pytest.MonkeyPatch) -> None:

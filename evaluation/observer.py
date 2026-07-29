@@ -9,11 +9,18 @@ from contextvars import ContextVar
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, Iterator
+from uuid import uuid4
 
 
 _observer: ContextVar["EvaluationObserver | None"] = ContextVar("penhin_evaluation_observer", default=None)
 _write_lock = threading.Lock()
 SENSITIVE_NAMES = {"api_key", "authorization", "password", "secret", "access_token", "bearer_token"}
+CORRELATION_ENV = {
+    "trace_id": "PENHIN_TRACE_ID",
+    "root_task_id": "PENHIN_ROOT_TASK_ID",
+    "job_id": "PENHIN_JOB_ID",
+    "attempt_id": "PENHIN_ATTEMPT_ID",
+}
 
 
 def _sensitive_key(key: object) -> bool:
@@ -63,7 +70,14 @@ class EvaluationObserver:
         return self.run_dir / "events" / f"{os.getpid()}.jsonl"
 
     def emit(self, event_type: str, **payload: Any) -> None:
+        correlation = {
+            name: value
+            for name, environment_name in CORRELATION_ENV.items()
+            if (value := os.getenv(environment_name, ""))
+        }
         event = {
+            "schema_version": "penhin.eval.event/v2",
+            "event_id": str(uuid4()),
             "event_type": event_type,
             "timestamp_ns": time.time_ns(),
             "monotonic_ns": time.monotonic_ns(),
@@ -71,6 +85,8 @@ class EvaluationObserver:
             "case_id": self.case_id,
             "repetition": self.repetition,
             "pid": os.getpid(),
+            "thread_id": threading.get_ident(),
+            "correlation": correlation,
             "payload": _safe(payload),
         }
         path = self.event_path

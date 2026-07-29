@@ -18,6 +18,55 @@ def percentile(values: list[float], quantile: float) -> float | None:
     return ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower)
 
 
+def orchestration_metrics_from_events(events: list[dict[str, Any]]) -> dict[str, Any]:
+    orchestration = [event for event in events if str(event.get("event_type", "")).startswith(("orchestration_", "integration_"))]
+    plans_started = [event for event in orchestration if event.get("event_type") == "orchestration_plan_started"]
+    plans_validated = [event for event in orchestration if event.get("event_type") == "orchestration_plan_validated"]
+    plan_failures = [event for event in orchestration if event.get("event_type") == "orchestration_plan_failed"]
+    created = [event for event in orchestration if event.get("event_type") == "orchestration_job_created"]
+    claimed = [event for event in orchestration if event.get("event_type") == "orchestration_job_claimed"]
+    terminals = [event for event in orchestration if event.get("event_type") == "orchestration_worker_completed"]
+    artifacts = [event for event in orchestration if event.get("event_type") == "orchestration_artifact_built"]
+    waits = [event for event in orchestration if event.get("event_type") == "orchestration_job_wait_completed"]
+    integrations = [event for event in orchestration if event.get("event_type") == "integration_completed"]
+    verification = [event for event in orchestration if event.get("event_type") == "integration_verification_completed"]
+    stages = Counter(
+        str(event.get("payload", {}).get("stage", "unknown"))
+        for event in plan_failures + [item for item in terminals if item.get("payload", {}).get("status") == "failed"]
+    )
+    error_codes = Counter(
+        str(event.get("payload", {}).get("error_code"))
+        for event in orchestration
+        if event.get("payload", {}).get("error_code")
+    )
+    created_ids = {str(event.get("payload", {}).get("job_id")) for event in created if event.get("payload", {}).get("job_id")}
+    terminal_ids = {str(event.get("payload", {}).get("job_id")) for event in terminals if event.get("payload", {}).get("job_id")}
+    timestamps = [int(event.get("monotonic_ns", 0) or 0) for event in orchestration if event.get("monotonic_ns")]
+    return {
+        "event_count": len(orchestration),
+        "plans_started": len(plans_started),
+        "plans_validated": len(plans_validated),
+        "plans_failed": len(plan_failures),
+        "plan_valid_rate": len(plans_validated) / len(plans_started) if plans_started else None,
+        "jobs_created": len(created),
+        "jobs_claimed": len(claimed),
+        "jobs_succeeded": sum(event.get("payload", {}).get("status") == "succeeded" for event in terminals),
+        "jobs_failed": sum(event.get("payload", {}).get("status") == "failed" for event in terminals),
+        "job_trace_completeness_rate": len(created_ids & terminal_ids) / len(created_ids) if created_ids else None,
+        "dangling_job_ids": sorted(created_ids - terminal_ids),
+        "artifacts_built": len(artifacts),
+        "invalid_artifacts": sum(not bool(event.get("payload", {}).get("schema_valid")) for event in artifacts),
+        "wait_failures": sum(event.get("payload", {}).get("status") != "succeeded" for event in waits),
+        "integrations_completed": len(integrations),
+        "integration_conflicts": sum(event.get("payload", {}).get("status") == "needs_resolution" for event in integrations),
+        "verifications_completed": len(verification),
+        "verifications_failed": sum(event.get("payload", {}).get("status") != "verified" for event in verification),
+        "failure_stages": dict(sorted(stages.items())),
+        "error_codes": dict(sorted(error_codes.items())),
+        "observed_critical_path_ms": (max(timestamps) - min(timestamps)) / 1_000_000 if len(timestamps) > 1 else None,
+    }
+
+
 def metrics_from_events(events: list[dict[str, Any]], expected_tools: tuple[str, ...] = ()) -> dict[str, Any]:
     llm = [e for e in events if e.get("event_type") == "llm_call_completed"]
     tools = [e for e in events if e.get("event_type") == "tool_call_completed"]
@@ -70,6 +119,7 @@ def metrics_from_events(events: list[dict[str, Any]], expected_tools: tuple[str,
         "llm_latency_ms_p50": percentile(llm_ms, 0.5), "llm_latency_ms_p95": percentile(llm_ms, 0.95),
         "tool_latency_ms_p50": percentile(tool_ms, 0.5), "tool_latency_ms_p95": percentile(tool_ms, 0.95),
         "first_token_ms_p50": percentile([float(e.get("payload", {}).get("first_token_ms")) for e in llm if e.get("payload", {}).get("first_token_ms") is not None], 0.5),
+        "orchestration": orchestration_metrics_from_events(events),
     }
 
 

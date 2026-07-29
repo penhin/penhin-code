@@ -10,6 +10,8 @@ from .config import load_evaluation_config, offline_preflight
 from .io import read_json, write_json
 from .report import compare_reports, generate_report
 from .runner import RUNS_ROOT, run_suite
+from .observer import read_events
+from .trace import build_trace_summary
 
 
 def run_dir(run_id: str) -> Path:
@@ -52,6 +54,10 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--case", action="append", dest="case_ids", help="run only the selected case id; repeat for multiple cases")
     report = commands.add_parser("report")
     report.add_argument("run_id")
+    trace = commands.add_parser("trace")
+    trace.add_argument("run_id")
+    trace.add_argument("--case", required=True, dest="case_id")
+    trace.add_argument("--repetition", type=int, default=1)
     compare = commands.add_parser("compare")
     compare.add_argument("run_id")
     compare.add_argument("--baseline", required=True)
@@ -86,6 +92,18 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "report":
             report = generate_report(run_dir(args.run_id))
             print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 0
+        if args.command == "trace":
+            source = run_dir(args.run_id)
+            if args.repetition < 1:
+                raise ValueError("trace repetition must be positive")
+            summary = build_trace_summary(
+                read_events(source), case_id=args.case_id, repetition=args.repetition,
+            )
+            if not summary["event_count"]:
+                raise ValueError(f"no events found for {args.case_id} repetition {args.repetition}")
+            write_json(source / "traces" / f"{args.case_id}-{args.repetition}.json", summary)
+            print(json.dumps(summary, ensure_ascii=False, indent=2))
             return 0
         if args.command == "compare":
             current_dir, baseline_dir = run_dir(args.run_id), run_dir(args.baseline)

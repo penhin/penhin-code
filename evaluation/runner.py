@@ -105,6 +105,7 @@ def execute_case(run_dir: Path, run_id: str, suite: str, case: EvaluationCase, r
             "PYTHONPATH": str(PRODUCT_ROOT) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""),
             "PENHIN_EVAL_RUN_DIR": str(run_dir), "PENHIN_EVAL_RUN_ID": run_id,
             "PENHIN_EVAL_CASE_ID": case.id, "PENHIN_EVAL_REPETITION": str(repetition),
+            "PENHIN_TRACE_ID": f"{run_id}:{case.id}:{repetition}",
             "PENHIN_EVAL_BUDGET_CASE_KEY": f"{case.id}:{repetition}",
             "PENHIN_EVAL_BUDGET_FILE": str(run_dir / "budget.json"),
             "PENHIN_EVAL_MAX_TOTAL_TOKENS": str(config.max_total_tokens), "PENHIN_EVAL_MAX_USD": str(config.max_usd),

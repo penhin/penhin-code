@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 from uuid import uuid4
 
+from evaluation.observer import anonymous_id, emit
 from .models import IntegrationItem, IntegrationItemStatus, IntegrationRun, IntegrationRunStatus, JobStatus
 from .repositories import OrchestrationRepository
 from .worktrees import provision_integration_worktree
@@ -51,7 +52,6 @@ def start_integration(repository: OrchestrationRepository, root_task_id: str, jo
         id=run_id, root_task_id=root_task_id, base_commit=base_commit,
         worktree_path=worktree.path, worktree_branch=worktree.branch,
     ), items)
-    from evaluation.observer import emit
     emit("integration_started", integration_id=stored.id, root_task_id=root_task_id, item_count=len(items))
     return stored
 
@@ -67,19 +67,25 @@ def apply_integration(repository: OrchestrationRepository, run_id: str) -> Integ
         if item.status == IntegrationItemStatus.APPLIED:
             continue
         repository.transition_integration_item(item.id, IntegrationItemStatus.APPLYING)
+        emit(
+            "integration_item_started", integration_id=run.id, root_task_id=run.root_task_id,
+            integration_item_id=item.id, job_id=item.job_id, commit_count=len(item.commits), ordinal=item.ordinal,
+        )
         try:
             for commit in item.commits:
                 _git(run.worktree_path, "cherry-pick", commit)
         except RuntimeError as error:
             repository.transition_integration_item(item.id, IntegrationItemStatus.CONFLICT, str(error))
             repository.transition_integration_run(run.id, IntegrationRunStatus.NEEDS_RESOLUTION, error=str(error))
-            from evaluation.observer import emit
             emit("integration_completed", integration_id=run.id, status="needs_resolution", conflict_item_id=item.id)
             return repository.get_integration_run(run.id)
         repository.transition_integration_item(item.id, IntegrationItemStatus.APPLIED)
+        emit(
+            "integration_item_completed", integration_id=run.id, root_task_id=run.root_task_id,
+            integration_item_id=item.id, job_id=item.job_id, status="applied",
+        )
     result_commit = _git(run.worktree_path, "rev-parse", "HEAD")
     repository.transition_integration_run(run.id, IntegrationRunStatus.INTEGRATED, result_commit=result_commit)
-    from evaluation.observer import emit
     emit("integration_completed", integration_id=run.id, status="integrated", item_count=len(repository.list_integration_items(run_id)))
     return repository.get_integration_run(run.id)
 
@@ -92,6 +98,10 @@ def verify_integration(repository: OrchestrationRepository, run_id: str, command
         raise ValueError("Only an integrated run can be verified")
     if not command:
         raise ValueError("command must not be empty")
+    emit(
+        "integration_verification_started", integration_id=run.id, root_task_id=run.root_task_id,
+        command_digest=anonymous_id("\0".join(command)),
+    )
     repository.transition_integration_run(run.id, IntegrationRunStatus.VERIFYING, result_commit=run.result_commit)
     result = subprocess.run(command, cwd=run.worktree_path, capture_output=True, text=True, timeout=900, check=False)
     if result.returncode:
@@ -99,4 +109,10 @@ def verify_integration(repository: OrchestrationRepository, run_id: str, command
         repository.transition_integration_run(run.id, IntegrationRunStatus.VERIFICATION_FAILED, result_commit=run.result_commit, error=error)
     else:
         repository.transition_integration_run(run.id, IntegrationRunStatus.VERIFIED, result_commit=run.result_commit)
-    return repository.get_integration_run(run.id)
+    completed = repository.get_integration_run(run.id)
+    emit(
+        "integration_verification_completed", integration_id=run.id, root_task_id=run.root_task_id,
+        status=str(completed.status), returncode=result.returncode,
+        error_code="verification_failed" if result.returncode else None,
+    )
+    return completed

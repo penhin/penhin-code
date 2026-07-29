@@ -50,9 +50,14 @@ class PersistentScheduler:
             if self._started:
                 return
             self._terminate_verified_orphans()
-            self.repository.recover_interrupted_jobs()
-            self.repository.requeue_retryable_jobs()
+            recovered = self.repository.recover_interrupted_jobs()
+            requeued = self.repository.requeue_retryable_jobs()
             self._started = True
+        from evaluation.observer import emit
+        emit(
+            "orchestration_scheduler_started", backend=self.repository.backend_name,
+            max_workers=self.max_workers, recovered_jobs=recovered, requeued_jobs=requeued,
+        )
         self.dispatch()
 
     def dispatch(self) -> None:
@@ -66,10 +71,15 @@ class PersistentScheduler:
                 job, attempt = claimed
                 from evaluation.observer import emit
                 emit(
-                    "orchestration_job_claimed", job_id=job.id, attempt_id=attempt.id,
+                    "orchestration_job_claimed", root_task_id=job.root_task_id, job_id=job.id, attempt_id=attempt.id,
                     role=str(job.role), priority=job.priority, created_at=job.created_at, started_at=job.started_at,
+                    attempt_number=attempt.number, dependency_ids=job.depends_on, workspace_mode=job.workspace_mode,
                 )
                 process = self._spawn_worker(job, attempt)
+                emit(
+                    "orchestration_worker_spawned", root_task_id=job.root_task_id, job_id=job.id,
+                    attempt_id=attempt.id, worker_pid=process.pid,
+                )
                 monitor = self._monitor_pool.submit(process.wait)
                 active = ActiveJob(job=job, attempt=attempt, process=process, monitor=monitor)
                 if job.timeout_seconds:
@@ -84,6 +94,9 @@ class PersistentScheduler:
         environment = os.environ.copy()
         environment["PENHIN_DATABASE_URL"] = self.repository.database_url
         environment["PENHIN_WORKSPACE_MODE"] = job.workspace_mode
+        environment["PENHIN_ROOT_TASK_ID"] = job.root_task_id
+        environment["PENHIN_JOB_ID"] = job.id
+        environment["PENHIN_ATTEMPT_ID"] = attempt.id
         if not job.worktree_path:
             raise RuntimeError(f"Worker job {job.id} has no isolated worktree")
         return subprocess.Popen(
@@ -102,8 +115,11 @@ class PersistentScheduler:
 
     def _timeout(self, job_id: str, attempt_id: str) -> None:
         from evaluation.observer import emit
-        emit("orchestration_job_timed_out", job_id=job_id, attempt_id=attempt_id)
         active = self._active.get(job_id)
+        emit(
+            "orchestration_job_timed_out", root_task_id=active.job.root_task_id if active else "",
+            job_id=job_id, attempt_id=attempt_id, stage="execution", error_code="job_timeout",
+        )
         if active is not None:
             self._terminate(active.process)
         try:
@@ -121,25 +137,40 @@ class PersistentScheduler:
         try:
             exit_code = monitor.result()
             job = self.repository.get_job(job_id)
+            reconciled_worker_exit = False
             if job is not None and job.status == JobStatus.RUNNING:
-                self.repository.finish_attempt(
+                job = self.repository.finish_attempt(
                     active.attempt.id,
                     JobStatus.FAILED,
                     error=f"Worker exited without reporting a result (exit={exit_code})",
                     terminal_reason="worker_exit",
                 )
+                reconciled_worker_exit = True
+            from evaluation.observer import emit
+            emit(
+                "orchestration_worker_exited", root_task_id=active.job.root_task_id, job_id=job_id,
+                attempt_id=active.attempt.id, exit_code=exit_code,
+                job_status=str(job.status) if job is not None else "missing",
+                error_code="worker_exit" if reconciled_worker_exit else None,
+            )
         except ValueError:
             pass
         except Exception:
             logger.exception("[scheduler] failed to reconcile worker job_id=%s", job_id)
         finally:
-            self.repository.requeue_retryable_jobs()
+            requeued = self.repository.requeue_retryable_jobs()
+            if requeued:
+                from evaluation.observer import emit
+                emit("orchestration_jobs_requeued", count=requeued, trigger_job_id=job_id)
             self.dispatch()
 
     def request_cancel(self, job_id: str) -> AgentJob:
         job = self.repository.request_cancel(job_id)
         from evaluation.observer import emit
-        emit("orchestration_job_cancel_requested", job_id=job_id, status=str(job.status))
+        emit(
+            "orchestration_job_cancel_requested", root_task_id=job.root_task_id,
+            job_id=job_id, status=str(job.status), stage="cancellation",
+        )
         if job.status == JobStatus.RUNNING:
             with self._lock:
                 active = self._active.get(job_id)

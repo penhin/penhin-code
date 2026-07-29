@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import json
 from collections import Counter
 from pathlib import Path
 from statistics import mean
 from typing import Any
 
 from .io import read_json, write_json
-from .metrics import percentile, stability_by_case
+from .metrics import orchestration_metrics_from_events, percentile, stability_by_case
 from .observer import read_events
 
 
@@ -125,6 +126,7 @@ def build_report(run_dir: Path) -> dict[str, Any]:
             "schema_warning_calls": sum(round(float(item.get("metrics", {}).get("tool_schema_warning_rate", 0) or 0) * int(item.get("metrics", {}).get("tool_calls", 0) or 0)) for item in results),
             "parallel_calls": sum(int(item.get("metrics", {}).get("parallel_tool_calls", 0) or 0) for item in results),
         },
+        "orchestration": orchestration_metrics_from_events(events),
         "cost": costs, "budget": manifest.get("budget", {}),
     }
 
@@ -145,6 +147,14 @@ def markdown_report(report: dict[str, Any]) -> str:
     for field, value in report["quality"].items():
         lines.append(f"- {field}: {value:.2f}/5" if value is not None else f"- {field}: unavailable")
     lines.extend(["", "## Latency and tools", "", f"- End-to-end P50/P95: {report['latency']['end_to_end_ms_p50'] or 0:.0f}/{report['latency']['end_to_end_ms_p95'] or 0:.0f} ms", f"- Tool calls/failures/duplicates: {report['tools']['calls']}/{report['tools']['failures']}/{report['tools']['duplicate_calls']}"])
+    orchestration = report.get("orchestration", {})
+    lines.extend([
+        "", "## Orchestration trace", "",
+        f"- Plans started/validated/failed: {orchestration.get('plans_started', 0)}/{orchestration.get('plans_validated', 0)}/{orchestration.get('plans_failed', 0)}",
+        f"- Jobs created/succeeded/failed: {orchestration.get('jobs_created', 0)}/{orchestration.get('jobs_succeeded', 0)}/{orchestration.get('jobs_failed', 0)}",
+        f"- Invalid artifacts/integration conflicts: {orchestration.get('invalid_artifacts', 0)}/{orchestration.get('integration_conflicts', 0)}",
+        f"- Failure stages: {json.dumps(orchestration.get('failure_stages', {}), ensure_ascii=False, sort_keys=True)}",
+    ])
     return "\n".join(lines) + "\n"
 
 
