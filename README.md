@@ -17,23 +17,23 @@ python main.py
 
 ## 配置模型与 Provider
 
-Provider 是启动配置，不支持在同一会话中热切换。请在 `~/.penhin/.env` 或启动环境中选择一个 Provider、设置对应密钥和模型，然后重启程序。
+可以为多个 Provider 同时保存密钥，并在 CLI 中切换当前 Provider 与模型。配置保存在 `~/.penhin/.env`；进程环境变量可覆盖该配置。
 
 ```bash
 # Anthropic（默认）
 LLM_PROVIDER=anthropic
 ANTHROPIC_API_KEY=...
-MODEL_ID=claude-sonnet-4-6
+MODEL_ID=claude-sonnet-5
 
 # OpenAI（使用 Responses API）
 LLM_PROVIDER=openai
 OPENAI_API_KEY=...
-MODEL_ID=gpt-4.1
+MODEL_ID=gpt-5.6
 
 # Gemini
 LLM_PROVIDER=gemini
 GEMINI_API_KEY=...
-MODEL_ID=gemini-2.5-flash
+MODEL_ID=gemini-3.5-flash
 ```
 
 程序会校验官方 Provider 与模型前缀是否匹配。使用私有 Anthropic/OpenAI 网关时，设置对应 `*_BASE_URL` 会自动允许自定义模型；也可显式设置 `PENHIN_SKIP_MODEL_COMPATIBILITY_CHECK=1`。
@@ -41,12 +41,23 @@ MODEL_ID=gemini-2.5-flash
 常用命令：
 
 ```text
-/api-key <key>       保存当前 Provider 的密钥
+/api-key [provider] [key]  查看或保存指定 Provider 的密钥
 /model <model>       保存模型并立即用于当前会话
+/provider <provider> [model]  切换 Provider；可选地同时指定模型
 python main.py --model <model>  # 只覆盖当前会话
+python main.py --provider <provider> --model <model>  # 只覆盖当前会话
 ```
 
-启动环境变量优先级为：进程环境变量、`~/.penhin/.env`、项目根目录 `.env`。`/api-key` 和 `/model` 写入用户级 `~/.penhin/.env`。
+例如，先保存 OpenAI 密钥，再切换：
+
+```text
+/api-key openai sk-...
+/provider openai gpt-5.6
+```
+
+`/provider` 会校验模型兼容性和目标密钥；模型由 `/model` 与 `/status` 单独查看和设置。切换会保留当前会话记录，但建议在切换到能力差异较大的模型时使用 `/compact` 或 `--new` 开启新会话。
+
+启动环境变量优先级为：进程环境变量、`~/.penhin/.env`、项目根目录 `.env`。`/api-key`、`/model` 和 `/provider` 写入用户级 `~/.penhin/.env`。
 
 ## 本地编排存储
 

@@ -3,9 +3,10 @@ import os
 import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 
 from circuit_breaker import CircuitBreaker, CircuitBreakerOpen
 from config import ENV_FILE
@@ -15,6 +16,7 @@ from providers.types import LLMProvider, LLMRequest, LLMResponse, StreamCallback
 
 
 runtime = None
+environment_sources: dict[str, str] = {}
 
 logger = logging.getLogger("penhin.runtime")
 
@@ -233,11 +235,10 @@ def init_runtime() -> None:
     setup_logging()
 
     global runtime
-    load_dotenv(ENV_FILE, override=False)
-    load_dotenv(".env", override=False)
+    load_runtime_environment()
 
-    provider = os.getenv("LLM_PROVIDER", "").strip().lower() or "anthropic"
-    key_name = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "gemini": "GEMINI_API_KEY"}.get(provider)
+    provider = configured_provider()
+    key_name = provider_key_name(provider)
     if key_name is None:
         logger.error(f"Unsupported LLM_PROVIDER={provider!r}; choose anthropic, openai, or gemini")
         raise SystemExit(1)
@@ -268,7 +269,7 @@ def get_runtime() -> Runtime:
 
 
 def set_runtime_model(model: str) -> None:
-    validate_model(os.getenv("LLM_PROVIDER", "").strip().lower() or "anthropic", model)
+    validate_model(configured_provider(), model)
     if runtime is not None:
         runtime.model = model
 
@@ -278,8 +279,52 @@ def set_runtime_api_key(api_key: str) -> None:
         runtime.provider = build_provider_from_env()
 
 
+def set_runtime_provider(provider: str, model: str) -> None:
+    if provider_key_name(provider) is None:
+        raise ValueError(f"Unsupported provider: {provider}")
+    validate_model(provider, model)
+    if runtime is not None:
+        runtime.provider = build_provider_from_env()
+        runtime.model = model
+
+
+def provider_key_name(provider: str) -> str | None:
+    return {
+        "anthropic": "ANTHROPIC_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "gemini": "GEMINI_API_KEY",
+    }.get(provider)
+
+
+def configured_provider() -> str:
+    return os.getenv("LLM_PROVIDER", "").strip().lower() or "anthropic"
+
+
+def setting_source(name: str) -> str:
+    if not os.getenv(name):
+        return "not set"
+    return environment_sources.get(name, "Process environment")
+
+
+def mark_setting_source(name: str, source: str) -> None:
+    environment_sources[name] = source
+
+
+def load_runtime_environment() -> None:
+    environment_sources.clear()
+    original_names = set(os.environ)
+    for path, label in ((ENV_FILE, "User env"), (Path(".env"), "Project env")):
+        values = dotenv_values(path)
+        load_dotenv(path, override=False)
+        for name, value in values.items():
+            if name not in original_names and value is not None and name not in environment_sources:
+                environment_sources[name] = label
+    for name in original_names:
+        environment_sources[name] = "Process environment"
+
+
 def build_provider_from_env() -> LLMProvider:
-    provider = os.getenv("LLM_PROVIDER", "").strip().lower() or "anthropic"
+    provider = configured_provider()
     if provider == "anthropic":
         return AnthropicProvider.from_env()
     if provider == "openai":

@@ -14,7 +14,7 @@ from orchestration.repositories.postgres_repository import PostgresOrchestration
 from orchestration.planning import DAG_PROTOCOL_VERSION, parse_dag_plan
 from orchestration.service import create_isolated_agent_job, materialize_dag_plan
 from orchestration.worktrees import AgentWorktree
-from orchestration.artifacts import HANDOFF_PROTOCOL_VERSION, normalize_subagent_result
+from orchestration.artifacts import HANDOFF_PROTOCOL_VERSION, build_handoff, normalize_subagent_result
 from result import Result
 
 
@@ -110,6 +110,18 @@ def test_handoff_protocol_rejects_incomplete_payload_without_losing_raw_text() -
     assert valid is False
     assert content["protocol_valid"] is False
     assert content["raw_text"] == '{"summary": "not enough"}'
+
+
+def test_runtime_builds_valid_handoff_from_plain_text_and_tool_results() -> None:
+    content = build_handoff(
+        "Found the relevant validation path.",
+        producer={"job_id": "job-1", "role": "explore"},
+        tool_results=[{"tool_name": "read", "content": '{"ok": true, "message": "read file"}'}],
+    )
+
+    assert content["protocol_valid"] is True
+    assert content["summary"] == "Found the relevant validation path."
+    assert content["commands_run"] == [{"command": "tool:read", "outcome": "passed", "detail": "read file"}]
 
 
 def test_dag_protocol_accepts_dependencies_and_rejects_cycles() -> None:
@@ -230,7 +242,7 @@ def test_postgres_rejects_invalid_integration_transitions(repository: PostgresOr
         repository.transition_integration_run(run.id, IntegrationRunStatus.VERIFIED)
 
 
-def test_worker_marks_invalid_handoff_as_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_worker_wraps_plain_text_result_in_runtime_handoff(monkeypatch: pytest.MonkeyPatch) -> None:
     from orchestration import worker
 
     job = AgentJob(
@@ -257,8 +269,9 @@ def test_worker_marks_invalid_handoff_as_failed(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(worker, "init_runtime", lambda: None)
     monkeypatch.setitem(sys.modules, "subagent", types.SimpleNamespace(run_subagent=lambda *_args, **_kwargs: Result.success('{"summary":"invalid"}')))
 
-    assert worker.main() == 1
+    assert worker.main() == 0
     args, kwargs = repository.finished
-    assert args[1] == JobStatus.FAILED
-    assert kwargs["terminal_reason"] == "invalid_protocol"
-    assert kwargs["artifact"].schema_valid is False
+    assert args[1] == JobStatus.SUCCEEDED
+    assert kwargs["terminal_reason"] == "completed"
+    assert kwargs["artifact"].schema_valid is True
+    assert kwargs["artifact"].content["summary"] == '{"summary":"invalid"}'

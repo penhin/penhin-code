@@ -10,7 +10,17 @@ import ui
 from config import CONFIG_FILE, ENV_FILE, get_permission_mode, set_env_value, set_permission_mode
 from context import RunContext, conversation_turn_ranges, parse_snip_selectors
 from permissions import PERMISSION_MODES, PermissionMode, transition_mode
-from runtime import get_runtime, set_runtime_api_key, set_runtime_model
+from runtime import (
+    configured_provider,
+    get_runtime,
+    mark_setting_source,
+    provider_key_name,
+    set_runtime_api_key,
+    set_runtime_model,
+    set_runtime_provider,
+    setting_source,
+)
+from providers.models import validate_model
 from tool_runtime import runtime_permission_setup
 from tools.registry import tool_names
 from tools.workspace import workspace_info
@@ -112,7 +122,8 @@ def runtime_model() -> str:
 
 
 def build_status_lines(context: RunContext | None = None) -> list[str]:
-    provider = os.getenv("LLM_PROVIDER", "").strip().lower() or "anthropic"
+    provider = configured_provider()
+    key_name = provider_key_name(provider)
     base_url = provider_base_url(provider)
     lines = [
         f"Version: {os.getenv('PENHIN_VERSION', 'dev')}",
@@ -120,6 +131,11 @@ def build_status_lines(context: RunContext | None = None) -> list[str]:
         f"Session ID: {session_id(context)}",
         f"cwd: {workspace_info().get('cwd', '-')}",
         f"API provider: {provider_label(provider)}",
+        (
+            f"API key: configured ({key_name}; {setting_source(key_name)})"
+            if key_name and os.getenv(key_name)
+            else f"API key: not set ({key_name or '-'})"
+        ),
     ]
     if base_url:
         label, value = base_url
@@ -128,12 +144,21 @@ def build_status_lines(context: RunContext | None = None) -> list[str]:
         f"Proxy: {proxy_url()}",
         "",
         f"Model: {runtime_model()}",
+        model_compatibility_line(provider),
         "IDE: Not connected",
         "MCP servers: none",
         f"Permission mode: {get_permission_mode()}",
         f"Setting sources: {setting_sources()}",
     ])
     return lines
+
+
+def model_compatibility_line(provider: str) -> str:
+    try:
+        validate_model(provider, runtime_model())
+    except ValueError as error:
+        return f"Model compatibility: incompatible ({error})"
+    return "Model compatibility: compatible"
 
 
 def handle_status_command(args: list[str], context: RunContext | None = None):
@@ -185,7 +210,54 @@ def handle_model_command(args: list[str], context: RunContext | None = None):
         return
     os.environ["MODEL_ID"] = model
     set_env_value("MODEL_ID", model)
+    mark_setting_source("MODEL_ID", "User env")
     ui.print_info(f"model: {model}")
+
+
+def handle_provider_command(args: list[str], context: RunContext | None = None):
+    if not args:
+        ui.print_info(f"provider: {configured_provider()}")
+        return
+
+    provider = args[0].lower()
+    key_name = provider_key_name(provider)
+    if key_name is None:
+        ui.print_error(f"Unsupported provider: {provider}; choose anthropic, openai, or gemini")
+        return
+    if not os.getenv(key_name):
+        ui.print_error(f"{key_name} is not configured. Set it with /api-key {provider} KEY first.")
+        return
+
+    model = " ".join(args[1:]).strip() or runtime_model()
+    try:
+        validate_model(provider, model)
+    except ValueError:
+        ui.print_error(f"Model {model!r} is not compatible with {provider}. Use: /provider {provider} MODEL_ID")
+        return
+
+    old_provider = os.environ.get("LLM_PROVIDER")
+    old_model = os.environ.get("MODEL_ID")
+    os.environ["LLM_PROVIDER"] = provider
+    os.environ["MODEL_ID"] = model
+    try:
+        set_runtime_provider(provider, model)
+    except Exception as error:
+        if old_provider is None:
+            os.environ.pop("LLM_PROVIDER", None)
+        else:
+            os.environ["LLM_PROVIDER"] = old_provider
+        if old_model is None:
+            os.environ.pop("MODEL_ID", None)
+        else:
+            os.environ["MODEL_ID"] = old_model
+        ui.print_error(str(error))
+        return
+
+    set_env_value("LLM_PROVIDER", provider)
+    set_env_value("MODEL_ID", model)
+    mark_setting_source("LLM_PROVIDER", "User env")
+    mark_setting_source("MODEL_ID", "User env")
+    ui.print_info(f"provider: {provider}")
 
 
 def mask_secret(value: str) -> str:
@@ -195,11 +267,12 @@ def mask_secret(value: str) -> str:
 
 
 def handle_api_key_command(args: list[str], context: RunContext | None = None):
-    provider = os.getenv("LLM_PROVIDER", "").strip().lower() or "anthropic"
-    key_name = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "gemini": "GEMINI_API_KEY"}.get(provider)
-    if key_name is None:
-        ui.print_error(f"Unsupported provider: {provider}")
-        return
+    provider = configured_provider()
+    if args and provider_key_name(args[0].lower()) is not None:
+        provider = args[0].lower()
+        args = args[1:]
+    key_name = provider_key_name(provider)
+    assert key_name is not None
     if not args:
         value = os.getenv(key_name, "")
         if value:
@@ -210,12 +283,14 @@ def handle_api_key_command(args: list[str], context: RunContext | None = None):
 
     api_key = " ".join(args).strip()
     if not api_key:
-        ui.print_error(f"Usage: /api-key {key_name}")
+        ui.print_error(f"Usage: /api-key [{provider}] KEY")
         return
 
     os.environ[key_name] = api_key
     set_env_value(key_name, api_key)
-    set_runtime_api_key(api_key)
+    mark_setting_source(key_name, "User env")
+    if provider == configured_provider():
+        set_runtime_api_key(api_key)
     ui.print_info("api-key: saved")
 
 
@@ -319,11 +394,6 @@ LOCAL_COMMANDS = {
         description="Show or set permission mode",
         handler=handle_permission_command,
     ),
-    "/perm": LocalCommand(
-        name="/perm",
-        description="Alias for /permission",
-        handler=handle_permission_command,
-    ),
     "/help": LocalCommand(
         name="/help",
         description="Show local commands",
@@ -339,9 +409,14 @@ LOCAL_COMMANDS = {
         description="Show or set model id",
         handler=handle_model_command,
     ),
+    "/provider": LocalCommand(
+        name="/provider",
+        description="Show or switch provider",
+        handler=handle_provider_command,
+    ),
     "/api-key": LocalCommand(
         name="/api-key",
-        description="Show or set Anthropic API key",
+        description="Show or set a Provider API key",
         handler=handle_api_key_command,
     ),
     "/circuit": LocalCommand(

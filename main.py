@@ -61,6 +61,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--resume", "-r", metavar="ID", help="resume a specific session")
     parser.add_argument("--quality-gate", action="store_true", help="run syntax, diff, and test quality gates")
     parser.add_argument("--model", metavar="MODEL", help="use a model for this session without changing saved configuration")
+    parser.add_argument("--provider", choices=("anthropic", "openai", "gemini"), help="use a Provider for this session without changing saved configuration")
     return parser.parse_args(args)
 
 
@@ -69,6 +70,8 @@ def main() -> None:
 
     if args.model:
         os.environ["MODEL_ID"] = args.model
+    if args.provider:
+        os.environ["LLM_PROVIDER"] = args.provider
 
     if args.sessions:
         print_session_list()
@@ -121,7 +124,7 @@ def main() -> None:
     )
     workspace = workspace_info()
     provider = os.getenv("LLM_PROVIDER", "").strip().lower() or "anthropic"
-    api_label = {"anthropic": "Anthropic API", "openai": "OpenAI API"}.get(provider, provider or "Configured API")
+    api_label = {"anthropic": "Anthropic API", "openai": "OpenAI API", "gemini": "Gemini API"}.get(provider, provider or "Configured API")
     print_welcome(
         version=os.getenv("PENHIN_VERSION", "dev"),
         api=api_label,
