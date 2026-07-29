@@ -71,7 +71,10 @@ def build_subagent_system() -> str:
 def build_subagent_final_system() -> str:
     return SUBAGENT_SYSTEM + (
         "\n\n"
-        "The tool budget is exhausted. Use the available tool results and return the final concise summary now."
+        "The tool budget is exhausted. Use the available tool results and return the final handoff now. "
+        "This is a machine-consumed protocol, not a prose summary: output exactly one valid JSON object that "
+        "conforms to penhin.handoff/v1. Include every required field, including empty arrays where appropriate. "
+        "Do not call tools, do not emit tool-call markup, and do not use Markdown fences or explanatory text."
     )
 
 
@@ -82,9 +85,10 @@ def build_exploration_system() -> str:
 def build_exploration_final_system() -> str:
     return EXPLORATION_SYSTEM + (
         "\n\n"
-        "The tool budget is exhausted. Use the available tool results and return the final concise summary now. "
-        "Do not mention budget, guard, or tool limitations. Return only the strongest concrete findings, "
-        "with file paths when known, and mark uncertain items as risks. Keep the answer under 600 words."
+        "The tool budget is exhausted. Return the final handoff now. This is a machine-consumed protocol: "
+        "output exactly one valid JSON object that conforms to penhin.handoff/v1 and includes every required field. "
+        "Use empty arrays when there are no commands, changed files, risks, or questions. Do not call tools, "
+        "do not emit tool-call markup, and do not use Markdown fences or explanatory text. Keep string values concise."
     )
 
 

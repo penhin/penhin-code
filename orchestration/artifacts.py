@@ -22,7 +22,7 @@ CHANGE_KINDS = {"created", "modified", "deleted", "none"}
 
 def collaboration_protocol_instructions() -> str:
     return """
-Return the final handoff as one JSON object only, without Markdown fences or surrounding prose.
+Every terminal response, including a normal end_turn response, must be the final handoff below. Return one JSON object only, without Markdown fences or surrounding prose. Markdown headings, bullet lists, and an answer that begins with any text other than `{` are invalid.
 It must conform to penhin.handoff/v1:
 {
   "protocol_version": "penhin.handoff/v1",
@@ -34,6 +34,7 @@ It must conform to penhin.handoff/v1:
   "handoff": {"recommended_next_action": "specific next action", "suggested_roles": ["explore|planner|implement|verify|review"], "blocking_questions": []}
 }
 Use empty arrays when a section has no items. Never invent command output, file changes, or evidence.
+Before sending the response, verify that every required top-level field is present and that the entire response is valid JSON. This protocol requirement overrides any request to provide a prose summary.
 """.strip()
 
 
