@@ -120,7 +120,7 @@ def main() -> None:
         session_path=session_path,
     )
     workspace = workspace_info()
-    provider = os.getenv("LLM_PROVIDER", "anthropic").strip().lower()
+    provider = os.getenv("LLM_PROVIDER", "").strip().lower() or "anthropic"
     api_label = {"anthropic": "Anthropic API", "openai": "OpenAI API"}.get(provider, provider or "Configured API")
     print_welcome(
         version=os.getenv("PENHIN_VERSION", "dev"),

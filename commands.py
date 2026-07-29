@@ -112,7 +112,7 @@ def runtime_model() -> str:
 
 
 def build_status_lines(context: RunContext | None = None) -> list[str]:
-    provider = os.getenv("LLM_PROVIDER", "anthropic").strip().lower()
+    provider = os.getenv("LLM_PROVIDER", "").strip().lower() or "anthropic"
     base_url = provider_base_url(provider)
     lines = [
         f"Version: {os.getenv('PENHIN_VERSION', 'dev')}",
@@ -178,9 +178,13 @@ def handle_model_command(args: list[str], context: RunContext | None = None):
         ui.print_error("Usage: /model MODEL_ID")
         return
 
+    try:
+        set_runtime_model(model)
+    except ValueError as error:
+        ui.print_error(str(error))
+        return
     os.environ["MODEL_ID"] = model
     set_env_value("MODEL_ID", model)
-    set_runtime_model(model)
     ui.print_info(f"model: {model}")
 
 
@@ -191,7 +195,7 @@ def mask_secret(value: str) -> str:
 
 
 def handle_api_key_command(args: list[str], context: RunContext | None = None):
-    provider = os.getenv("LLM_PROVIDER", "anthropic").strip().lower()
+    provider = os.getenv("LLM_PROVIDER", "").strip().lower() or "anthropic"
     key_name = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "gemini": "GEMINI_API_KEY"}.get(provider)
     if key_name is None:
         ui.print_error(f"Unsupported provider: {provider}")

@@ -20,89 +20,68 @@ class OpenAIProvider:
         return cls(api_key=os.getenv("OPENAI_API_KEY"), base_url=os.getenv("OPENAI_BASE_URL"))
 
     def create_message(self, request: LLMRequest) -> LLMResponse:
-        response = self.client.chat.completions.create(**request_kwargs(request))
-        return normalize_response(response)
+        return normalize_response(self.client.responses.create(**request_kwargs(request)))
 
     def stream_message(self, request: LLMRequest, stream_callback: StreamCallback) -> LLMResponse:
-        stream = self.client.chat.completions.create(**request_kwargs(request), stream=True)
-        content_parts: list[str] = []
-        calls: dict[int, dict[str, str]] = {}
-        finish_reason = ""
-        usage = None
-        for chunk in stream:
-            usage = getattr(chunk, "usage", None) or usage
-            choice = chunk.choices[0] if getattr(chunk, "choices", None) else None
-            if choice is None:
-                continue
-            finish_reason = choice.finish_reason or finish_reason
-            delta = choice.delta
-            text = getattr(delta, "content", None)
-            if text:
-                content_parts.append(text)
-                stream_callback(text)
-            for call in getattr(delta, "tool_calls", None) or []:
-                item = calls.setdefault(call.index, {"id": "", "name": "", "arguments": ""})
-                item["id"] = call.id or item["id"]
-                function = getattr(call, "function", None)
-                if function is not None:
-                    item["name"] = function.name or item["name"]
-                    item["arguments"] += function.arguments or ""
-        return response_from_parts("".join(content_parts), list(calls.values()), finish_reason, usage)
+        completed = None
+        calls: dict[str, dict[str, str]] = {}
+        for event in self.client.responses.create(**request_kwargs(request), stream=True):
+            if event.type == "response.output_text.delta":
+                stream_callback(event.delta)
+            elif event.type == "response.function_call_arguments.done":
+                calls[event.item_id] = {"id": event.call_id, "name": event.name, "arguments": event.arguments}
+            elif event.type == "response.completed":
+                completed = event.response
+        if completed is None:
+            return response_from_parts("", list(calls.values()), None)
+        response = normalize_response(completed)
+        return response if response.content else response_from_parts("", list(calls.values()), completed.usage)
 
 
 def request_kwargs(request: LLMRequest) -> dict[str, Any]:
     kwargs: dict[str, Any] = {
         "model": request.model,
-        "messages": openai_messages(request.system, request.messages),
-        "max_tokens": request.max_tokens,
+        "instructions": request.system,
+        "input": responses_input(request.messages),
+        "max_output_tokens": request.max_tokens,
+        "store": False,
     }
-    if request.tools is not None:
+    if request.tools:
         kwargs["tools"] = [
-            {"type": "function", "function": {"name": tool["name"], "description": tool["description"], "parameters": tool["input_schema"]}}
+            {"type": "function", "name": tool["name"], "description": tool["description"], "parameters": tool["input_schema"], "strict": False}
             for tool in request.tools
         ]
     return kwargs
 
 
-def openai_messages(system: str, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    projected: list[dict[str, Any]] = [{"role": "system", "content": system}]
+def responses_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
     for message in messages:
         role, content = message.get("role"), message.get("content")
         if role == "assistant" and isinstance(content, list):
             text = "".join(str(block.get("text", "")) for block in content if isinstance(block, dict) and block.get("type") == "text")
-            calls = [block for block in content if isinstance(block, dict) and block.get("type") == "tool_use"]
-            assistant: dict[str, Any] = {"role": "assistant", "content": text or None}
-            if calls:
-                assistant["tool_calls"] = [{"id": call["id"], "type": "function", "function": {"name": call["name"], "arguments": json.dumps(call.get("input", {}))}} for call in calls]
-            projected.append(assistant)
+            if text:
+                items.append({"role": "assistant", "content": [{"type": "output_text", "text": text}]})
+            items.extend({"type": "function_call", "call_id": block["id"], "name": block["name"], "arguments": json.dumps(block.get("input", {}))} for block in content if isinstance(block, dict) and block.get("type") == "tool_use")
         elif role == "user" and isinstance(content, list):
-            for result in content:
-                if isinstance(result, dict) and result.get("type") == "tool_result":
-                    projected.append({"role": "tool", "tool_call_id": result["tool_use_id"], "content": str(result.get("content", ""))})
+            items.extend({"type": "function_call_output", "call_id": block["tool_use_id"], "output": str(block.get("content", ""))} for block in content if isinstance(block, dict) and block.get("type") == "tool_result")
         elif role in {"user", "assistant"}:
-            projected.append({"role": role, "content": content if isinstance(content, str) else str(content)})
-    return projected
+            items.append({"role": role, "content": [{"type": "input_text", "text": str(content)}]})
+    return items
 
 
 def normalize_response(response: Any) -> LLMResponse:
-    choice = response.choices[0]
-    message = choice.message
-    calls = [{"id": call.id, "name": call.function.name, "arguments": call.function.arguments} for call in message.tool_calls or []]
-    return response_from_parts(message.content or "", calls, choice.finish_reason or "", getattr(response, "usage", None))
+    text = str(getattr(response, "output_text", "") or "")
+    calls = [{"id": item.call_id, "name": item.name, "arguments": item.arguments} for item in getattr(response, "output", []) if getattr(item, "type", "") == "function_call"]
+    return response_from_parts(text, calls, getattr(response, "usage", None))
 
 
-def response_from_parts(text: str, calls: list[dict[str, str]], finish_reason: str, usage: Any) -> LLMResponse:
-    content: list[dict[str, Any]] = []
-    if text:
-        content.append({"type": "text", "text": text})
+def response_from_parts(text: str, calls: list[dict[str, str]], usage: Any) -> LLMResponse:
+    content: list[dict[str, Any]] = ([{"type": "text", "text": text}] if text else [])
     for call in calls:
         try:
             arguments = json.loads(call["arguments"] or "{}")
         except json.JSONDecodeError:
             arguments = {}
         content.append({"type": "tool_use", "id": call["id"], "name": call["name"], "input": arguments})
-    return LLMResponse(
-        content=content,
-        stop_reason="tool_use" if calls or finish_reason == "tool_calls" else str(finish_reason),
-        usage=LLMUsage(input_tokens=int(getattr(usage, "prompt_tokens", 0) or 0), output_tokens=int(getattr(usage, "completion_tokens", 0) or 0)),
-    )
+    return LLMResponse(content=content, stop_reason="tool_use" if calls else "end_turn", usage=LLMUsage(input_tokens=int(getattr(usage, "input_tokens", 0) or 0), output_tokens=int(getattr(usage, "output_tokens", 0) or 0)))

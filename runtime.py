@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from circuit_breaker import CircuitBreaker, CircuitBreakerOpen
 from config import ENV_FILE
 from providers.anthropic import AnthropicProvider
+from providers.models import validate_model
 from providers.types import LLMProvider, LLMRequest, LLMResponse, StreamCallback
 
 
@@ -235,7 +236,7 @@ def init_runtime() -> None:
     load_dotenv(ENV_FILE, override=False)
     load_dotenv(".env", override=False)
 
-    provider = os.getenv("LLM_PROVIDER", "anthropic").strip().lower()
+    provider = os.getenv("LLM_PROVIDER", "").strip().lower() or "anthropic"
     key_name = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "gemini": "GEMINI_API_KEY"}.get(provider)
     if key_name is None:
         logger.error(f"Unsupported LLM_PROVIDER={provider!r}; choose anthropic, openai, or gemini")
@@ -246,6 +247,11 @@ def init_runtime() -> None:
         sys.exit(1)
 
     model = os.environ["MODEL_ID"]
+    try:
+        validate_model(provider, model)
+    except ValueError as error:
+        logger.error(str(error))
+        raise SystemExit(1)
     
     runtime = Runtime(
         provider=build_provider_from_env(),
@@ -262,6 +268,7 @@ def get_runtime() -> Runtime:
 
 
 def set_runtime_model(model: str) -> None:
+    validate_model(os.getenv("LLM_PROVIDER", "").strip().lower() or "anthropic", model)
     if runtime is not None:
         runtime.model = model
 
@@ -272,7 +279,7 @@ def set_runtime_api_key(api_key: str) -> None:
 
 
 def build_provider_from_env() -> LLMProvider:
-    provider = os.getenv("LLM_PROVIDER", "anthropic").strip().lower()
+    provider = os.getenv("LLM_PROVIDER", "").strip().lower() or "anthropic"
     if provider == "anthropic":
         return AnthropicProvider.from_env()
     if provider == "openai":
