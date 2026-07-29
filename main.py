@@ -8,7 +8,7 @@ import time
 
 from agent import agent_loop, run_once
 from commands import handle_local_command, setup_command_completion
-from config import get_permission_mode
+from config import get_permission_mode, get_version
 from context import RunContext
 from permissions import normalize_permission_mode
 from runtime import get_runtime, init_runtime
@@ -18,7 +18,6 @@ from tools.workspace import workspace_info
 from transcript import transcripts
 from ui import print_error, print_info, print_user_message, print_welcome, prompt_input
 from quality_gate import run_quality_gate
-from penhin_version import get_version
 
 
 logger = logging.getLogger("penhin.main")

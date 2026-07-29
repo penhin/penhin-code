@@ -70,7 +70,6 @@ py-modules = [
   "tool_runtime",
   "transcript",
   "ui",
-  "penhin_version",
 ]
 
 [tool.setuptools.packages.find]

@@ -7,7 +7,7 @@ from prompt_toolkit.completion import Completer, Completion
 
 import ui
 
-from config import CONFIG_FILE, ENV_FILE, get_permission_mode, set_env_value, set_permission_mode
+from config import CONFIG_FILE, ENV_FILE, get_permission_mode, get_version, set_env_value, set_permission_mode
 from context import RunContext, conversation_turn_ranges, parse_snip_selectors
 from permissions import PERMISSION_MODES, PermissionMode, transition_mode
 from runtime import (
@@ -24,7 +24,6 @@ from providers.models import validate_model
 from tool_runtime import runtime_permission_setup
 from tools.registry import tool_names
 from tools.workspace import workspace_info
-from penhin_version import get_version
 from transcript import session_id_from_path
 
 
