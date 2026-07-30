@@ -30,6 +30,10 @@ PRODUCT_ROOT = Path(__file__).resolve().parent.parent
 RUNS_ROOT = PRODUCT_ROOT / ".benchmarks" / "runs"
 
 
+def shared_budget_exceeded(error: object) -> bool:
+    return str(error).startswith("shared ")
+
+
 @contextmanager
 def evaluation_environment(run_dir: Path, run_id: str, config: EvaluationConfig):
     values = {
@@ -137,7 +141,13 @@ def execute_case(run_dir: Path, run_id: str, suite: str, case: EvaluationCase, r
                 worker = read_json(worker_output)
                 result.final_answer = worker.get("message", "")
                 result.error = worker.get("error", "")
-                result.status = "completed" if worker.get("ok") else ("budget_stopped" if worker.get("meta", {}).get("error_type") == "BudgetExceeded" else "failed")
+                if worker.get("ok"):
+                    result.status = "completed"
+                elif worker.get("meta", {}).get("error_type") == "BudgetExceeded":
+                    result.status = "budget_stopped" if shared_budget_exceeded(result.error) else "failed"
+                    result.metrics["local_budget_exceeded"] = result.status == "failed"
+                else:
+                    result.status = "failed"
                 result.metrics.update(worker.get("meta", {}))
             else:
                 result.status, result.error = "crashed", (stderr or stdout or f"worker exit={process.returncode}")[-4000:]
@@ -174,7 +184,8 @@ def execute_case(run_dir: Path, run_id: str, suite: str, case: EvaluationCase, r
                     result.judge = run_judge(case, result.final_answer, result.diff_summary, [asdict(check) for check in checks], f"{case.id}:{repetition}")
             except BudgetExceeded as error:
                 result.judge_error = str(error)
-                result.status = "budget_stopped"
+                if shared_budget_exceeded(error):
+                    result.status = "budget_stopped"
             except Exception as error:
                 result.judge_error = str(error)
         else:
@@ -234,6 +245,18 @@ def run_suite(
     budget.update_limits(config.max_total_tokens, config.max_usd)
     budget.release_stale()
     existing_results = {path.stem: read_json(path) for path in (run_dir / "results").glob("*.json")}
+    for key, previous in existing_results.items():
+        if previous.get("status") != "budget_stopped":
+            continue
+        error = previous.get("error") or previous.get("judge_error", "")
+        if shared_budget_exceeded(error):
+            continue
+        previous["status"] = previous.get("metrics", {}).get("execution_status", "failed")
+        if previous["status"] == "budget_stopped":
+            previous["status"] = "failed"
+        previous["completed"] = True
+        previous.setdefault("metrics", {})["local_budget_exceeded"] = True
+        write_json(run_dir / "results" / f"{key}.json", previous)
     completed_keys = {key for key, value in existing_results.items() if value.get("status") != "budget_stopped"}
     budget_stopped = False
     pending: list[tuple[EvaluationCase, int]] = []

@@ -44,11 +44,44 @@ def _candidate(text: str) -> str:
     return stripped
 
 
+def canonicalize_dag_keys(payload: Any) -> Any:
+    """Normalize harmless model formatting differences without changing topology."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("jobs"), list):
+        return payload
+    original_keys = [job.get("key") for job in payload["jobs"] if isinstance(job, dict)]
+    if not original_keys or not all(isinstance(key, str) for key in original_keys):
+        return payload
+    if len(original_keys) != len(set(original_keys)):
+        return payload
+    normalized = json.loads(json.dumps(payload))
+    mapping: dict[str, str] = {}
+    used: set[str] = set()
+    for index, original in enumerate(original_keys, 1):
+        key = re.sub(r"[^a-z0-9]+", "-", original.lower()).strip("-")
+        if not key or not key[0].isalpha():
+            key = f"job-{key or index}"
+        key = key[:64].rstrip("-")
+        candidate, suffix = key, 2
+        while candidate in used:
+            tail = f"-{suffix}"
+            candidate, suffix = key[:64 - len(tail)].rstrip("-") + tail, suffix + 1
+        mapping[original] = candidate
+        used.add(candidate)
+    for job in normalized["jobs"]:
+        job["key"] = mapping[job["key"]]
+        if isinstance(job.get("depends_on"), list):
+            job["depends_on"] = [mapping.get(item, item) for item in job["depends_on"]]
+    if isinstance(normalized.get("final_job_keys"), list):
+        normalized["final_job_keys"] = [mapping.get(item, item) for item in normalized["final_job_keys"]]
+    return normalized
+
+
 def parse_dag_plan(text: str) -> tuple[dict[str, Any], list[str]]:
     try:
         payload = json.loads(_candidate(text))
     except json.JSONDecodeError as error:
         return {}, [f"invalid JSON: {error.msg}"]
+    payload = canonicalize_dag_keys(payload)
     errors = validate_dag_plan(payload)
     return payload if isinstance(payload, dict) else {}, errors
 

@@ -194,6 +194,14 @@ def compare_reports(current: dict[str, Any], baseline: dict[str, Any]) -> dict[s
             drop = baseline_layer["completion_rate"] - current["by_layer"][layer]["completion_rate"]
             if drop > 0.10:
                 failures.append(f"{layer} completion dropped by {drop:.1%}")
+    for mode, baseline_mode in baseline.get("multi_agent_by_plan_mode", {}).items():
+        current_mode = current.get("multi_agent_by_plan_mode", {}).get(mode)
+        if current_mode is None:
+            failures.append(f"multi-agent plan mode disappeared: {mode}")
+            continue
+        drop = baseline_mode["completion_rate"] - current_mode["completion_rate"]
+        if drop > 0.10:
+            failures.append(f"multi-agent {mode} completion dropped by {drop:.1%}")
     if current["safety_violations"] or not current["product_repository_unchanged"]:
         failures.append("safety invariant failed")
     baseline_bad = sum(baseline["statuses"].get(key, 0) for key in ("crashed", "timed_out", "failed")) / max(1, baseline["planned_runs"])

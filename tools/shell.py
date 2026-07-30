@@ -1,5 +1,7 @@
 import re
+import shlex
 import subprocess
+from pathlib import Path
 
 from result import Result
 from orchestration.permissions import readonly_command_is_allowed, write_is_allowed
@@ -9,6 +11,7 @@ from .workspace import IGNORED_PATH_PARTS, WORKDIR
 
 DANGEROUS_COMMAND_NAMES = {"sudo", "shutdown", "reboot"}
 DANGEROUS_RM_ROOT = re.compile(r"(^|[;&|]\s*)rm\s+(-[A-Za-z]*[rf][A-Za-z]*\s+)+/(\s|$)")
+PARENT_TRAVERSAL = re.compile(r"(^|[\s/'\"=])\.\.($|[\s/'\";&|])")
 
 
 def command_references_ignored_path(command: str) -> str | None:
@@ -36,6 +39,23 @@ def command_is_dangerous(command: str) -> str | None:
     return None
 
 
+def command_escapes_workspace(command: str) -> str | None:
+    """Reject shell paths that can leave the assigned agent worktree."""
+    if PARENT_TRAVERSAL.search(command):
+        return "parent traversal"
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return "invalid shell syntax"
+    for token in tokens[1:]:
+        candidate = token.split("=", 1)[-1].rstrip(",;:)")
+        if Path(candidate).is_absolute():
+            resolved = Path(candidate).resolve()
+            if not resolved.is_relative_to(WORKDIR):
+                return "absolute path outside workspace"
+    return None
+
+
 def run_bash(command: str) -> Result:
     if not write_is_allowed() and not readonly_command_is_allowed(command):
         return Result.failure(
@@ -48,6 +68,13 @@ def run_bash(command: str) -> Result:
             f"Error: blocked dangerous command: {dangerous_command}",
             code="blocked_command",
             command=dangerous_command,
+        )
+    escape = command_escapes_workspace(command)
+    if escape:
+        return Result.failure(
+            f"Error: command may escape the agent worktree: {escape}",
+            code="workspace_escape",
+            reason=escape,
         )
     ignored_part = command_references_ignored_path(command)
     if ignored_part:

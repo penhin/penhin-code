@@ -4,12 +4,12 @@ cases:
     id: main-explore-architecture
     layer: main
     category: exploration
-    prompt: Inspect this repository and explain its modules and data flow. Do not modify files.
-    fixture: fixtures/python-mini
+    prompt: Inspect this Go module and explain its packages, exported APIs, and test flow. Do not modify files.
+    fixture: fixtures/go-mini
     timeout_seconds: 180
     allowed_paths: [__no_changes__]
     expected_tools: [list, read]
-    rubric: The explanation should accurately connect calculator, text utilities, inventory, and tests.
+    rubric: The explanation should accurately connect the calc and textutil packages with the Go test layout.
   - schema_version: penhin.eval.case/v1
     id: main-explore-bug
     layer: main
@@ -34,8 +34,8 @@ cases:
     id: main-explore-api
     layer: main
     category: exploration
-    prompt: Produce a concise API inventory of public functions and methods. Do not modify files.
-    fixture: fixtures/python-mini
+    prompt: Produce a concise API inventory of the JavaScript ES modules and exported functions or classes. Do not modify files.
+    fixture: fixtures/javascript-mini
     timeout_seconds: 180
     allowed_paths: [__no_changes__]
     expected_tools: [search, read]
@@ -68,12 +68,12 @@ cases:
     id: main-implement-average
     layer: main
     category: implementation
-    prompt: Add an average(values) helper that rejects an empty input, with tests.
-    fixture: fixtures/python-mini
+    prompt: Add an average(values) export to src/math.js that rejects an empty input, with Node tests.
+    fixture: fixtures/javascript-mini
     timeout_seconds: 240
-    allowed_paths: [calculator.py, test_project.py]
-    content_checks: [{path: calculator.py, contains: "def average"}]
-    commands: [{command: [python3, -m, unittest, -q]}]
+    allowed_paths: [src/math.js, test/project.test.js]
+    content_checks: [{path: src/math.js, contains: "function average"}]
+    commands: [{command: [node, --test]}]
     expected_tools: [read, edit, bash]
     rubric: Correctly support general iterables or clearly document accepted input.
   - schema_version: penhin.eval.case/v1
@@ -140,12 +140,12 @@ cases:
     id: main-debug-subtract
     layer: main
     category: debugging
-    prompt: A hidden test reports subtract(7, 2) is not 5. Diagnose, fix, and test the defect.
-    fixture: fixtures/python-mini
+    prompt: A hidden Go test reports calc.Subtract(7, 2) is not 5. Diagnose, fix, and test the defect.
+    fixture: fixtures/go-mini
     timeout_seconds: 240
-    allowed_paths: [calculator.py, test_project.py]
-    content_checks: [{path: calculator.py, contains: "return left - right"}]
-    commands: [{command: [python3, -m, unittest, -q]}]
+    allowed_paths: [calc/calc.go, calc/calc_test.go]
+    content_checks: [{path: calc/calc.go, contains: "return left - right"}]
+    commands: [{command: [go, test, ./...]}]
     expected_tools: [read, bash, edit]
     rubric: Demonstrate diagnosis and regression verification.
   - schema_version: penhin.eval.case/v1
@@ -189,12 +189,12 @@ cases:
     layer: subagent
     category: exploration
     agent_role: explore
-    prompt: Find correctness defects and report file-level evidence. Do not edit.
-    fixture: fixtures/python-mini
+    prompt: Find correctness defects in this Go module and report file-level evidence. Do not edit.
+    fixture: fixtures/go-mini
     timeout_seconds: 180
     allowed_paths: [__no_changes__]
     expected_tools: [search, read]
-    rubric: Identify the subtract and word_count defects with evidence.
+    rubric: Identify the Subtract defect and the missing regression coverage with evidence.
   - schema_version: penhin.eval.case/v1
     id: child-explore-coverage
     layer: subagent
@@ -222,8 +222,8 @@ cases:
     layer: subagent
     category: planning
     agent_role: plan
-    prompt: Plan a backward-compatible refactor into a package layout. Do not modify files.
-    fixture: fixtures/python-mini
+    prompt: Plan a backward-compatible Go package refactor that introduces an internal validation package. Do not modify files.
+    fixture: fixtures/go-mini
     timeout_seconds: 180
     allowed_paths: [__no_changes__]
     expected_tools: [list, read]
@@ -246,12 +246,12 @@ cases:
     layer: subagent
     category: implementation
     agent_role: general
-    prompt: Implement and test text_utils.slugify.
-    fixture: fixtures/python-mini
+    prompt: Implement and test a slugify export in src/text.js.
+    fixture: fixtures/javascript-mini
     timeout_seconds: 240
-    allowed_paths: [text_utils.py, test_project.py]
-    content_checks: [{path: text_utils.py, contains: "def slugify"}]
-    commands: [{command: [python3, -m, unittest, -q]}]
+    allowed_paths: [src/text.js, test/project.test.js]
+    content_checks: [{path: src/text.js, contains: "function slugify"}]
+    commands: [{command: [node, --test]}]
     expected_tools: [read, edit, bash]
     rubric: Implement a tested and concise helper.
   - schema_version: penhin.eval.case/v1
@@ -270,8 +270,8 @@ cases:
     layer: subagent
     category: verification
     agent_role: verification
-    prompt: Verify APIs, tests, and likely edge cases, then give a verdict. Do not edit.
-    fixture: fixtures/python-mini
+    prompt: Verify the JavaScript module exports, Node tests, and likely edge cases, then give a verdict. Do not edit.
+    fixture: fixtures/javascript-mini
     timeout_seconds: 180
     allowed_paths: [__no_changes__]
     expected_tools: [read, bash]
@@ -293,8 +293,8 @@ cases:
     layer: multi_agent
     category: orchestration
     scenario: parallel_explore
-    prompt: Use parallel exploration for correctness and coverage, then synthesize a minimal implementation plan and final answer.
-    fixture: fixtures/python-mini
+    prompt: Use parallel exploration of this Go module for correctness and coverage, then synthesize a minimal implementation plan and final answer without changing files.
+    fixture: fixtures/go-mini
     timeout_seconds: 600
     allowed_paths: [__no_changes__]
     rubric: Parallel findings should be non-duplicative and synthesized.
@@ -303,12 +303,12 @@ cases:
     layer: multi_agent
     category: orchestration
     scenario: implement_verify
-    prompt: Add and test Inventory.remove through an implementation node followed by an independent verification node.
-    fixture: fixtures/python-mini
+    prompt: Add and test Inventory.remove in src/inventory.js through an implementation node followed by an independent verification node.
+    fixture: fixtures/javascript-mini
     timeout_seconds: 600
-    allowed_paths: [inventory.py, test_project.py]
-    content_checks: [{path: inventory.py, contains: "def remove"}]
-    commands: [{command: [python3, -m, unittest, -q]}]
+    allowed_paths: [src/inventory.js, test/project.test.js]
+    content_checks: [{path: src/inventory.js, contains: "remove("}]
+    commands: [{command: [node, --test]}]
     rubric: Verification must inspect the integrated implementation.
   - schema_version: penhin.eval.case/v1
     id: multi-invalid-artifact

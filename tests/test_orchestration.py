@@ -13,7 +13,7 @@ import pytest
 from orchestration.models import AgentJob, AgentRole, Artifact, IntegrationItem, IntegrationItemStatus, IntegrationRun, IntegrationRunStatus, JobStatus
 from orchestration.repositories.postgres_repository import PostgresOrchestrationRepository
 from orchestration.planning import DAG_PROTOCOL_VERSION, fallback_dag_plan, normalize_dag_plan, parse_dag_plan
-from orchestration.service import create_isolated_agent_job, materialize_dag_plan
+from orchestration.service import create_isolated_agent_job, implementation_jobs_for_final_outputs, materialize_dag_plan
 from orchestration.worker import prepare_dependency_context
 from orchestration.worktrees import AgentWorktree
 from orchestration.artifacts import build_handoff
@@ -22,9 +22,9 @@ from result import Result
 
 @pytest.fixture
 def repository() -> PostgresOrchestrationRepository:
-    database_url = os.environ.get("PENHIN_DATABASE_URL")
+    database_url = os.environ.get("PENHIN_TEST_POSTGRES_URL", "")
     if not database_url:
-        pytest.skip("PENHIN_DATABASE_URL is required for PostgreSQL integration tests")
+        pytest.skip("PENHIN_TEST_POSTGRES_URL is required for PostgreSQL integration tests")
     repository = PostgresOrchestrationRepository(database_url)
     repository.initialize()
     return repository
@@ -156,6 +156,22 @@ def test_dag_protocol_recovers_embedded_json_and_has_safe_fallback() -> None:
     assert changes
 
 
+def test_dag_protocol_canonicalizes_model_key_format_without_changing_edges() -> None:
+    plan = {
+        "protocol_version": DAG_PROTOCOL_VERSION, "goal": "Implement",
+        "jobs": [
+            {"key": "Inspect_Code", "agent_type": "explore", "instruction": "Inspect", "depends_on": []},
+            {"key": "2. Implement", "agent_type": "general", "instruction": "Implement", "depends_on": ["Inspect_Code"]},
+        ],
+        "final_job_keys": ["2. Implement"],
+    }
+    parsed, errors = parse_dag_plan(json.dumps(plan))
+    assert errors == []
+    assert [job["key"] for job in parsed["jobs"]] == ["inspect-code", "job-2-implement"]
+    assert parsed["jobs"][1]["depends_on"] == ["inspect-code"]
+    assert parsed["final_job_keys"] == ["job-2-implement"]
+
+
 def test_plan_normalization_does_not_infer_permissions_from_prompt_keywords() -> None:
     plan = {
         "protocol_version": DAG_PROTOCOL_VERSION, "goal": "Review",
@@ -212,6 +228,44 @@ def test_dependency_commit_propagation_is_repository_agnostic(tmp_path: Path) ->
     assert commits == [dependency_commit]
     assert context[0]["summary"] == "Updated an arbitrary Rust module"
     assert "{ 2 }" in (tmp_path / "unrelated_module.rs").read_text(encoding="utf-8")
+
+
+def test_finalization_selects_only_leaf_implementation_jobs() -> None:
+    inspect = SimpleNamespace(id="inspect", role=AgentRole.EXPLORE, status=JobStatus.SUCCEEDED, depends_on=[], result_artifact_id="inspect-artifact")
+    first = SimpleNamespace(id="first", role=AgentRole.GENERAL, status=JobStatus.SUCCEEDED, depends_on=["inspect"], result_artifact_id="first-artifact")
+    second = SimpleNamespace(id="second", role=AgentRole.GENERAL, status=JobStatus.SUCCEEDED, depends_on=["first"], result_artifact_id="second-artifact")
+    verify = SimpleNamespace(id="verify", role=AgentRole.VERIFY, status=JobStatus.SUCCEEDED, depends_on=["second"], result_artifact_id="verify-artifact")
+    jobs = {job.id: job for job in (inspect, first, second, verify)}
+    artifacts = {
+        "first-artifact": Artifact("first-artifact", "first", "agent_handoff.v1", {"change_set": {"commits": ["a"]}}),
+        "second-artifact": Artifact("second-artifact", "second", "agent_handoff.v1", {"change_set": {"commits": ["a", "b"]}}),
+    }
+
+    class Repository:
+        def get_job(self, job_id: str):
+            return jobs.get(job_id)
+
+        def get_artifact(self, artifact_id: str):
+            return artifacts.get(artifact_id)
+
+    selected = implementation_jobs_for_final_outputs(Repository(), ["verify"])
+    assert [job.id for job in selected] == ["second"]
+
+
+def test_finalization_ignores_general_jobs_with_empty_change_sets() -> None:
+    general = SimpleNamespace(
+        id="general", role=AgentRole.GENERAL, status=JobStatus.SUCCEEDED,
+        depends_on=[], result_artifact_id="artifact",
+    )
+
+    class Repository:
+        def get_job(self, job_id: str):
+            return general if job_id == "general" else None
+
+        def get_artifact(self, artifact_id: str):
+            return Artifact("artifact", "general", "agent_handoff.v1", {"change_set": {"commits": []}})
+
+    assert implementation_jobs_for_final_outputs(Repository(), ["general"]) == []
 
 
 def test_materialized_dag_uses_persistent_dependency_ids(

@@ -12,9 +12,9 @@ from tools import tasks as task_tools
 from message_flow import block_get
 
 try:
-    from dotenv import load_dotenv
+    from dotenv import dotenv_values
 except ModuleNotFoundError:
-    load_dotenv = None
+    dotenv_values = None
 
 
 SYSTEM = (
@@ -84,8 +84,13 @@ def text_blocks(content) -> str:
 
 
 def require_real_llm_enabled() -> bool:
-    if load_dotenv is not None:
-        load_dotenv()
+    if dotenv_values is not None:
+        # Real-model tests may opt into local credentials, but must not import
+        # database or other product configuration into the pytest process.
+        values = dotenv_values()
+        for name in ("ANTHROPIC_API_KEY", "MODEL_ID", "LLM_PROVIDER"):
+            if values.get(name):
+                os.environ.setdefault(name, str(values[name]))
 
     if os.getenv("RUN_LLM_TOOL_TESTS") != "1":
         print("skipped: set RUN_LLM_TOOL_TESTS=1 to run real LLM tool tests")

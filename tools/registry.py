@@ -9,6 +9,7 @@ from .glob import run_glob
 from .orchestration import (
     run_agent_artifact_show,
     run_agent_dag_show,
+    run_agent_dag_finalize,
     run_agent_job_cancel,
     run_agent_job_list,
     run_agent_job_show,
@@ -313,6 +314,23 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         available_to_child=False,
         available_to_parent=True,
         approval=ToolApproval(),
+    ),
+    "agent_dag_finalize": ToolSpec(
+        name="agent_dag_finalize",
+        description="Finalize completed DAG outputs into one isolated integration worktree and optionally verify it. It never updates main.",
+        input_schema=object_schema({
+            "root_task_id": {"type": "string"},
+            "final_job_ids": {"type": "array", "items": {"type": "string"}},
+            "command": {"type": "array", "items": {"type": "string"}},
+        }, ["root_task_id", "final_job_ids"]),
+        category=ToolCategory.state,
+        handler=lambda **kwargs: run_agent_dag_finalize(
+            kwargs["root_task_id"], kwargs["final_job_ids"], kwargs.get("command"),
+        ),
+        parallel_safe=False,
+        available_to_child=False,
+        available_to_parent=True,
+        approval=ToolApproval(requires_approval=True, key=_input_value_key("command")),
     ),
     "agent_job_wait": ToolSpec(
         name="agent_job_wait",

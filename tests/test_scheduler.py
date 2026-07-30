@@ -23,9 +23,9 @@ class SchedulerForTest(PersistentScheduler):
 
 @pytest.fixture
 def repository() -> PostgresOrchestrationRepository:
-    database_url = os.environ.get("PENHIN_DATABASE_URL")
+    database_url = os.environ.get("PENHIN_TEST_POSTGRES_URL", "")
     if not database_url:
-        pytest.skip("PENHIN_DATABASE_URL is required for PostgreSQL scheduler integration tests")
+        pytest.skip("PENHIN_TEST_POSTGRES_URL is required for PostgreSQL scheduler integration tests")
     repository = PostgresOrchestrationRepository(database_url)
     repository.initialize()
     return repository

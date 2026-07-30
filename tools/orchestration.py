@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from orchestration.integration import apply_integration, start_integration, verify_integration
-from orchestration.service import create_dag_plan, repository_from_env, wait_for_job
+from orchestration.service import create_dag_plan, finalize_dag, repository_from_env, wait_for_job
 from result import Result
 
 
@@ -110,6 +110,20 @@ def run_agent_job_wait(id: str, timeout_seconds: int = 30) -> Result:
         },
     }
     return Result.success(json.dumps(data, ensure_ascii=False, indent=2), data=data)
+
+
+def run_agent_dag_finalize(
+    root_task_id: str,
+    final_job_ids: list[str],
+    command: list[str] | None = None,
+) -> Result:
+    repository, failure = _repository_or_failure()
+    if failure:
+        return failure
+    outcome = finalize_dag(repository, root_task_id, final_job_ids, command)
+    if not outcome.ok:
+        return outcome
+    return Result.success(json.dumps(outcome.data, ensure_ascii=False, indent=2), data=outcome.data)
 
 
 def _integration_data(repository, run_id: str) -> dict:

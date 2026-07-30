@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "penhin-code"
-version = "0.1.0"
+version = "0.1.1"
 description = "面向本地开发的轻量 coding agent"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -77,4 +77,12 @@ py-modules = [
 include = ["evaluation*", "orchestration*", "providers*", "tools*"]
 
 [tool.setuptools.package-data]
-evaluation = ["suites/**/*.yaml", "suites/**/fixtures/**/*.py", "suites/**/fixtures/**/*.md"]
+evaluation = [
+  "suites/**/*.yaml",
+  "suites/**/fixtures/**/*.py",
+  "suites/**/fixtures/**/*.md",
+  "suites/**/fixtures/**/*.js",
+  "suites/**/fixtures/**/*.json",
+  "suites/**/fixtures/**/*.go",
+  "suites/**/fixtures/**/go.mod",
+]

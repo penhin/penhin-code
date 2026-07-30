@@ -6,6 +6,20 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-30
+
+### Fixed
+
+- Removed benchmark-specific multi-agent planning behavior and added generic DAG protocol recovery.
+- Isolated default tests from developer database configuration and made PostgreSQL integration opt-in.
+- Prevented Agent shell commands from traversing outside their assigned worktree.
+- Added explicit DAG finalization into an isolated, verifiable integration worktree.
+
+### Changed
+
+- Split model-driven and fixture-driven multi-agent regression gates.
+- Diversified the baseline suite across Python, JavaScript, and Go fixtures.
+
 ## [0.1.0] - 2026-07-30
 
 ### Added
@@ -24,5 +38,6 @@ All notable changes to this project will be documented in this file. The format 
 - Standardized project verification on pytest and removed the obsolete smoke-test runner.
 - Removed superseded compatibility helpers and unused runtime APIs.
 
-[Unreleased]: https://github.com/penhin/penhin-code/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/penhin/penhin-code/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/penhin/penhin-code/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/penhin/penhin-code/releases/tag/v0.1.0

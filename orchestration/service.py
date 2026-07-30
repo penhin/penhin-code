@@ -191,6 +191,100 @@ def materialize_dag_plan(repository: OrchestrationRepository, planner_job_id: st
     return data
 
 
+def implementation_jobs_for_final_outputs(
+    repository: OrchestrationRepository,
+    final_job_ids: list[str],
+) -> list[AgentJob]:
+    """Select leaf implementation jobs contributing to the requested final outputs."""
+    reachable: dict[str, AgentJob] = {}
+
+    def visit(job_id: str) -> None:
+        if job_id in reachable:
+            return
+        job = repository.get_job(job_id)
+        if job is None:
+            raise ValueError(f"Job {job_id} does not exist")
+        reachable[job_id] = job
+        for dependency_id in job.depends_on:
+            visit(dependency_id)
+
+    for final_job_id in final_job_ids:
+        visit(final_job_id)
+    implementations: dict[str, AgentJob] = {}
+    for job in reachable.values():
+        if job.role != AgentRole.GENERAL or job.status != JobStatus.SUCCEEDED or not job.result_artifact_id:
+            continue
+        artifact = repository.get_artifact(job.result_artifact_id)
+        change_set = artifact.content.get("change_set") if artifact and artifact.schema_valid else None
+        if isinstance(change_set, dict) and change_set.get("commits"):
+            implementations[job.id] = job
+    implementation_ancestors: set[str] = set()
+    for job in implementations.values():
+        stack = list(job.depends_on)
+        while stack:
+            dependency_id = stack.pop()
+            dependency = reachable.get(dependency_id)
+            if dependency is None:
+                continue
+            if dependency_id in implementations:
+                implementation_ancestors.add(dependency_id)
+            stack.extend(dependency.depends_on)
+    return [job for job in reachable.values() if job.id in implementations and job.id not in implementation_ancestors]
+
+
+def finalize_dag(
+    repository: OrchestrationRepository,
+    root_task_id: str,
+    final_job_ids: list[str],
+    verification_command: list[str] | None = None,
+) -> Result:
+    """Create and optionally verify one immutable integration result for a completed DAG."""
+    from .integration import apply_integration, start_integration, verify_integration
+    from .models import IntegrationRunStatus
+
+    final_jobs = [repository.get_job(job_id) for job_id in final_job_ids]
+    if not final_jobs or any(job is None or job.status != JobStatus.SUCCEEDED for job in final_jobs):
+        return Result.failure("All final DAG jobs must succeed before integration", code="dag_not_complete")
+    implementation_jobs = implementation_jobs_for_final_outputs(repository, final_job_ids)
+    if not implementation_jobs:
+        return Result.success(
+            "DAG completed without repository changes",
+            data={
+                "root_task_id": root_task_id, "integration_id": None,
+                "integration_status": "not_required", "worktree_path": final_jobs[0].worktree_path,
+                "implementation_job_ids": [],
+            },
+        )
+    try:
+        run = start_integration(repository, root_task_id, [job.id for job in implementation_jobs])
+        run = apply_integration(repository, run.id)
+        if run.status == IntegrationRunStatus.NEEDS_RESOLUTION:
+            return Result.failure(
+                run.error or "Integration requires conflict resolution",
+                code="integration_conflict", integration_id=run.id,
+                worktree_path=run.worktree_path,
+            )
+        if verification_command:
+            run = verify_integration(repository, run.id, verification_command)
+            if run.status != IntegrationRunStatus.VERIFIED:
+                return Result.failure(
+                    run.error or "Integration verification failed",
+                    code="integration_verification_failed", integration_id=run.id,
+                    worktree_path=run.worktree_path,
+                )
+    except (KeyError, ValueError, RuntimeError) as error:
+        return Result.failure(str(error), code="integration_failed")
+    return Result.success(
+        "DAG integration completed",
+        data={
+            "root_task_id": root_task_id, "integration_id": run.id,
+            "integration_status": str(run.status), "worktree_path": run.worktree_path,
+            "result_commit": run.result_commit,
+            "implementation_job_ids": [job.id for job in implementation_jobs],
+        },
+    )
+
+
 def create_dag_plan(goal: str) -> Result:
     """Run the planner, validate its structured artifact, then enqueue the DAG."""
     emit("orchestration_plan_started", goal_digest=anonymous_id(goal))

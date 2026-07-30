@@ -8,7 +8,7 @@ from tools import CHILD_TOOLS, PARENT_TOOLS, TOOL_SPECS, ToolCategory
 from tools.cache import tool_result_cache
 from tools.files import run_list, run_read, run_search, run_write
 from tools.glob import run_glob
-from tools.shell import command_is_dangerous
+from tools.shell import command_escapes_workspace, command_is_dangerous
 
 from tests.helpers import run_spec_tool
 
@@ -131,6 +131,13 @@ def test_bash_blocks_dangerous_commands() -> None:
     assert command_is_dangerous("shutdown now") == "shutdown"
     assert command_is_dangerous("rm -rf /") == "rm"
     assert command_is_dangerous("rm -fr / ") == "rm"
+
+
+def test_bash_blocks_paths_outside_assigned_worktree() -> None:
+    assert command_escapes_workspace("git status") is None
+    assert command_escapes_workspace("python3 -m unittest -q") is None
+    assert command_escapes_workspace("cd .. && printf unsafe") == "parent traversal"
+    assert command_escapes_workspace("git -C /tmp status") == "absolute path outside workspace"
 
 
 def test_workspace_tool() -> None:
@@ -264,6 +271,7 @@ def test_tool_schemas_match_handlers() -> None:
     assert parent_tool_names == {name for name, spec in TOOL_SPECS.items() if spec.available_to_parent}
     assert child_tool_names | parent_tool_names == spec_names
     assert approval_tool_names == {
+        "agent_dag_finalize",
         "background_start",
         "bash",
         "integration_verify",

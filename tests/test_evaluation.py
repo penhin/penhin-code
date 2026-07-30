@@ -20,6 +20,7 @@ from evaluation.observer import EvaluationObserver, read_events
 from evaluation.observer import observing
 from evaluation.report import compare_reports, generate_report
 from evaluation.shared_budget import SharedBudget
+from evaluation.runner import shared_budget_exceeded
 from evaluation.trace import build_trace_summary
 from providers.types import LLMResponse, LLMUsage
 
@@ -257,6 +258,13 @@ def test_shared_budget_releases_dead_process_reservations(tmp_path: Path) -> Non
     assert budget.snapshot()["reservations"] == {}
 
 
+def test_only_shared_budget_exhaustion_stops_the_batch() -> None:
+    assert shared_budget_exceeded("shared token budget would be exceeded: 101>100") is True
+    assert shared_budget_exceeded("shared USD budget would be exceeded: 2>1") is True
+    assert shared_budget_exceeded("primary token budget would be exceeded for case") is False
+    assert shared_budget_exceeded("judge token budget would be exceeded for case") is False
+
+
 def test_metrics_capture_tools_tokens_latency_and_stability() -> None:
     events = [
         {"event_type": "llm_call_completed", "payload": {"usage": {"input_tokens": 10, "output_tokens": 2}, "duration_ms": 100}},
@@ -404,6 +412,29 @@ def test_report_separates_model_and_fixture_driven_multi_agent_runs(tmp_path: Pa
     assert report["multi_agent_by_plan_mode"]["model_driven"]["runs"] == 1
     assert report["multi_agent_by_plan_mode"]["fixture_driven"]["runs"] == 1
     assert "reported separately" in (tmp_path / "report.md").read_text(encoding="utf-8")
+
+
+def test_regression_gate_does_not_let_fixture_runs_mask_model_planning_drop() -> None:
+    baseline = {
+        "task_completion_rate": 1.0, "by_layer": {}, "safety_violations": 0,
+        "product_repository_unchanged": True, "statuses": {}, "planned_runs": 20,
+        "quality": {field: 5 for field in ("correctness", "relevance", "evidence", "maintainability")},
+        "latency": {}, "cost": {"total_usd": 1},
+        "multi_agent_by_plan_mode": {
+            "model_driven": {"completion_rate": 1.0},
+            "fixture_driven": {"completion_rate": 1.0},
+        },
+    }
+    current = {
+        **baseline,
+        "multi_agent_by_plan_mode": {
+            "model_driven": {"completion_rate": 0.66},
+            "fixture_driven": {"completion_rate": 1.0},
+        },
+    }
+    comparison = compare_reports(current, baseline)
+    assert comparison["passed"] is False
+    assert any("model_driven" in failure for failure in comparison["failures"])
 
 
 def test_eval_cli_validates_built_in_suite() -> None:

@@ -54,7 +54,7 @@ def run_child(case: EvaluationCase) -> Result:
 def run_multi_agent(case: EvaluationCase) -> Result:
     from orchestration.models import TERMINAL_JOB_STATUSES, AgentRole, Artifact, JobStatus
     from orchestration.planning import validate_dag_plan
-    from orchestration.service import create_dag_plan, materialize_dag_plan, repository_from_env, scheduler_from_env, wait_for_job
+    from orchestration.service import create_dag_plan, finalize_dag, materialize_dag_plan, repository_from_env, scheduler_from_env, wait_for_job
     if case.orchestration_plan is None:
         planned = create_dag_plan(case.prompt)
     else:
@@ -122,11 +122,19 @@ def run_multi_agent(case: EvaluationCase) -> Result:
         summaries.append(outcome.data["artifact"].content.get("summary", ""))
         final_jobs.append(outcome.data["job"])
         final_artifact_ids.append(outcome.data["artifact"].id)
-    evaluation_worktree = final_jobs[0]["worktree_path"] if final_jobs else ""
+    verification_command = list(case.commands[0].command) if case.commands else None
+    integration = finalize_dag(
+        repository, planned.data["root_task_id"], planned.data["final_job_ids"], verification_command,
+    )
+    if not integration.ok:
+        return integration
+    evaluation_worktree = integration.data["worktree_path"]
     return Result.success(
         "\n\n".join(summaries), final_job_ids=planned.data["final_job_ids"],
         final_artifact_ids=final_artifact_ids, root_task_id=planned.data["root_task_id"],
         evaluation_worktree=evaluation_worktree,
+        integration_id=integration.data.get("integration_id"),
+        integration_status=integration.data.get("integration_status"),
     )
 
 
