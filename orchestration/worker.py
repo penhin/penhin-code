@@ -18,7 +18,7 @@ from runtime import get_runtime, init_runtime
 
 from .artifacts import build_handoff
 from .models import AgentRole, Artifact, JobStatus
-from .planning import DAG_PROTOCOL_VERSION, dag_protocol_instructions, evaluation_scenario_dag_plan, fallback_dag_plan, normalize_dag_plan_for_goal, parse_dag_plan
+from .planning import DAG_PROTOCOL_VERSION, dag_protocol_instructions, fallback_dag_plan, normalize_dag_plan, parse_dag_plan
 from .repositories import OrchestrationRepository, database_url_from_env, repository_from_database_url
 
 
@@ -165,7 +165,7 @@ def repair_dag_plan(goal: str, invalid_response: str, errors: list[str]) -> tupl
 
 
 def claim_invalid_artifact_injection(job) -> bool:
-    if os.getenv("PENHIN_EVAL_SCENARIO") != "invalid_artifact" or job.role == AgentRole.PLANNER:
+    if os.getenv("PENHIN_EVAL_FAULT") != "invalid_artifact_once" or job.role == AgentRole.PLANNER:
         return False
     run_dir = os.getenv("PENHIN_EVAL_RUN_DIR", "")
     if not run_dir:
@@ -224,7 +224,7 @@ def main() -> int:
             and not result.ok
             and result.meta.get("code") in {"summary_failed", "max_turns", "tool_budget_exhausted"}
         ):
-            fallback = evaluation_scenario_dag_plan(job.instruction, os.getenv("PENHIN_EVAL_SCENARIO", "")) or fallback_dag_plan(job.instruction)
+            fallback = fallback_dag_plan(job.instruction)
             forced_plan_source = "execution_fallback"
             emit(
                 "orchestration_planner_execution_fallback_used", root_task_id=job.root_task_id,
@@ -272,19 +272,11 @@ def main() -> int:
                         "orchestration_protocol_fallback_used", root_task_id=job.root_task_id, job_id=job.id,
                         attempt_id=args.attempt_id, protocol="penhin.dag/v1", job_count=len(plan["jobs"]),
                     )
-                plan, semantic_changes = normalize_dag_plan_for_goal(plan, job.instruction)
+                plan, semantic_changes = normalize_dag_plan(plan, job.instruction)
                 if semantic_changes:
                     emit(
                         "orchestration_plan_normalized", root_task_id=job.root_task_id, job_id=job.id,
                         attempt_id=args.attempt_id, changes=semantic_changes,
-                    )
-                scenario_plan = evaluation_scenario_dag_plan(job.instruction, os.getenv("PENHIN_EVAL_SCENARIO", ""))
-                if scenario_plan is not None:
-                    plan, source = scenario_plan, "evaluation_scenario"
-                    emit(
-                        "orchestration_evaluation_scenario_plan_used", root_task_id=job.root_task_id,
-                        job_id=job.id, attempt_id=args.attempt_id,
-                        scenario=os.getenv("PENHIN_EVAL_SCENARIO"), job_count=len(plan["jobs"]),
                     )
                 content = {
                     "protocol_version": DAG_PROTOCOL_VERSION,

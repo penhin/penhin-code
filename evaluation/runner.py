@@ -115,7 +115,7 @@ def execute_case(run_dir: Path, run_id: str, suite: str, case: EvaluationCase, r
             "PENHIN_EVAL_CURRENT_CASE_MAX_TOKENS": str(config.max_multi_agent_tokens if case.layer == "multi_agent" else config.max_case_tokens),
             "PENHIN_EVAL_MAX_JUDGE_TOKENS": str(config.max_judge_tokens),
             "PENHIN_EVAL_FIXTURE_BASE_COMMIT": fixture_base_commit,
-            "PENHIN_EVAL_SCENARIO": case.scenario or "",
+            "PENHIN_EVAL_FAULT": "invalid_artifact_once" if case.scenario == "invalid_artifact" else "",
         })
         started = time.perf_counter()
         process = subprocess.Popen(
@@ -143,6 +143,11 @@ def execute_case(run_dir: Path, run_id: str, suite: str, case: EvaluationCase, r
                 result.status, result.error = "crashed", (stderr or stdout or f"worker exit={process.returncode}")[-4000:]
         result.metrics["end_to_end_ms"] = (time.perf_counter() - started) * 1000
         result.metrics["execution_status"] = result.status
+        result.metrics["orchestration_plan_mode"] = (
+            "fixture_driven" if case.layer == "multi_agent" and case.orchestration_plan is not None
+            else "model_driven" if case.layer == "multi_agent"
+            else "not_applicable"
+        )
         grade_workdir = workdir
         reported_worktree = result.metrics.get("evaluation_worktree")
         if reported_worktree:

@@ -316,6 +316,13 @@ cases:
     category: recovery
     scenario: invalid_artifact
     prompt: Build a minimal analysis DAG and ensure downstream work does not proceed if a dependency returns an invalid artifact.
+    orchestration_plan:
+      protocol_version: penhin.dag/v1
+      goal: Exercise invalid dependency-artifact handling.
+      jobs:
+        - {key: produce, agent_type: explore, instruction: Inspect the repository and return one concise evidence-backed finding., depends_on: [], priority: 1}
+        - {key: consume, agent_type: verification, instruction: Consume the upstream artifact and report whether it is valid., depends_on: [produce], priority: 0}
+      final_job_keys: [consume]
     fixture: fixtures/python-mini
     timeout_seconds: 480
     allowed_paths: [__no_changes__]
@@ -326,6 +333,14 @@ cases:
     category: recovery
     scenario: integration_conflict
     prompt: Coordinate two isolated changes to calculator.py, detect integration conflicts, and report a safe resolution without changing the target branch directly.
+    orchestration_plan:
+      protocol_version: penhin.dag/v1
+      goal: Exercise dependency integration-conflict handling in the fixture repository.
+      jobs:
+        - {key: variant-a, agent_type: general, instruction: "In calculator.py only, change subtract to return left - right and add a focused test. Do not modify other files.", depends_on: [], priority: 1}
+        - {key: variant-b, agent_type: general, instruction: "In calculator.py only, change subtract to return float(left - right) and add a focused test. Do not modify other files.", depends_on: [], priority: 1}
+        - {key: detect-conflict, agent_type: verification, instruction: Verify the two upstream isolated variants and report any integration conflict without resolving it., depends_on: [variant-a, variant-b], priority: 0}
+      final_job_keys: [detect-conflict]
     fixture: fixtures/python-mini
     timeout_seconds: 600
     allowed_paths: [__no_changes__]
@@ -336,6 +351,13 @@ cases:
     category: recovery
     scenario: timeout_cancel
     prompt: Create a bounded verification DAG, handle timeout or cancellation cleanly, and summarize terminal states.
+    orchestration_plan:
+      protocol_version: penhin.dag/v1
+      goal: Exercise timeout propagation and downstream cancellation.
+      jobs:
+        - {key: bounded, agent_type: explore, instruction: Perform a bounded repository verification and report evidence., depends_on: [], priority: 1, timeout_seconds: 1}
+        - {key: summarize, agent_type: verification, instruction: Summarize terminal states without running if the upstream job timed out., depends_on: [bounded], priority: 0}
+      final_job_keys: [summarize]
     fixture: fixtures/python-mini
     timeout_seconds: 480
     allowed_paths: [__no_changes__]

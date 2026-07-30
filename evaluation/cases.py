@@ -12,7 +12,7 @@ from .models import CASE_SCHEMA_VERSION, LAYERS, SUBAGENT_ROLES, CommandCheck, C
 CASE_KEYS = {
     "schema_version", "id", "layer", "category", "prompt", "fixture", "timeout_seconds",
     "commands", "content_checks", "allowed_paths", "forbidden_paths", "expected_tools",
-    "rubric", "agent_role", "scenario",
+    "rubric", "agent_role", "scenario", "orchestration_plan",
 }
 SUITE_SCHEMA_VERSION = "penhin.eval.suite/v1"
 
@@ -76,12 +76,21 @@ def parse_case(data: Any, suite_dir: Path) -> EvaluationCase:
     role = str(data.get("agent_role", ""))
     if data["layer"] == "subagent" and role not in SUBAGENT_ROLES:
         raise ValueError(f"subagent case requires agent_role in {sorted(SUBAGENT_ROLES)}")
+    orchestration_plan = data.get("orchestration_plan")
+    if orchestration_plan is not None:
+        if data["layer"] != "multi_agent":
+            raise ValueError("orchestration_plan is only valid for multi_agent cases")
+        from orchestration.planning import validate_dag_plan
+        plan_errors = validate_dag_plan(orchestration_plan)
+        if plan_errors:
+            raise ValueError(f"invalid orchestration_plan: {'; '.join(plan_errors)}")
     return EvaluationCase(
         schema_version=data["schema_version"], id=data["id"], layer=data["layer"], category=data["category"],
         prompt=data["prompt"], fixture=fixture, timeout_seconds=timeout, commands=tuple(commands),
         content_checks=tuple(content_checks), allowed_paths=allowed, forbidden_paths=forbidden,
         expected_tools=_string_list(data.get("expected_tools"), "expected_tools"),
         rubric=str(data.get("rubric", "")), agent_role=role, scenario=str(data.get("scenario", "")),
+        orchestration_plan=orchestration_plan,
     )
 
 

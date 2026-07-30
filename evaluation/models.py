@@ -39,6 +39,7 @@ class EvaluationCase:
     rubric: str = ""
     agent_role: str = ""
     scenario: str = ""
+    orchestration_plan: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

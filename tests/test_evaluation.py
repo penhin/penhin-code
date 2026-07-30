@@ -97,6 +97,21 @@ def test_case_schema_requires_role_for_subagent(tmp_path: Path) -> None:
         parse_case(data, tmp_path)
 
 
+def test_case_schema_validates_fixture_driven_orchestration_plan(tmp_path: Path) -> None:
+    (tmp_path / "fixture").mkdir()
+    plan = {
+        "protocol_version": "penhin.dag/v1", "goal": "Exercise recovery",
+        "jobs": [{"key": "inspect", "agent_type": "explore", "instruction": "Inspect", "depends_on": []}],
+        "final_job_keys": ["inspect"],
+    }
+    parsed = parse_case(case_data() | {"layer": "multi_agent", "orchestration_plan": plan}, tmp_path)
+    assert parsed.orchestration_plan == plan
+    with pytest.raises(ValueError, match="only valid for multi_agent"):
+        parse_case(case_data() | {"orchestration_plan": plan}, tmp_path)
+    with pytest.raises(ValueError, match="invalid orchestration_plan"):
+        parse_case(case_data() | {"layer": "multi_agent", "orchestration_plan": plan | {"final_job_keys": ["missing"]}}, tmp_path)
+
+
 def init_repo(path: Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=path, check=True)
     subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=path, check=True)
@@ -370,6 +385,25 @@ def test_report_and_balanced_regression_gates(tmp_path: Path) -> None:
     assert comparison["passed"] is False
     assert any("overall completion" in failure for failure in comparison["failures"])
     assert any("latency" in failure for failure in comparison["failures"])
+
+
+def test_report_separates_model_and_fixture_driven_multi_agent_runs(tmp_path: Path) -> None:
+    manifest = {
+        "run_id": "modes", "suite": "test", "planned_runs": 2, "status": "complete",
+        "product_repository_unchanged": True, "config": fake_config().public_dict(), "budget": {},
+    }
+    write_json(tmp_path / "manifest.json", manifest)
+    for index, mode in enumerate(("model_driven", "fixture_driven"), 1):
+        result = EvaluationResult(
+            run_id="modes", case_id=f"case-{index}", repetition=1, layer="multi_agent",
+            category="test", status="completed", completed=True, deterministic_passed=True,
+        )
+        result.metrics.update({"end_to_end_ms": 1, "orchestration_plan_mode": mode})
+        write_json(tmp_path / "results" / f"case-{index}.json", result.to_dict())
+    report = generate_report(tmp_path)
+    assert report["multi_agent_by_plan_mode"]["model_driven"]["runs"] == 1
+    assert report["multi_agent_by_plan_mode"]["fixture_driven"]["runs"] == 1
+    assert "reported separately" in (tmp_path / "report.md").read_text(encoding="utf-8")
 
 
 def test_eval_cli_validates_built_in_suite() -> None:

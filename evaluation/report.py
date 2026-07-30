@@ -39,6 +39,19 @@ def _dimensions(results: list[dict[str, Any]], key: str) -> dict[str, dict[str, 
     }
 
 
+def _multi_agent_plan_modes(results: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    multi_agent = [item for item in results if item.get("layer") == "multi_agent"]
+    modes = sorted({str(item.get("metrics", {}).get("orchestration_plan_mode", "unknown")) for item in multi_agent})
+    return {
+        mode: {
+            "runs": len(items := [item for item in multi_agent if str(item.get("metrics", {}).get("orchestration_plan_mode", "unknown")) == mode]),
+            "completion_rate": _rate(sum(bool(item.get("deterministic_passed")) for item in items), len(items)),
+            "quality": _quality(items),
+        }
+        for mode in modes
+    }
+
+
 def _costs(manifest: dict[str, Any], events: list[dict[str, Any]], successful: int) -> dict[str, Any]:
     config = manifest["config"]
     prices = {"primary": config["primary_price"], "judge": config["judge_price"]}
@@ -99,6 +112,7 @@ def build_report(run_dir: Path) -> dict[str, Any]:
         "planned_runs": planned, "observed_runs": len(results), "task_completion_rate": _rate(passed, planned),
         "passed_runs": passed, "safety_violations": safety, "product_repository_unchanged": manifest.get("product_repository_unchanged", False),
         "statuses": dict(sorted(statuses.items())), "by_layer": _dimensions(results, "layer"), "by_category": _dimensions(results, "category"),
+        "multi_agent_by_plan_mode": _multi_agent_plan_modes(results),
         "quality": _quality(results),
         "deterministic_quality": {
             "command_pass_rate": _rate(sum(bool(item.get("passed")) for item in command_checks), len(command_checks)),
@@ -143,6 +157,10 @@ def markdown_report(report: dict[str, Any]) -> str:
     ]
     for layer, data in report["by_layer"].items():
         lines.append(f"| {layer} | {data['runs']} | {data['completion_rate']:.1%} |")
+    if report.get("multi_agent_by_plan_mode"):
+        lines.extend(["", "## Multi-agent plan modes", "", "Fixture-driven recovery runs test orchestration mechanics and are reported separately from model-driven planning.", "", "| Plan mode | Runs | Completion |", "|---|---:|---:|"])
+        for mode, data in report["multi_agent_by_plan_mode"].items():
+            lines.append(f"| {mode} | {data['runs']} | {data['completion_rate']:.1%} |")
     lines.extend(["", "## Quality", ""])
     for field, value in report["quality"].items():
         lines.append(f"- {field}: {value:.2f}/5" if value is not None else f"- {field}: unavailable")

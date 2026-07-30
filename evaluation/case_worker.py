@@ -6,6 +6,7 @@ import os
 import time
 from dataclasses import fields
 from pathlib import Path
+from uuid import uuid4
 
 from agent import agent_loop
 from context import RunContext
@@ -51,9 +52,32 @@ def run_child(case: EvaluationCase) -> Result:
 
 
 def run_multi_agent(case: EvaluationCase) -> Result:
-    from orchestration.models import TERMINAL_JOB_STATUSES, JobStatus
-    from orchestration.service import create_dag_plan, repository_from_env, scheduler_from_env, wait_for_job
-    planned = create_dag_plan(case.prompt)
+    from orchestration.models import TERMINAL_JOB_STATUSES, AgentRole, Artifact, JobStatus
+    from orchestration.planning import validate_dag_plan
+    from orchestration.service import create_dag_plan, materialize_dag_plan, repository_from_env, scheduler_from_env, wait_for_job
+    if case.orchestration_plan is None:
+        planned = create_dag_plan(case.prompt)
+    else:
+        errors = validate_dag_plan(case.orchestration_plan)
+        if errors:
+            return Result.failure("Invalid fixture orchestration plan", code="invalid_fixture_plan", errors=errors)
+        repository = repository_from_env()
+        planner = repository.create_root_job("Evaluation fixture plan", case.prompt, AgentRole.PLANNER)
+        attempt = repository.start_attempt(planner.id, model="evaluation-fixture")
+        artifact = Artifact(
+            id=str(uuid4()), job_id=planner.id, kind="agent_dag_plan.v1",
+            content={"protocol_valid": True, "plan_source": "evaluation_fixture", **case.orchestration_plan},
+        )
+        repository.finish_attempt(attempt.id, JobStatus.SUCCEEDED, artifact=artifact, terminal_reason="fixture_materialized")
+        root_task_id = planner.id
+        emit("orchestration_plan_started", root_task_id=root_task_id, planner_job_id=planner.id, plan_source="evaluation_fixture")
+        data = materialize_dag_plan(repository, planner.id, case.orchestration_plan)
+        scheduler_from_env().dispatch()
+        emit(
+            "orchestration_plan_validated", root_task_id=root_task_id,
+            job_count=len(case.orchestration_plan["jobs"]), plan_source="evaluation_fixture",
+        )
+        planned = Result.success(json.dumps(data, ensure_ascii=False), data=data)
     if not planned.ok:
         return planned
     repository = repository_from_env()

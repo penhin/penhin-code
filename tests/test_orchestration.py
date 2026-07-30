@@ -5,14 +5,16 @@ import sys
 import types
 from argparse import Namespace
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 
 from orchestration.models import AgentJob, AgentRole, Artifact, IntegrationItem, IntegrationItemStatus, IntegrationRun, IntegrationRunStatus, JobStatus
 from orchestration.repositories.postgres_repository import PostgresOrchestrationRepository
-from orchestration.planning import DAG_PROTOCOL_VERSION, evaluation_scenario_dag_plan, fallback_dag_plan, normalize_dag_plan_for_goal, parse_dag_plan
+from orchestration.planning import DAG_PROTOCOL_VERSION, fallback_dag_plan, normalize_dag_plan, parse_dag_plan
 from orchestration.service import create_isolated_agent_job, materialize_dag_plan
+from orchestration.worker import prepare_dependency_context
 from orchestration.worktrees import AgentWorktree
 from orchestration.artifacts import build_handoff
 from result import Result
@@ -114,6 +116,21 @@ def test_dag_protocol_accepts_dependencies_and_rejects_cycles() -> None:
     assert errors == ["job dependencies must be acyclic"]
 
 
+def test_dag_protocol_rejects_unknown_fields_and_unbounded_timeout() -> None:
+    plan = {
+        "protocol_version": DAG_PROTOCOL_VERSION, "goal": "Inspect",
+        "jobs": [{
+            "key": "inspect", "agent_type": "explore", "instruction": "Inspect",
+            "depends_on": [], "timeout_seconds": 3601, "benchmark_answer": "special-case",
+        }],
+        "final_job_keys": ["inspect"], "fixture_name": "known-case",
+    }
+    _, errors = parse_dag_plan(json.dumps(plan))
+    assert "unknown top-level fields: fixture_name" in errors
+    assert "jobs[0] has unknown fields: benchmark_answer" in errors
+    assert "jobs[0].timeout_seconds must be an integer between 1 and 3600" in errors
+
+
 def test_dag_protocol_recovers_embedded_json_and_has_safe_fallback() -> None:
     valid = {
         "protocol_version": DAG_PROTOCOL_VERSION,
@@ -125,30 +142,76 @@ def test_dag_protocol_recovers_embedded_json_and_has_safe_fallback() -> None:
     assert parsed == valid
     assert errors == []
     fallback = fallback_dag_plan("Fix subtract and verify it")
-    assert [job["agent_type"] for job in fallback["jobs"]] == ["explore", "general", "verification"]
+    assert [job["agent_type"] for job in fallback["jobs"]] == ["explore", "verification"]
     assert fallback["final_job_keys"] == ["verify"]
-    analysis = fallback_dag_plan("Use parallel exploration and produce an implementation plan")
-    assert all(job["agent_type"] != "general" for job in analysis["jobs"])
-    normalized, changes = normalize_dag_plan_for_goal(
-        {**valid, "jobs": [{**valid["jobs"][0], "agent_type": "general"}]},
-        "Produce an implementation plan without changing files",
-    )
-    assert normalized["jobs"][0]["agent_type"] == "explore"
-    assert changes
-    timeout_plan = evaluation_scenario_dag_plan("bounded", "timeout_cancel")
-    _, errors = parse_dag_plan(json.dumps(timeout_plan))
-    assert errors == []
-    assert timeout_plan["jobs"][0]["timeout_seconds"] == 1
-    unsafe_write_plan = {
+    assert all(job["agent_type"] != "general" for job in fallback["jobs"])
+    implementation_plan = {
         "protocol_version": DAG_PROTOCOL_VERSION, "goal": "Fix it",
+        "jobs": [{"key": "implement", "agent_type": "general", "instruction": "Implement", "depends_on": []}],
+        "final_job_keys": ["implement"],
+    }
+    normalized, changes = normalize_dag_plan(implementation_plan, "任意语言和措辞")
+    assert [job["agent_type"] for job in normalized["jobs"]] == ["general", "verification"]
+    assert normalized["jobs"][-1]["depends_on"] == ["implement"]
+    assert changes
+
+
+def test_plan_normalization_does_not_infer_permissions_from_prompt_keywords() -> None:
+    plan = {
+        "protocol_version": DAG_PROTOCOL_VERSION, "goal": "Review",
         "jobs": [{"key": "inspect", "agent_type": "explore", "instruction": "Inspect", "depends_on": []}],
         "final_job_keys": ["inspect"],
     }
-    normalized_write, changes = normalize_dag_plan_for_goal(unsafe_write_plan, "Fix subtract")
-    assert [job["agent_type"] for job in normalized_write["jobs"]] == ["explore", "general", "verification"]
-    assert changes
-    normalized_inflected, _ = normalize_dag_plan_for_goal(unsafe_write_plan, "Plan a DAG that fixes subtract")
-    assert any(job["agent_type"] == "general" for job in normalized_inflected["jobs"])
+    for wording in ("Fix this", "修改这个问题", "réparer ce défaut", "plan an implementation"):
+        normalized, changes = normalize_dag_plan(plan, wording)
+        assert normalized == plan
+        assert changes == []
+
+
+def test_dependency_commit_propagation_is_repository_agnostic(tmp_path: Path) -> None:
+    def git(*args: str) -> str:
+        result = subprocess.run(["git", *args], cwd=tmp_path, capture_output=True, text=True, check=True)
+        return result.stdout.strip()
+
+    git("init", "-q")
+    git("config", "user.email", "test@example.invalid")
+    git("config", "user.name", "Test")
+    (tmp_path / "unrelated_module.rs").write_text("pub fn value() -> i32 { 1 }\n", encoding="utf-8")
+    git("add", "-A")
+    git("commit", "-q", "-m", "base")
+    base = git("rev-parse", "HEAD")
+    (tmp_path / "unrelated_module.rs").write_text("pub fn value() -> i32 { 2 }\n", encoding="utf-8")
+    git("commit", "-q", "-am", "dependency")
+    dependency_commit = git("rev-parse", "HEAD")
+    git("reset", "--hard", base)
+
+    dependency = SimpleNamespace(
+        id="dependency", status=JobStatus.SUCCEEDED, depends_on=[], result_artifact_id="artifact",
+        role=AgentRole.GENERAL,
+    )
+    artifact = Artifact(
+        id="artifact", job_id="dependency", kind="agent_handoff.v1", schema_valid=True,
+        content={
+            "summary": "Updated an arbitrary Rust module", "findings": [], "risks": [],
+            "changed_files": [{"path": "unrelated_module.rs"}],
+            "change_set": {"commits": [dependency_commit]},
+        },
+    )
+    current = SimpleNamespace(
+        id="current", root_task_id="root", depends_on=["dependency"], worktree_path=str(tmp_path),
+    )
+
+    class Repository:
+        def get_job(self, job_id: str):
+            return dependency if job_id == "dependency" else None
+
+        def get_artifact(self, artifact_id: str):
+            return artifact if artifact_id == "artifact" else None
+
+    context, commits = prepare_dependency_context(Repository(), current)
+    assert commits == [dependency_commit]
+    assert context[0]["summary"] == "Updated an arbitrary Rust module"
+    assert "{ 2 }" in (tmp_path / "unrelated_module.rs").read_text(encoding="utf-8")
 
 
 def test_materialized_dag_uses_persistent_dependency_ids(
