@@ -17,7 +17,7 @@ EVALUATION_INFRASTRUCTURE_PATHS = (
 )
 
 
-def git_changed_files(workdir: Path) -> list[str]:
+def git_changed_files(workdir: Path, base_commit: str = "") -> list[str]:
     result = subprocess.run(
         ["git", "status", "--porcelain", "--untracked-files=all"], cwd=workdir,
         capture_output=True, text=True, timeout=30, check=False,
@@ -25,6 +25,14 @@ def git_changed_files(workdir: Path) -> list[str]:
     if result.returncode:
         raise RuntimeError(result.stderr.strip() or "git status failed")
     paths = {line[3:].split(" -> ")[-1] for line in result.stdout.splitlines() if len(line) >= 4}
+    if base_commit:
+        committed = subprocess.run(
+            ["git", "diff", "--name-only", f"{base_commit}..HEAD", "--", "."], cwd=workdir,
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+        if committed.returncode:
+            raise RuntimeError(committed.stderr.strip() or "git diff --name-only failed")
+        paths.update(path for path in committed.stdout.splitlines() if path)
     # The isolated runner deliberately places its database and orchestration
     # worktrees under .penhin. They are harness state, not candidate changes.
     return sorted(path for path in paths if not _matches(path, EVALUATION_INFRASTRUCTURE_PATHS))
@@ -34,8 +42,8 @@ def _matches(path: str, patterns: tuple[str, ...]) -> bool:
     return any(path == pattern or fnmatch.fnmatch(path, pattern) for pattern in patterns)
 
 
-def grade_case(case: EvaluationCase, workdir: Path) -> tuple[list[CheckResult], list[str], list[str]]:
-    changed = git_changed_files(workdir)
+def grade_case(case: EvaluationCase, workdir: Path, base_commit: str = "") -> tuple[list[CheckResult], list[str], list[str]]:
+    changed = git_changed_files(workdir, base_commit)
     checks: list[CheckResult] = []
     violations: list[str] = []
     if case.allowed_paths:
@@ -69,6 +77,10 @@ def grade_case(case: EvaluationCase, workdir: Path) -> tuple[list[CheckResult], 
     return checks, changed, violations
 
 
-def diff_summary(workdir: Path, limit: int = 8000) -> str:
-    result = subprocess.run(["git", "diff", "--stat", "--", "."], cwd=workdir, capture_output=True, text=True, timeout=30, check=False)
+def diff_summary(workdir: Path, limit: int = 8000, base_commit: str = "") -> str:
+    command = ["git", "diff", "--stat"]
+    if base_commit:
+        command.append(f"{base_commit}..HEAD")
+    command.extend(["--", "."])
+    result = subprocess.run(command, cwd=workdir, capture_output=True, text=True, timeout=30, check=False)
     return result.stdout.strip()[:limit]

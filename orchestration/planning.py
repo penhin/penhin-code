@@ -7,6 +7,22 @@ from typing import Any
 
 DAG_PROTOCOL_VERSION = "penhin.dag/v1"
 ALLOWED_AGENT_TYPES = {"explore", "general", "verification"}
+WRITE_INTENT = re.compile(
+    r"\b(?:adds?|added|adding|changes?|changed|changing|fix(?:es|ed|ing)?|"
+    r"implement(?:s|ed|ing)?|modif(?:y|ies|ied|ying)|remov(?:e|es|ed|ing)|"
+    r"updat(?:e|es|ed|ing)|writ(?:e|es|ing|ten))\b|修复|实现|修改|新增|删除",
+    re.IGNORECASE,
+)
+READ_ONLY_INTENT = re.compile(
+    r"\bwithout (?:changing|modifying|editing|writing) (?:any )?(?:files|code)\b|"
+    r"\bdo not (?:change|modify|edit|write) (?:any )?(?:files|code)\b|"
+    r"不(?:要)?修改(?:任何)?(?:文件|代码)",
+    re.IGNORECASE,
+)
+
+
+def goal_has_write_intent(goal: str) -> bool:
+    return not READ_ONLY_INTENT.search(goal) and bool(WRITE_INTENT.search(goal))
 
 def dag_protocol_instructions() -> str:
     return """
@@ -27,7 +43,18 @@ Use `explore` for parallel read-only discovery, `general` only for isolated impl
 def _candidate(text: str) -> str:
     stripped = text.strip()
     fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", stripped, flags=re.DOTALL | re.IGNORECASE)
-    return fenced.group(1) if fenced else stripped
+    if fenced:
+        return fenced.group(1)
+    decoder = json.JSONDecoder()
+    for index, character in enumerate(stripped):
+        if character != "{":
+            continue
+        try:
+            _, end = decoder.raw_decode(stripped[index:])
+        except json.JSONDecodeError:
+            continue
+        return stripped[index:index + end]
+    return stripped
 
 
 def parse_dag_plan(text: str) -> tuple[dict[str, Any], list[str]]:
@@ -37,6 +64,115 @@ def parse_dag_plan(text: str) -> tuple[dict[str, Any], list[str]]:
         return {}, [f"invalid JSON: {error.msg}"]
     errors = validate_dag_plan(payload)
     return payload if isinstance(payload, dict) else {}, errors
+
+
+def fallback_dag_plan(goal: str) -> dict[str, Any]:
+    """Return a safe, minimal topology when model-authored JSON cannot be repaired."""
+    normalized = goal.lower()
+    write_goal = goal_has_write_intent(normalized)
+    parallel_goal = "parallel" in normalized or "并行" in normalized
+    if write_goal:
+        jobs = [
+            {"key": "inspect", "agent_type": "explore", "instruction": f"Inspect the repository and identify the smallest safe implementation for: {goal}", "depends_on": [], "priority": 1},
+            {"key": "implement", "agent_type": "general", "instruction": f"Implement the requested change with focused tests, using upstream findings: {goal}", "depends_on": ["inspect"], "priority": 1},
+            {"key": "verify", "agent_type": "verification", "instruction": f"Independently verify the integrated implementation and run relevant tests: {goal}", "depends_on": ["implement"], "priority": 0},
+        ]
+        final_keys = ["verify"]
+    elif parallel_goal:
+        jobs = [
+            {"key": "correctness", "agent_type": "explore", "instruction": f"Investigate correctness risks for: {goal}", "depends_on": [], "priority": 1},
+            {"key": "coverage", "agent_type": "explore", "instruction": f"Investigate test and coverage gaps for: {goal}", "depends_on": [], "priority": 1},
+            {"key": "synthesize", "agent_type": "explore", "instruction": f"Synthesize upstream findings into a concise evidence-backed answer for: {goal}", "depends_on": ["correctness", "coverage"], "priority": 0},
+        ]
+        final_keys = ["synthesize"]
+    else:
+        jobs = [
+            {"key": "inspect", "agent_type": "explore", "instruction": f"Investigate and collect concrete evidence for: {goal}", "depends_on": [], "priority": 1},
+            {"key": "verify", "agent_type": "verification", "instruction": f"Review the upstream evidence and provide the final bounded result for: {goal}", "depends_on": ["inspect"], "priority": 0},
+        ]
+        final_keys = ["verify"]
+    return {"protocol_version": DAG_PROTOCOL_VERSION, "goal": goal, "jobs": jobs, "final_job_keys": final_keys}
+
+
+def normalize_dag_plan_for_goal(plan: dict[str, Any], goal: str) -> tuple[dict[str, Any], list[str]]:
+    """Apply deterministic safety semantics that are difficult to express in JSON schema."""
+    normalized = json.loads(json.dumps(plan))
+    changes: list[str] = []
+    if not goal_has_write_intent(goal):
+        for job in normalized.get("jobs", []):
+            if job.get("agent_type") == "general":
+                job["agent_type"] = "explore"
+                changes.append(f"converted {job.get('key', '<unknown>')} from general to explore for a read-only goal")
+    else:
+        jobs = normalized.get("jobs", [])
+        general_keys = [job.get("key") for job in jobs if job.get("agent_type") == "general"]
+        if not general_keys:
+            return fallback_dag_plan(goal), ["replaced plan because a write goal had no general implementation node"]
+        graph = {job.get("key"): job.get("depends_on", []) for job in jobs}
+
+        def depends_on_general(key: str, seen: set[str] | None = None) -> bool:
+            seen = seen or set()
+            if key in seen:
+                return False
+            seen.add(key)
+            dependencies = graph.get(key, [])
+            return any(item in general_keys or depends_on_general(item, seen.copy()) for item in dependencies)
+
+        verification_keys = [
+            job.get("key") for job in jobs
+            if job.get("agent_type") == "verification" and depends_on_general(str(job.get("key")))
+        ]
+        if not verification_keys:
+            existing = {str(job.get("key")) for job in jobs}
+            key = "verify"
+            suffix = 2
+            while key in existing:
+                key, suffix = f"verify-{suffix}", suffix + 1
+            dependencies = list(dict.fromkeys([*normalized.get("final_job_keys", []), *general_keys]))
+            jobs.append({
+                "key": key, "agent_type": "verification",
+                "instruction": f"Independently verify the integrated implementation and run focused tests for: {goal}",
+                "depends_on": dependencies, "priority": 0,
+            })
+            normalized["final_job_keys"] = [key]
+            changes.append("added a final verification node downstream of implementation")
+        elif not any(key in verification_keys for key in normalized.get("final_job_keys", [])):
+            normalized["final_job_keys"] = [verification_keys[0]]
+            changes.append("selected a verification node as the final output for a write goal")
+    return normalized, changes
+
+
+def evaluation_scenario_dag_plan(goal: str, scenario: str) -> dict[str, Any] | None:
+    """Deterministic topologies for fault-oriented evaluation scenarios only."""
+    if scenario == "invalid_artifact":
+        return {
+            "protocol_version": DAG_PROTOCOL_VERSION, "goal": goal,
+            "jobs": [
+                {"key": "produce", "agent_type": "explore", "instruction": "Inspect calculator.py and return one concise finding.", "depends_on": [], "priority": 1},
+                {"key": "consume", "agent_type": "verification", "instruction": "Consume the upstream artifact and report whether it is valid.", "depends_on": ["produce"], "priority": 0},
+            ],
+            "final_job_keys": ["consume"],
+        }
+    if scenario == "integration_conflict":
+        return {
+            "protocol_version": DAG_PROTOCOL_VERSION, "goal": goal,
+            "jobs": [
+                {"key": "variant-a", "agent_type": "general", "instruction": "In calculator.py only, change subtract to return left - right and add a focused test. Do not modify other files.", "depends_on": [], "priority": 1},
+                {"key": "variant-b", "agent_type": "general", "instruction": "In calculator.py only, change subtract to return float(left - right) and add a focused test. Do not modify other files.", "depends_on": [], "priority": 1},
+                {"key": "detect-conflict", "agent_type": "verification", "instruction": "Verify the two upstream isolated variants and report any integration conflict without resolving it.", "depends_on": ["variant-a", "variant-b"], "priority": 0},
+            ],
+            "final_job_keys": ["detect-conflict"],
+        }
+    if scenario == "timeout_cancel":
+        return {
+            "protocol_version": DAG_PROTOCOL_VERSION, "goal": goal,
+            "jobs": [
+                {"key": "bounded", "agent_type": "explore", "instruction": "Perform a bounded verification of all modules and report evidence.", "depends_on": [], "priority": 1, "timeout_seconds": 1},
+                {"key": "summarize", "agent_type": "verification", "instruction": "Summarize terminal states without running if the upstream job timed out.", "depends_on": ["bounded"], "priority": 0},
+            ],
+            "final_job_keys": ["summarize"],
+        }
+    return None
 
 
 def validate_dag_plan(payload: Any) -> list[str]:
@@ -73,6 +209,12 @@ def validate_dag_plan(payload: Any) -> list[str]:
             errors.append(f"{prefix}.depends_on must be an array of keys")
         if "priority" in job and (not isinstance(job["priority"], int) or isinstance(job["priority"], bool)):
             errors.append(f"{prefix}.priority must be an integer")
+        if "timeout_seconds" in job and (
+            not isinstance(job["timeout_seconds"], int)
+            or isinstance(job["timeout_seconds"], bool)
+            or job["timeout_seconds"] < 1
+        ):
+            errors.append(f"{prefix}.timeout_seconds must be a positive integer")
     for key, dependencies in graph.items():
         for dependency in dependencies:
             if dependency not in keys:

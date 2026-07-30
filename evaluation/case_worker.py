@@ -51,18 +51,59 @@ def run_child(case: EvaluationCase) -> Result:
 
 
 def run_multi_agent(case: EvaluationCase) -> Result:
-    from orchestration.service import create_dag_plan, repository_from_env, wait_for_job
+    from orchestration.models import TERMINAL_JOB_STATUSES, JobStatus
+    from orchestration.service import create_dag_plan, repository_from_env, scheduler_from_env, wait_for_job
     planned = create_dag_plan(case.prompt)
     if not planned.ok:
         return planned
     repository = repository_from_env()
+    if case.scenario in {"invalid_artifact", "timeout_cancel"}:
+        deadline = time.monotonic() + min(case.timeout_seconds, 120)
+        while time.monotonic() < deadline:
+            jobs = repository.list_jobs(planned.data["root_task_id"])
+            expected = (
+                [job for job in jobs if job.status == JobStatus.FAILED]
+                if case.scenario == "invalid_artifact"
+                else [job for job in jobs if job.status == JobStatus.TIMED_OUT]
+            )
+            if expected:
+                scheduler = scheduler_from_env()
+                for job in jobs:
+                    if job.status not in TERMINAL_JOB_STATUSES:
+                        scheduler.request_cancel(job.id)
+                terminal = [repository.get_job(job.id).to_dict() for job in jobs]
+                return Result.success(
+                    json.dumps({"fault": case.scenario, "terminal_jobs": terminal}, ensure_ascii=False),
+                    final_job_ids=planned.data["final_job_ids"], root_task_id=planned.data["root_task_id"],
+                    evaluation_worktree=str(Path.cwd()), recovery_outcome=f"{case.scenario}_handled",
+                )
+            time.sleep(0.05)
+        return Result.failure(f"Timed out waiting for deterministic {case.scenario} fault", code="fault_injection_timeout")
     summaries = []
+    final_jobs = []
+    final_artifact_ids = []
     for job_id in planned.data["final_job_ids"]:
         outcome = wait_for_job(repository, job_id, case.timeout_seconds)
         if not outcome.ok:
+            if case.scenario == "integration_conflict":
+                jobs = repository.list_jobs(planned.data["root_task_id"])
+                conflict = [job for job in jobs if job.status == JobStatus.FAILED and "cherry-pick" in job.error.lower()]
+                if conflict:
+                    return Result.success(
+                        json.dumps({"conflict_detected": True, "terminal_jobs": [job.to_dict() for job in jobs]}, ensure_ascii=False),
+                        final_job_ids=planned.data["final_job_ids"], root_task_id=planned.data["root_task_id"],
+                        evaluation_worktree=str(Path.cwd()), recovery_outcome="integration_conflict_detected",
+                    )
             return outcome
         summaries.append(outcome.data["artifact"].content.get("summary", ""))
-    return Result.success("\n\n".join(summaries), final_job_ids=planned.data["final_job_ids"])
+        final_jobs.append(outcome.data["job"])
+        final_artifact_ids.append(outcome.data["artifact"].id)
+    evaluation_worktree = final_jobs[0]["worktree_path"] if final_jobs else ""
+    return Result.success(
+        "\n\n".join(summaries), final_job_ids=planned.data["final_job_ids"],
+        final_artifact_ids=final_artifact_ids, root_task_id=planned.data["root_task_id"],
+        evaluation_worktree=evaluation_worktree,
+    )
 
 
 def main() -> int:

@@ -97,6 +97,7 @@ def execute_case(run_dir: Path, run_id: str, suite: str, case: EvaluationCase, r
     with tempfile.TemporaryDirectory(prefix=f"penhin-eval-{case.id}-") as temp_name:
         workdir = Path(temp_name) / "repo"
         prepare_fixture(case, suite, workdir)
+        fixture_base_commit = _git(workdir, "rev-parse", "HEAD")
         case_file = run_dir / "case_inputs" / f"{case.id}-{repetition}.json"
         worker_output = run_dir / "worker_outputs" / f"{case.id}-{repetition}.json"
         write_json(case_file, asdict(case))
@@ -113,6 +114,8 @@ def execute_case(run_dir: Path, run_id: str, suite: str, case: EvaluationCase, r
             "PENHIN_WORKSPACE_MODE": "isolated_write", "PENHIN_SYNC_AGENT_TIMEOUT_SECONDS": str(case.timeout_seconds),
             "PENHIN_EVAL_CURRENT_CASE_MAX_TOKENS": str(config.max_multi_agent_tokens if case.layer == "multi_agent" else config.max_case_tokens),
             "PENHIN_EVAL_MAX_JUDGE_TOKENS": str(config.max_judge_tokens),
+            "PENHIN_EVAL_FIXTURE_BASE_COMMIT": fixture_base_commit,
+            "PENHIN_EVAL_SCENARIO": case.scenario or "",
         })
         started = time.perf_counter()
         process = subprocess.Popen(
@@ -140,11 +143,21 @@ def execute_case(run_dir: Path, run_id: str, suite: str, case: EvaluationCase, r
                 result.status, result.error = "crashed", (stderr or stdout or f"worker exit={process.returncode}")[-4000:]
         result.metrics["end_to_end_ms"] = (time.perf_counter() - started) * 1000
         result.metrics["execution_status"] = result.status
-        checks, changed, violations = grade_case(case, workdir)
+        grade_workdir = workdir
+        reported_worktree = result.metrics.get("evaluation_worktree")
+        if reported_worktree:
+            candidate = Path(str(reported_worktree)).resolve()
+            if candidate.is_relative_to(workdir.resolve()) and (candidate / ".git").exists():
+                grade_workdir = candidate
+                result.metrics["graded_worktree"] = str(candidate)
+            else:
+                result.error = (result.error + "; " if result.error else "") + "Agent reported an unsafe evaluation worktree"
+                result.status = "failed"
+        checks, changed, violations = grade_case(case, grade_workdir, fixture_base_commit)
         result.checks = checks
         result.changed_files = changed
         result.safety_violations = violations
-        result.diff_summary = diff_summary(workdir)
+        result.diff_summary = diff_summary(grade_workdir, base_commit=fixture_base_commit)
         result.completed = result.status in {"completed", "failed", "timed_out", "crashed"}
         result.deterministic_passed = result.status == "completed" and all(check.passed for check in checks) and not violations
         events = _case_events(run_dir, case, repetition)
@@ -291,6 +304,10 @@ def run_suite(
     actual_results = list((run_dir / "results").glob("*.json"))
     status_after = product_status()
     fingerprint_after = product_fingerprint()
+    # A timed-out orchestration worker can be killed while an LLM reservation is
+    # still open. All case workers have terminated here, so reclaim those dead
+    # process reservations before freezing the batch budget in the manifest.
+    budget.release_stale()
     manifest.update({
         "status": "budget_stopped" if budget_stopped else ("complete" if len(actual_results) == manifest["planned_runs"] else "incomplete"),
         "completed_runs": len(actual_results), "budget": budget.snapshot(), "finished_at_ns": time.time_ns(),

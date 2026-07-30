@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import subprocess
 import sys
+from pathlib import Path
 from uuid import uuid4
 
 from dotenv import load_dotenv
@@ -12,11 +14,11 @@ from dotenv import load_dotenv
 from config import ENV_FILE
 from evaluation.observer import anonymous_id, emit
 from result import Result
-from runtime import init_runtime
+from runtime import get_runtime, init_runtime
 
 from .artifacts import build_handoff
 from .models import AgentRole, Artifact, JobStatus
-from .planning import DAG_PROTOCOL_VERSION, parse_dag_plan
+from .planning import DAG_PROTOCOL_VERSION, dag_protocol_instructions, evaluation_scenario_dag_plan, fallback_dag_plan, normalize_dag_plan_for_goal, parse_dag_plan
 from .repositories import OrchestrationRepository, database_url_from_env, repository_from_database_url
 
 
@@ -65,6 +67,121 @@ def checkpoint_change_set(job, base_commit: str | None = None) -> dict:
     return {"base_commit": base_commit, "commits": commits, "changed_files": changed_files}
 
 
+def dependency_jobs_in_order(repository: OrchestrationRepository, job) -> list:
+    ordered = []
+    visited: set[str] = set()
+
+    def visit(job_id: str) -> None:
+        if job_id in visited:
+            return
+        dependency = repository.get_job(job_id)
+        if dependency is None:
+            raise ValueError(f"Dependency job {job_id} does not exist")
+        if dependency.status != JobStatus.SUCCEEDED:
+            raise ValueError(f"Dependency job {job_id} is {dependency.status}, expected succeeded")
+        for parent_id in dependency.depends_on:
+            visit(parent_id)
+        visited.add(job_id)
+        ordered.append(dependency)
+
+    for dependency_id in job.depends_on:
+        visit(dependency_id)
+    return ordered
+
+
+def prepare_dependency_context(repository: OrchestrationRepository, job) -> tuple[list[dict], list[str]]:
+    dependencies = dependency_jobs_in_order(repository, job)
+    context: list[dict] = []
+    applied_commits: list[str] = []
+    emit(
+        "orchestration_dependency_prepare_started", root_task_id=job.root_task_id, job_id=job.id,
+        dependency_job_ids=[dependency.id for dependency in dependencies],
+    )
+    for dependency in dependencies:
+        artifact = repository.get_artifact(dependency.result_artifact_id) if dependency.result_artifact_id else None
+        if artifact is None or not artifact.schema_valid:
+            raise ValueError(f"Dependency job {dependency.id} has no valid artifact")
+        change_set = artifact.content.get("change_set")
+        if isinstance(change_set, dict):
+            for commit in change_set.get("commits", []):
+                if not isinstance(commit, str) or not commit or commit in applied_commits:
+                    continue
+                try:
+                    _git(job.worktree_path, "cherry-pick", commit)
+                except RuntimeError:
+                    subprocess.run(
+                        ["git", "cherry-pick", "--abort"], cwd=job.worktree_path,
+                        capture_output=True, text=True, timeout=30, check=False,
+                    )
+                    emit(
+                        "orchestration_dependency_integration_failed", root_task_id=job.root_task_id,
+                        job_id=job.id, dependency_job_id=dependency.id,
+                        artifact_id=artifact.id, stage="dependency_integration",
+                        error_code="dependency_integration_conflict",
+                    )
+                    raise
+                applied_commits.append(commit)
+        context.append({
+            "job_id": dependency.id,
+            "role": str(dependency.role),
+            "artifact_id": artifact.id,
+            "artifact_kind": artifact.kind,
+            "summary": artifact.content.get("summary", ""),
+            "findings": artifact.content.get("findings", []),
+            "risks": artifact.content.get("risks", []),
+            "changed_files": artifact.content.get("changed_files", []),
+        })
+    emit(
+        "orchestration_dependency_prepare_completed", root_task_id=job.root_task_id, job_id=job.id,
+        dependency_job_ids=[dependency.id for dependency in dependencies],
+        dependency_artifact_ids=[item["artifact_id"] for item in context],
+        applied_commit_count=len(applied_commits),
+    )
+    return context, applied_commits
+
+
+def repair_dag_plan(goal: str, invalid_response: str, errors: list[str]) -> tuple[dict, list[str], str]:
+    runtime = get_runtime()
+    payload = json.dumps({
+        "goal": goal,
+        "validation_errors": errors,
+        "invalid_response": invalid_response[:12000],
+    }, ensure_ascii=False)
+    response = runtime.call_with_retry(
+        system=(
+            "Repair an invalid DAG plan. Return one corrected JSON object only. "
+            "Do not call tools, use Markdown, or include explanations.\n\n" + dag_protocol_instructions()
+        ),
+        messages=[{"role": "user", "content": payload}],
+        max_tokens=min(runtime.sub_max_tokens, 4000),
+    )
+    text = "\n".join(
+        str(block.get("text", ""))
+        for block in response.content
+        if isinstance(block, dict) and block.get("type") == "text"
+    ).strip()
+    plan, repair_errors = parse_dag_plan(text)
+    return plan, repair_errors, text
+
+
+def claim_invalid_artifact_injection(job) -> bool:
+    if os.getenv("PENHIN_EVAL_SCENARIO") != "invalid_artifact" or job.role == AgentRole.PLANNER:
+        return False
+    run_dir = os.getenv("PENHIN_EVAL_RUN_DIR", "")
+    if not run_dir:
+        return False
+    marker = Path(run_dir) / "injections" / (
+        f"{os.getenv('PENHIN_EVAL_CASE_ID', 'case')}-{os.getenv('PENHIN_EVAL_REPETITION', '0')}-invalid-artifact"
+    )
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        descriptor = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        return False
+    os.close(descriptor)
+    return True
+
+
 def main() -> int:
     args = parse_args()
     load_dotenv(ENV_FILE, override=False)
@@ -86,11 +203,35 @@ def main() -> int:
             attempt_id=args.attempt_id, role=str(job.role), workspace_mode=job.workspace_mode,
             dependency_ids=job.depends_on, attempt_number=job.attempt_count,
         )
+        root_base_commit = _git(job.worktree_path, "rev-parse", "HEAD")
+        dependency_context, applied_dependency_commits = prepare_dependency_context(repository, job)
         initial_commit = _git(job.worktree_path, "rev-parse", "HEAD") if job.workspace_mode == "isolated_write" else None
         init_runtime()
         from subagent import run_subagent
 
-        result: Result = run_subagent(job.instruction, agent_type=agent_type_for_role(str(job.role)))
+        instruction = job.instruction
+        if dependency_context:
+            instruction += (
+                "\n\nUse these completed dependency artifacts as authoritative upstream context. "
+                "Do not repeat their broad exploration.\n<dependency_artifacts>\n"
+                + json.dumps(dependency_context, ensure_ascii=False)
+                + "\n</dependency_artifacts>"
+            )
+        result: Result = run_subagent(instruction, agent_type=agent_type_for_role(str(job.role)))
+        forced_plan_source = ""
+        if (
+            job.role == AgentRole.PLANNER
+            and not result.ok
+            and result.meta.get("code") in {"summary_failed", "max_turns", "tool_budget_exhausted"}
+        ):
+            fallback = evaluation_scenario_dag_plan(job.instruction, os.getenv("PENHIN_EVAL_SCENARIO", "")) or fallback_dag_plan(job.instruction)
+            forced_plan_source = "execution_fallback"
+            emit(
+                "orchestration_planner_execution_fallback_used", root_task_id=job.root_task_id,
+                job_id=job.id, attempt_id=args.attempt_id,
+                original_error_code=result.meta.get("code"), job_count=len(fallback["jobs"]),
+            )
+            result = Result.success(json.dumps(fallback, ensure_ascii=False))
         emit(
             "orchestration_agent_result", root_task_id=job.root_task_id, job_id=job.id,
             attempt_id=args.attempt_id, status="ok" if result.ok else "error",
@@ -101,22 +242,62 @@ def main() -> int:
             producer = {"job_id": job.id, "role": str(job.role), "attempt_id": args.attempt_id}
             if job.role == AgentRole.PLANNER:
                 plan, errors = parse_dag_plan(result.message)
+                source = forced_plan_source or "model"
+                emit(
+                    "orchestration_protocol_validated", root_task_id=job.root_task_id, job_id=job.id,
+                    attempt_id=args.attempt_id, protocol="penhin.dag/v1", validation_attempt=1,
+                    schema_valid=not errors, protocol_errors=errors, response_digest=anonymous_id(result.message),
+                    job_count=len(plan.get("jobs", [])) if isinstance(plan, dict) else 0,
+                )
+                if errors:
+                    try:
+                        repaired, repair_errors, repaired_text = repair_dag_plan(job.instruction, result.message, errors)
+                        emit(
+                            "orchestration_protocol_validated", root_task_id=job.root_task_id, job_id=job.id,
+                            attempt_id=args.attempt_id, protocol="penhin.dag/v1", validation_attempt=2,
+                            schema_valid=not repair_errors, protocol_errors=repair_errors,
+                            response_digest=anonymous_id(repaired_text),
+                            job_count=len(repaired.get("jobs", [])) if isinstance(repaired, dict) else 0,
+                        )
+                        if not repair_errors:
+                            plan, errors, source = repaired, [], "repair"
+                    except Exception as repair_error:
+                        emit(
+                            "orchestration_protocol_repair_failed", root_task_id=job.root_task_id, job_id=job.id,
+                            attempt_id=args.attempt_id, error_type=type(repair_error).__name__,
+                        )
+                if errors:
+                    plan, errors, source = fallback_dag_plan(job.instruction), [], "deterministic_fallback"
+                    emit(
+                        "orchestration_protocol_fallback_used", root_task_id=job.root_task_id, job_id=job.id,
+                        attempt_id=args.attempt_id, protocol="penhin.dag/v1", job_count=len(plan["jobs"]),
+                    )
+                plan, semantic_changes = normalize_dag_plan_for_goal(plan, job.instruction)
+                if semantic_changes:
+                    emit(
+                        "orchestration_plan_normalized", root_task_id=job.root_task_id, job_id=job.id,
+                        attempt_id=args.attempt_id, changes=semantic_changes,
+                    )
+                scenario_plan = evaluation_scenario_dag_plan(job.instruction, os.getenv("PENHIN_EVAL_SCENARIO", ""))
+                if scenario_plan is not None:
+                    plan, source = scenario_plan, "evaluation_scenario"
+                    emit(
+                        "orchestration_evaluation_scenario_plan_used", root_task_id=job.root_task_id,
+                        job_id=job.id, attempt_id=args.attempt_id,
+                        scenario=os.getenv("PENHIN_EVAL_SCENARIO"), job_count=len(plan["jobs"]),
+                    )
                 content = {
                     "protocol_version": DAG_PROTOCOL_VERSION,
                     "protocol_valid": not errors,
                     "protocol_errors": errors,
                     "producer": producer,
                     "raw_text": result.message,
+                    "plan_source": source,
+                    "semantic_normalizations": semantic_changes,
                     **plan,
                 }
                 schema_valid = not errors
                 artifact_kind = "agent_dag_plan.v1"
-                emit(
-                    "orchestration_protocol_validated", root_task_id=job.root_task_id, job_id=job.id,
-                    attempt_id=args.attempt_id, protocol="penhin.dag/v1", schema_valid=schema_valid,
-                    protocol_errors=errors, response_digest=anonymous_id(result.message),
-                    job_count=len(plan.get("jobs", [])) if isinstance(plan, dict) else 0,
-                )
             else:
                 content = build_handoff(
                     result.message,
@@ -125,8 +306,17 @@ def main() -> int:
                 )
                 schema_valid = True
                 artifact_kind = "agent_handoff.v1"
+                content["dependency_job_ids"] = [item["job_id"] for item in dependency_context]
+                content["dependency_artifact_ids"] = [item["artifact_id"] for item in dependency_context]
+                content["applied_dependency_commits"] = applied_dependency_commits
                 if job.workspace_mode == "isolated_write":
                     change_set = checkpoint_change_set(job, initial_commit)
+                    if applied_dependency_commits:
+                        change_set["base_commit"] = root_base_commit
+                        change_set["commits"] = [*applied_dependency_commits, *change_set["commits"]]
+                        change_set["changed_files"] = [
+                            item for item in _git(job.worktree_path, "diff", "--name-only", f"{root_base_commit}..HEAD").splitlines() if item
+                        ]
                     content["change_set"] = change_set
                     content["changed_files"] = [
                         {"path": path, "change": "modified", "detail": "Recorded in the agent change set."}
@@ -135,6 +325,15 @@ def main() -> int:
             artifact = Artifact(
                 id=str(uuid4()), job_id=job.id, kind=artifact_kind, content=content, schema_valid=schema_valid,
             )
+            if claim_invalid_artifact_injection(job):
+                artifact.schema_valid = False
+                artifact.content["protocol_valid"] = False
+                artifact.content["protocol_errors"] = ["deterministic evaluation fault: invalid artifact"]
+                schema_valid = False
+                emit(
+                    "orchestration_fault_injected", root_task_id=job.root_task_id, job_id=job.id,
+                    attempt_id=args.attempt_id, fault="invalid_artifact", artifact_id=artifact.id,
+                )
             emit(
                 "orchestration_artifact_built", root_task_id=job.root_task_id, job_id=job.id,
                 attempt_id=args.attempt_id, artifact_id=artifact.id, artifact_kind=artifact.kind,

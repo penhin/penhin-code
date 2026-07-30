@@ -147,6 +147,24 @@ def test_grader_ignores_evaluation_infrastructure(tmp_path: Path) -> None:
     assert all(check.passed for check in checks)
 
 
+def test_grader_includes_committed_changes_from_integration_worktree(tmp_path: Path) -> None:
+    init_repo(tmp_path)
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path, capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    (tmp_path / "allowed.txt").write_text("integrated\n", encoding="utf-8")
+    subprocess.run(["git", "add", "allowed.txt"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "integrated change"], cwd=tmp_path, check=True)
+    case = EvaluationCase(
+        CASE_SCHEMA_VERSION, "integrated", "multi_agent", "test", "prompt", "fixture", 30,
+        allowed_paths=("allowed.txt",),
+    )
+    checks, changed, violations = grade_case(case, tmp_path, base)
+    assert changed == ["allowed.txt"]
+    assert violations == []
+    assert all(check.passed for check in checks)
+
+
 def test_observer_redacts_secrets_but_preserves_token_metrics(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SAMPLE_API_KEY", "secret-value-123")
     observer = EvaluationObserver(tmp_path, "run", "case", 1)
@@ -211,6 +229,17 @@ def test_shared_budget_reserves_settles_and_enforces_limits(tmp_path: Path) -> N
     assert snapshot["used_input_tokens"] == 8
     assert snapshot["case_tokens"]["case"] == 12
     assert snapshot["reservations"] == {}
+
+
+def test_shared_budget_releases_dead_process_reservations(tmp_path: Path) -> None:
+    path = tmp_path / "budget.json"
+    budget = SharedBudget(path, 100, 1.0)
+    reservation = budget.reserve(10, 20, ModelPrice(1.0, 2.0), "primary", "case")
+    state = json.loads(path.read_text(encoding="utf-8"))
+    state["reservations"][reservation]["pid"] = 2_147_483_647
+    path.write_text(json.dumps(state), encoding="utf-8")
+    assert budget.release_stale() == 1
+    assert budget.snapshot()["reservations"] == {}
 
 
 def test_metrics_capture_tools_tokens_latency_and_stability() -> None:

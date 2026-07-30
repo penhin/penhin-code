@@ -11,7 +11,7 @@ import pytest
 
 from orchestration.models import AgentJob, AgentRole, Artifact, IntegrationItem, IntegrationItemStatus, IntegrationRun, IntegrationRunStatus, JobStatus
 from orchestration.repositories.postgres_repository import PostgresOrchestrationRepository
-from orchestration.planning import DAG_PROTOCOL_VERSION, parse_dag_plan
+from orchestration.planning import DAG_PROTOCOL_VERSION, evaluation_scenario_dag_plan, fallback_dag_plan, normalize_dag_plan_for_goal, parse_dag_plan
 from orchestration.service import create_isolated_agent_job, materialize_dag_plan
 from orchestration.worktrees import AgentWorktree
 from orchestration.artifacts import build_handoff
@@ -112,6 +112,43 @@ def test_dag_protocol_accepts_dependencies_and_rejects_cycles() -> None:
     valid["jobs"][0]["depends_on"] = ["implement"]
     _, errors = parse_dag_plan(json.dumps(valid))
     assert errors == ["job dependencies must be acyclic"]
+
+
+def test_dag_protocol_recovers_embedded_json_and_has_safe_fallback() -> None:
+    valid = {
+        "protocol_version": DAG_PROTOCOL_VERSION,
+        "goal": "Inspect in parallel",
+        "jobs": [{"key": "inspect", "agent_type": "explore", "instruction": "Inspect", "depends_on": []}],
+        "final_job_keys": ["inspect"],
+    }
+    parsed, errors = parse_dag_plan("Here is the plan:\n" + json.dumps(valid) + "\nDone.")
+    assert parsed == valid
+    assert errors == []
+    fallback = fallback_dag_plan("Fix subtract and verify it")
+    assert [job["agent_type"] for job in fallback["jobs"]] == ["explore", "general", "verification"]
+    assert fallback["final_job_keys"] == ["verify"]
+    analysis = fallback_dag_plan("Use parallel exploration and produce an implementation plan")
+    assert all(job["agent_type"] != "general" for job in analysis["jobs"])
+    normalized, changes = normalize_dag_plan_for_goal(
+        {**valid, "jobs": [{**valid["jobs"][0], "agent_type": "general"}]},
+        "Produce an implementation plan without changing files",
+    )
+    assert normalized["jobs"][0]["agent_type"] == "explore"
+    assert changes
+    timeout_plan = evaluation_scenario_dag_plan("bounded", "timeout_cancel")
+    _, errors = parse_dag_plan(json.dumps(timeout_plan))
+    assert errors == []
+    assert timeout_plan["jobs"][0]["timeout_seconds"] == 1
+    unsafe_write_plan = {
+        "protocol_version": DAG_PROTOCOL_VERSION, "goal": "Fix it",
+        "jobs": [{"key": "inspect", "agent_type": "explore", "instruction": "Inspect", "depends_on": []}],
+        "final_job_keys": ["inspect"],
+    }
+    normalized_write, changes = normalize_dag_plan_for_goal(unsafe_write_plan, "Fix subtract")
+    assert [job["agent_type"] for job in normalized_write["jobs"]] == ["explore", "general", "verification"]
+    assert changes
+    normalized_inflected, _ = normalize_dag_plan_for_goal(unsafe_write_plan, "Plan a DAG that fixes subtract")
+    assert any(job["agent_type"] == "general" for job in normalized_inflected["jobs"])
 
 
 def test_materialized_dag_uses_persistent_dependency_ids(

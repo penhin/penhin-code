@@ -26,6 +26,12 @@ def orchestration_metrics_from_events(events: list[dict[str, Any]]) -> dict[str,
     created = [event for event in orchestration if event.get("event_type") == "orchestration_job_created"]
     claimed = [event for event in orchestration if event.get("event_type") == "orchestration_job_claimed"]
     terminals = [event for event in orchestration if event.get("event_type") == "orchestration_worker_completed"]
+    cancellations = [
+        event for event in orchestration
+        if event.get("event_type") == "orchestration_job_cancel_requested"
+        and event.get("payload", {}).get("status") == "cancelled"
+    ]
+    timeouts = [event for event in orchestration if event.get("event_type") == "orchestration_job_timed_out"]
     artifacts = [event for event in orchestration if event.get("event_type") == "orchestration_artifact_built"]
     waits = [event for event in orchestration if event.get("event_type") == "orchestration_job_wait_completed"]
     integrations = [event for event in orchestration if event.get("event_type") == "integration_completed"]
@@ -39,8 +45,10 @@ def orchestration_metrics_from_events(events: list[dict[str, Any]]) -> dict[str,
         for event in orchestration
         if event.get("payload", {}).get("error_code")
     )
+    plan_sources = Counter(str(event.get("payload", {}).get("plan_source", "unknown")) for event in plans_validated)
     created_ids = {str(event.get("payload", {}).get("job_id")) for event in created if event.get("payload", {}).get("job_id")}
-    terminal_ids = {str(event.get("payload", {}).get("job_id")) for event in terminals if event.get("payload", {}).get("job_id")}
+    terminal_events = terminals + cancellations + timeouts
+    terminal_ids = {str(event.get("payload", {}).get("job_id")) for event in terminal_events if event.get("payload", {}).get("job_id")}
     timestamps = [int(event.get("monotonic_ns", 0) or 0) for event in orchestration if event.get("monotonic_ns")]
     return {
         "event_count": len(orchestration),
@@ -48,17 +56,23 @@ def orchestration_metrics_from_events(events: list[dict[str, Any]]) -> dict[str,
         "plans_validated": len(plans_validated),
         "plans_failed": len(plan_failures),
         "plan_valid_rate": len(plans_validated) / len(plans_started) if plans_started else None,
+        "plan_sources": dict(sorted(plan_sources.items())),
         "jobs_created": len(created),
         "jobs_claimed": len(claimed),
         "jobs_succeeded": sum(event.get("payload", {}).get("status") == "succeeded" for event in terminals),
         "jobs_failed": sum(event.get("payload", {}).get("status") == "failed" for event in terminals),
+        "jobs_cancelled": len(cancellations),
+        "jobs_timed_out": len(timeouts),
         "job_trace_completeness_rate": len(created_ids & terminal_ids) / len(created_ids) if created_ids else None,
         "dangling_job_ids": sorted(created_ids - terminal_ids),
         "artifacts_built": len(artifacts),
         "invalid_artifacts": sum(not bool(event.get("payload", {}).get("schema_valid")) for event in artifacts),
         "wait_failures": sum(event.get("payload", {}).get("status") != "succeeded" for event in waits),
         "integrations_completed": len(integrations),
-        "integration_conflicts": sum(event.get("payload", {}).get("status") == "needs_resolution" for event in integrations),
+        "integration_conflicts": (
+            sum(event.get("payload", {}).get("status") == "needs_resolution" for event in integrations)
+            + error_codes["dependency_integration_conflict"]
+        ),
         "verifications_completed": len(verification),
         "verifications_failed": sum(event.get("payload", {}).get("status") != "verified" for event in verification),
         "failure_stages": dict(sorted(stages.items())),

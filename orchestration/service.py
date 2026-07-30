@@ -74,6 +74,7 @@ def create_isolated_agent_job(
     root_task_id: str | None = None,
     depends_on: list[str] | None = None,
     priority: int = 0,
+    timeout_seconds: int | None = None,
 ) -> AgentJob:
     job_id = str(uuid4())
     worktree = provision_worktree(job_id)
@@ -87,6 +88,7 @@ def create_isolated_agent_job(
         instruction=task,
         depends_on=depends_on or [],
         priority=priority,
+        timeout_seconds=timeout_seconds,
         workspace_mode=workspace_mode_for_agent(agent_type),
         worktree_path=worktree.path,
         worktree_branch=worktree.branch,
@@ -172,6 +174,7 @@ def materialize_dag_plan(repository: OrchestrationRepository, planner_job_id: st
                 root_task_id=planner_job_id,
                 depends_on=[created[key].id for key in spec["depends_on"]],
                 priority=spec.get("priority", 0),
+                timeout_seconds=spec.get("timeout_seconds"),
             )
             del remaining[spec["key"]]
     data = {
@@ -227,6 +230,8 @@ def create_dag_plan(goal: str) -> Result:
         artifact_id=artifact.id, job_count=len(content.get("jobs", [])),
         edge_count=sum(len(item.get("depends_on", [])) for item in content.get("jobs", [])),
         final_job_count=len(content.get("final_job_keys", [])),
+        plan_source=content.get("plan_source", "unknown"),
+        semantic_normalization_count=len(content.get("semantic_normalizations", [])),
     )
     try:
         data = materialize_dag_plan(repository, planner.id, content)
