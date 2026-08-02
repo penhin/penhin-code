@@ -8,10 +8,10 @@ from uuid import uuid4
 
 import pytest
 
-from orchestration.models import AgentJob, AgentRole, Artifact, IntegrationItem, IntegrationItemStatus, IntegrationRun, IntegrationRunStatus, JobStatus
-from orchestration.scheduler import PersistentScheduler
-from orchestration.repositories import database_url_from_env, repository_from_database_url
-from orchestration.repositories.sqlite_repository import SqliteOrchestrationRepository, sqlite_database_url
+from penhin.orchestration.models import AgentJob, AgentRole, Artifact, IntegrationItem, IntegrationItemStatus, IntegrationRun, IntegrationRunStatus, JobStatus
+from penhin.orchestration.scheduler import PersistentScheduler
+from penhin.orchestration.repositories import database_url_from_env, repository_from_database_url
+from penhin.orchestration.repositories.sqlite_repository import SqliteOrchestrationRepository, sqlite_database_url
 
 
 @pytest.fixture
@@ -45,8 +45,8 @@ def test_agent_job_instruction_is_redacted_before_persistence(
     repository: SqliteOrchestrationRepository, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     from types import SimpleNamespace
-    from auth.secrets import register_secret
-    from orchestration import service
+    from penhin.auth.secrets import register_secret
+    from penhin.orchestration import service
 
     register_secret("job-secret-sentinel")
     monkeypatch.setattr(service, "provision_worktree", lambda _job_id: SimpleNamespace(

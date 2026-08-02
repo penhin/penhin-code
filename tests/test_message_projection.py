@@ -3,7 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from message_projection import mark_message_snipped, messages_for_api
+from penhin.agent.projection import mark_message_snipped, messages_for_api
 
 from tests.helpers import ToolUseBlock
 

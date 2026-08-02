@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import prompt
+from penhin.agent import prompts as prompt
 
 
 def test_build_main_system_without_project_instructions() -> None:

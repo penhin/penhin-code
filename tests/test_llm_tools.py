@@ -5,11 +5,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from result import Result
-from task import TaskStatusManager
-from tools import PARENT_TOOLS, TOOL_SPECS
-from tools import tasks as task_tools
-from message_flow import block_get
+from penhin.result import Result
+from penhin.tools.task_state import TaskStatusManager
+from penhin.tools import PARENT_TOOLS, TOOL_SPECS
+from penhin.tools.builtin import tasks as task_tools
+from penhin.agent.messages import block_get
 
 try:
     from dotenv import dotenv_values
@@ -128,7 +128,7 @@ def tool_test_names() -> list[str]:
 
 
 def call_expected_tool(runtime, expected_tool: str):
-    from runtime import log_usage
+    from penhin.runtime.manager import log_usage
 
     assert_registered_tool(expected_tool)
     messages = [
@@ -188,7 +188,7 @@ def test_llm_calls_requested_tool() -> None:
     if not require_real_llm_enabled():
         return
 
-    from runtime import get_runtime, init_runtime
+    from penhin.runtime.manager import get_runtime, init_runtime
 
     init_runtime()
     runtime = get_runtime()
@@ -216,7 +216,7 @@ def test_llm_calls_requested_tool_and_finishes() -> None:
     if os.getenv("RUN_LLM_TOOL_FINAL_TEST") != "1":
         return
 
-    from runtime import get_runtime, init_runtime, log_usage
+    from penhin.runtime.manager import get_runtime, init_runtime, log_usage
 
     init_runtime()
     runtime = get_runtime()

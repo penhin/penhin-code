@@ -6,10 +6,11 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import tool_runtime
-from context import RunContext
-from result import Result
-from tool_runtime import (
+from penhin.tools.execution import service as tool_runtime
+from penhin.tools.execution.observability import input_summary
+from penhin.agent.context import RunContext
+from penhin.result import Result
+from penhin.tools.execution import (
     ApprovalFlow,
     PARENT_AGENT_POLICY,
     PermissionPolicy,
@@ -126,16 +127,16 @@ def test_bash_prefix_approval_allows_matching_commands() -> None:
 
 
 def test_tool_runtime_input_summary_hides_sensitive_values() -> None:
-    summary = tool_runtime.input_summary(
+    summary = input_summary(
         {
-            "path": "agent.py",
+            "path": "penhin.agent.loop.py",
             "content": "secret content",
             "command": "echo secret",
             "unknown": {"hidden": True},
         }
     )
 
-    assert 'path="agent.py"' in summary
+    assert 'path="penhin.agent.loop.py"' in summary
     assert 'content_sha="' in summary
     assert "content_chars=14" in summary
     assert 'command_sha="' in summary
@@ -201,7 +202,7 @@ def test_tool_runtime_logs_input_summary() -> None:
         ):
             result = run_tool(
                 "write",
-                {"path": "agent.py", "content": "secret content"},
+                {"path": "penhin.agent.loop.py", "content": "secret content"},
                 PermissionPolicy(allow={"write"}, deny=set()),
                 ApprovalFlow.preapproved({"write"}),
             )
@@ -216,7 +217,7 @@ def test_tool_runtime_logs_input_summary() -> None:
     assert "approval_required=false" in output
     assert 'input=content_sha="' in output
     assert "content_chars=14" in output
-    assert 'path="agent.py"' in output
+    assert 'path="penhin.agent.loop.py"' in output
     assert "secret content" not in output
 
 
@@ -225,7 +226,7 @@ def test_tool_runtime_logs_blocked_access() -> None:
     try:
         result = run_tool(
             "write",
-            {"path": "agent.py", "content": "secret content"},
+            {"path": "penhin.agent.loop.py", "content": "secret content"},
             PermissionPolicy(allow={"write"}, deny=set()),
             ApprovalFlow.require_confirmation({"write"}),
         )
@@ -240,7 +241,7 @@ def test_tool_runtime_logs_blocked_access() -> None:
     assert "status=approval_required" in output
     assert "duration_ms=" in output
     assert "code=tool_approval_required" in output
-    assert 'path="agent.py"' in output
+    assert 'path="penhin.agent.loop.py"' in output
     assert 'content_sha="' in output
     assert "content_chars=14" in output
     assert "secret content" not in output

@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
-from providers.openai import OpenAIProvider, normalize_response, request_kwargs, responses_input
-from providers.types import LLMRequest
+from penhin.providers.openai import OpenAIProvider, normalize_response, request_kwargs, responses_input
+from penhin.providers.protocols import LLMRequest
 
 
 def request(messages=None, tools=None):

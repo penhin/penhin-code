@@ -6,17 +6,17 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tools import CHILD_TOOLS, PARENT_TOOLS, TOOL_SPECS, ToolCategory
-from tools.cache import tool_result_cache
-from tools.files import run_list, run_read, run_search, run_write
-from tools.glob import run_glob
-from tools.orchestration import (
+from penhin.tools import CHILD_TOOLS, PARENT_TOOLS, TOOL_SPECS, ToolCategory
+from penhin.tools.builtin.cache import tool_result_cache
+from penhin.tools.builtin.files import run_list, run_read, run_search, run_write
+from penhin.tools.builtin.glob import run_glob
+from penhin.tools.builtin.orchestration import (
     run_agent_job_cancel, run_agent_job_list, run_agent_job_show,
     run_agent_job_start, run_agent_job_wait,
 )
-from tools.shell import command_escapes_workspace, command_is_dangerous, command_references_ignored_path, run_bash
-from orchestration.models import AgentJob, AgentRole, Artifact
-from result import Result
+from penhin.tools.builtin.shell import command_escapes_workspace, command_is_dangerous, command_references_ignored_path, run_bash
+from penhin.orchestration.models import AgentJob, AgentRole, Artifact
+from penhin.result import Result
 
 from tests.helpers import run_spec_tool
 
@@ -30,7 +30,7 @@ def test_agent_job_start_returns_persistent_uuid_and_preserves_root() -> None:
         subject="verify release",
         instruction="verify release",
     )
-    with patch("tools.orchestration.enqueue_subagent_job", return_value=job) as enqueue:
+    with patch("penhin.tools.builtin.orchestration.enqueue_subagent_job", return_value=job) as enqueue:
         result = run_agent_job_start("verify release", "verification", "root-uuid")
 
     assert result.ok is True
@@ -40,7 +40,7 @@ def test_agent_job_start_returns_persistent_uuid_and_preserves_root() -> None:
 
 
 def test_agent_job_start_validates_role_before_scheduling() -> None:
-    with patch("tools.orchestration.enqueue_subagent_job") as enqueue:
+    with patch("penhin.tools.builtin.orchestration.enqueue_subagent_job") as enqueue:
         result = run_agent_job_start("inspect", "review")
 
     assert result.ok is False
@@ -61,9 +61,9 @@ def test_agent_job_query_wait_and_cancel_use_persistent_state() -> None:
     scheduler = type("Scheduler", (), {"request_cancel": lambda self, _id: job})()
     wait_result = Result.success("done", data={"job": job.to_dict(), "artifact": artifact})
     with (
-        patch("tools.orchestration._repository_or_failure", return_value=(repository, None)),
-        patch("tools.orchestration.scheduler_from_env", return_value=scheduler),
-        patch("tools.orchestration.wait_for_job", return_value=wait_result),
+        patch("penhin.tools.builtin.orchestration._repository_or_failure", return_value=(repository, None)),
+        patch("penhin.tools.builtin.orchestration.scheduler_from_env", return_value=scheduler),
+        patch("penhin.tools.builtin.orchestration.wait_for_job", return_value=wait_result),
     ):
         shown = run_agent_job_show(job.id)
         listed = run_agent_job_list("root-uuid", "queued")
@@ -98,10 +98,10 @@ def test_environment_files_are_blocked_from_file_and_shell_tools() -> None:
 
 
 def test_shell_redacts_registered_secret_from_all_result_fields() -> None:
-    from auth.secrets import register_secret
+    from penhin.auth.secrets import register_secret
     register_secret("tool-secret-sentinel")
     completed = subprocess.CompletedProcess("echo", 0, "tool-secret-sentinel\n", "tool-secret-sentinel\n")
-    with patch("tools.shell.write_is_allowed", return_value=True), patch("tools.shell.subprocess.run", return_value=completed):
+    with patch("penhin.tools.builtin.shell.write_is_allowed", return_value=True), patch("penhin.tools.builtin.shell.subprocess.run", return_value=completed):
         result = run_bash("echo tool-secret-sentinel")
     assert result.message == "<redacted>\n"
     assert result.error == "<redacted>\n"

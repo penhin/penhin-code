@@ -10,12 +10,13 @@ from pathlib import Path
 import httpx
 import pytest
 
-from auth.models import ApiKeyCredential, OAuthCredential, credential_from_dict
-from auth.oauth import LoopbackCallback, OAuthError, _browser_result, _pkce, login_anthropic, login_openai_codex, refresh_oauth
-from auth.resolver import AuthResolver
-from auth.providers import provider_auth, provider_key_name
-from auth.secrets import redact_text, register_secret, safe_value, scrubbed_environment
-from auth.storage import CredentialStoreUnavailable, FileCredentialStore, InMemoryCredentialStore, KeyringCredentialStore
+from penhin.auth.models import ApiKeyCredential, OAuthCredential, credential_from_dict
+from penhin.auth.oauth import LoopbackCallback, OAuthError, login_anthropic, login_openai_codex, refresh_oauth
+from penhin.auth.oauth._flows import _browser_result, _pkce
+from penhin.auth.resolver import AuthResolver
+from penhin.auth.providers import provider_auth, provider_key_name
+from penhin.auth.secrets import redact_text, register_secret, safe_value, scrubbed_environment
+from penhin.auth.storage import CredentialStoreUnavailable, FileCredentialStore, InMemoryCredentialStore, KeyringCredentialStore
 
 
 def _increment_file_credential(path: str, lock_path: str) -> None:
@@ -44,7 +45,7 @@ def test_provider_auth_capabilities_match_runtime_protocols() -> None:
 
 
 def test_file_store_permissions_round_trip_and_delete(tmp_path: Path) -> None:
-    path, lock = tmp_path / "auth.json", tmp_path / "auth.lock"
+    path, lock = tmp_path / "penhin.auth.json", tmp_path / "penhin.auth.lock"
     store = FileCredentialStore(path, lock)
     credential = ApiKeyCredential(key="sentinel-secret")
     assert store.modify("anthropic", lambda _current: credential) == credential
@@ -58,7 +59,7 @@ def test_file_store_permissions_round_trip_and_delete(tmp_path: Path) -> None:
 
 
 def test_file_store_hardens_existing_permissions_and_rejects_symlink(tmp_path: Path) -> None:
-    path, lock = tmp_path / "auth.json", tmp_path / "auth.lock"
+    path, lock = tmp_path / "penhin.auth.json", tmp_path / "penhin.auth.lock"
     payload = {"schema_version": "penhin.auth/v1", "providers": {"openai": {"type": "api_key", "key": "existing-secret"}}}
     path.write_text(json.dumps(payload))
     path.chmod(0o644)
@@ -71,16 +72,16 @@ def test_file_store_hardens_existing_permissions_and_rejects_symlink(tmp_path: P
 
 
 def test_corrupt_file_is_not_overwritten(tmp_path: Path) -> None:
-    path = tmp_path / "auth.json"
+    path = tmp_path / "penhin.auth.json"
     path.write_text("not-json")
-    store = FileCredentialStore(path, tmp_path / "auth.lock")
+    store = FileCredentialStore(path, tmp_path / "penhin.auth.lock")
     with pytest.raises(json.JSONDecodeError):
         store.modify("openai", lambda _current: ApiKeyCredential(key="new-secret"))
     assert path.read_text() == "not-json"
 
 
 def test_file_store_serializes_refresh_style_check_then_write(tmp_path: Path) -> None:
-    store = FileCredentialStore(tmp_path / "auth.json", tmp_path / "auth.lock")
+    store = FileCredentialStore(tmp_path / "penhin.auth.json", tmp_path / "penhin.auth.lock")
     expired = OAuthCredential("old-access", "old-refresh", 1)
     refreshed = OAuthCredential("new-access", "new-refresh", int(time.time()) + 3600)
     store.modify("anthropic", lambda _current: expired)
@@ -108,7 +109,7 @@ def test_file_store_serializes_refresh_style_check_then_write(tmp_path: Path) ->
 
 
 def test_file_store_serializes_multiprocess_updates(tmp_path: Path) -> None:
-    path, lock = tmp_path / "auth.json", tmp_path / "auth.lock"
+    path, lock = tmp_path / "penhin.auth.json", tmp_path / "penhin.auth.lock"
     store = FileCredentialStore(path, lock)
     store.modify("openai", lambda _current: ApiKeyCredential(key="0"))
     processes = [multiprocessing.Process(target=_increment_file_credential, args=(str(path), str(lock))) for _ in range(6)]
@@ -150,7 +151,7 @@ def test_keyring_store_round_trip_with_fake_backend(tmp_path: Path) -> None:
             del self.values[(service, provider)]
 
     store = object.__new__(KeyringCredentialStore)
-    store.lock_path = tmp_path / "auth.lock"
+    store.lock_path = tmp_path / "penhin.auth.lock"
     store.keyring = FakeKeyring()
     store.errors = (RuntimeError,)
     credential = ApiKeyCredential(key="keyring-secret")
@@ -350,7 +351,7 @@ def test_openai_browser_oauth_extracts_account(monkeypatch) -> None:
 
 
 def test_openai_device_flow_polls_then_exchanges(monkeypatch) -> None:
-    monkeypatch.setattr("auth.oauth.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("penhin.auth.oauth._flows.time.sleep", lambda _seconds: None)
     interaction = ManualInteraction()
     payload = "eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjdCJ9fQ"
     polls = 0

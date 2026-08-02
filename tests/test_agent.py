@@ -4,12 +4,12 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import agent
-from agent_state import AgentDeps, AgentPhase, AgentState, TerminalReason, step_agent
-from circuit_breaker import CircuitBreakerOpen
-from context import RunContext
-from result import Result
-from tool_runtime import ApprovalFlow, PermissionPolicy, ToolRun
+from penhin.agent import loop as agent
+from penhin.agent.state import AgentDeps, AgentPhase, AgentState, TerminalReason, step_agent
+from penhin.runtime.retry import CircuitBreakerOpen
+from penhin.agent.context import RunContext
+from penhin.result import Result
+from penhin.tools.execution import ApprovalFlow, PermissionPolicy, ToolRun
 
 
 def empty_policy() -> PermissionPolicy:
@@ -62,7 +62,7 @@ def test_resolve_approval_approves_for_session() -> None:
     policy = PermissionPolicy(allow={"write"}, deny=set())
     tool_input = {"path": "demo.txt", "content": "hello"}
 
-    with patch("builtins.input", return_value="ys"), patch("agent.run_tool") as mocked_run_tool:
+    with patch("builtins.input", return_value="ys"), patch("penhin.agent.loop.run_tool") as mocked_run_tool:
         mocked_run_tool.return_value = ToolRun(Result.success("ok"))
         tool_run = agent.resolve_approval("write", tool_input, policy, approval)
 
@@ -76,7 +76,7 @@ def test_resolve_approval_approves_bash_prefix_for_session() -> None:
     policy = PermissionPolicy(allow={"bash"}, deny=set())
     tool_input = {"command": "pytest tests/test_agent.py -q"}
 
-    with patch("builtins.input", return_value="3"), patch("agent.run_tool") as mocked_run_tool:
+    with patch("builtins.input", return_value="3"), patch("penhin.agent.loop.run_tool") as mocked_run_tool:
         mocked_run_tool.return_value = ToolRun(Result.success("ok"))
         tool_run = agent.resolve_approval("bash", tool_input, policy, approval)
 
@@ -90,7 +90,7 @@ def test_resolve_approval_rejects_when_input_is_unavailable() -> None:
     policy = PermissionPolicy(allow={"write"}, deny=set())
     tool_input = {"path": "demo.txt", "content": "hello"}
 
-    with patch("builtins.input", side_effect=EOFError), patch("agent.run_tool") as mocked_run_tool:
+    with patch("builtins.input", side_effect=EOFError), patch("penhin.agent.loop.run_tool") as mocked_run_tool:
         mocked_run_tool.return_value = ToolRun(Result.failure("rejected"))
         tool_run = agent.resolve_approval("write", tool_input, policy, approval)
 
@@ -107,7 +107,7 @@ def test_agent_loop_updates_run_context_messages() -> None:
         approval=ApprovalFlow.require_confirmation(set()),
     )
 
-    with patch("agent.get_runtime", return_value=FakeRuntime()), patch("agent.log_usage"):
+    with patch("penhin.agent.loop.runtime_manager.current", return_value=FakeRuntime()), patch("penhin.agent.loop.log_usage"):
         agent.agent_loop(context)
 
     assert context.messages == [
@@ -124,9 +124,9 @@ def test_agent_loop_prepares_context_before_llm_call() -> None:
     )
 
     with (
-        patch("agent.get_runtime", return_value=FakeRuntime()),
-        patch("agent.log_usage"),
-        patch("agent.compact_context_for_llm") as mocked_compact,
+        patch("penhin.agent.loop.runtime_manager.current", return_value=FakeRuntime()),
+        patch("penhin.agent.loop.log_usage"),
+        patch("penhin.agent.loop.compact_context_for_llm") as mocked_compact,
     ):
         agent.agent_loop(context)
 
@@ -140,7 +140,7 @@ def test_agent_loop_records_message_when_circuit_is_open() -> None:
         approval=ApprovalFlow.require_confirmation(set()),
     )
 
-    with patch("agent.get_runtime", return_value=CircuitOpenRuntime()):
+    with patch("penhin.agent.loop.runtime_manager.current", return_value=CircuitOpenRuntime()):
         agent.agent_loop(context)
 
     assert context.messages[-1] == {
@@ -156,7 +156,7 @@ def test_agent_loop_returns_terminal_state() -> None:
         approval=ApprovalFlow.require_confirmation(set()),
     )
 
-    with patch("agent.get_runtime", return_value=FakeRuntime()), patch("agent.log_usage"):
+    with patch("penhin.agent.loop.runtime_manager.current", return_value=FakeRuntime()), patch("penhin.agent.loop.log_usage"):
         state = agent.agent_loop(context)
 
     assert state.phase == AgentPhase.FINISHED
@@ -191,7 +191,7 @@ def test_record_llm_response_updates_context_and_logs_usage() -> None:
     )
     response = FakeResponse([{"type": "text", "text": "done"}])
 
-    with patch("agent.log_usage") as mocked_log_usage:
+    with patch("penhin.agent.loop.log_usage") as mocked_log_usage:
         agent.record_llm_response(context, response)
 
     assert context.messages == [
@@ -276,7 +276,7 @@ def test_execute_tool_uses_returns_tool_results() -> None:
     )
     response = FakeResponse([FakeToolBlock(name="workspace", block_id="tool-1")], stop_reason="tool_use")
 
-    with patch("message_flow.run_tool", return_value=ToolRun(Result.success("ok"))):
+    with patch("penhin.agent.messages.run_tool", return_value=ToolRun(Result.success("ok"))):
         tool_results, manual_compact = agent.execute_tool_uses(context, response)
 
     assert manual_compact is False
@@ -297,7 +297,7 @@ def test_execute_tool_uses_caches_large_tool_result() -> None:
     response = FakeResponse([FakeToolBlock(name="workspace", block_id="tool-1")], stop_reason="tool_use")
     large_result = Result.success("x" * 3000)
 
-    with patch("message_flow.run_tool", return_value=ToolRun(large_result)):
+    with patch("penhin.agent.messages.run_tool", return_value=ToolRun(large_result)):
         tool_results, _ = agent.execute_tool_uses(context, response)
 
     assert tool_results[0]["cache_control"] == {"type": "ephemeral"}

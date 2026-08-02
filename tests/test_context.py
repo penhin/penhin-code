@@ -3,8 +3,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from context import RunContext
-from tool_runtime import ApprovalFlow, PermissionPolicy
+from penhin.agent.context import RunContext
+from penhin.tools.execution import ApprovalFlow, PermissionPolicy
 
 
 def empty_policy() -> PermissionPolicy:

@@ -4,16 +4,16 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from context import RunContext
-from message_flow import (
+from penhin.agent.context import RunContext
+from penhin.agent.messages import (
     ToolCall,
     add_tool_result_cache_control,
     build_tool_execution_context,
     collect_tool_calls,
     execute_tool_blocks,
 )
-from result import Result
-from tool_runtime import ApprovalFlow, PermissionPolicy, ToolRun
+from penhin.result import Result
+from penhin.tools.execution import ApprovalFlow, PermissionPolicy, ToolRun
 
 
 def test_add_tool_result_cache_control_marks_last_large_result() -> None:
@@ -94,7 +94,7 @@ def test_delegation_guard_blocks_broad_tools_and_limits_reads() -> None:
     def fake_run_tool(tool_name, tool_input, policy, approval, context=None):
         return ToolRun(Result.success(f"{tool_name} ok"))
 
-    with patch("message_flow.run_tool", side_effect=fake_run_tool) as mocked_run_tool:
+    with patch("penhin.agent.messages.run_tool", side_effect=fake_run_tool) as mocked_run_tool:
         tool_results, manual_compact = execute_tool_blocks(
             content,
             build_tool_execution_context(
@@ -126,7 +126,7 @@ def test_parallel_safe_tool_calls_preserve_result_order() -> None:
     def fake_run_tool(tool_name, tool_input, policy, approval, context=None):
         return ToolRun(Result.success(f"{tool_name}:{tool_input.get('path', '')}"))
 
-    with patch("message_flow.run_tool", side_effect=fake_run_tool):
+    with patch("penhin.agent.messages.run_tool", side_effect=fake_run_tool):
         tool_results, manual_compact = execute_tool_blocks(
             content,
             build_tool_execution_context(
@@ -164,7 +164,7 @@ def test_tool_execution_context_limits_total_tool_calls() -> None:
         context=context,
         max_tool_calls=2,
     )
-    with patch("message_flow.run_tool", side_effect=fake_run_tool) as mocked_run_tool:
+    with patch("penhin.agent.messages.run_tool", side_effect=fake_run_tool) as mocked_run_tool:
         tool_results, manual_compact = execute_tool_blocks(content, execution_context)
 
     assert manual_compact is False
@@ -189,7 +189,7 @@ def test_non_parallel_tool_splits_parallel_batches() -> None:
     def fake_run_tool(tool_name, tool_input, policy, approval, context=None):
         return ToolRun(Result.success(f"{tool_name} ok"))
 
-    with patch("message_flow.run_tool", side_effect=fake_run_tool) as mocked_run_tool:
+    with patch("penhin.agent.messages.run_tool", side_effect=fake_run_tool) as mocked_run_tool:
         tool_results, manual_compact = execute_tool_blocks(
             content,
             build_tool_execution_context(

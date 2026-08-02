@@ -9,8 +9,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import main as main_module
-import transcript
+from penhin.cli import main as main_module
+from penhin.agent import transcript
 
 
 def test_parse_session_args() -> None:

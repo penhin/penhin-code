@@ -1,8 +1,9 @@
 import pytest
 
-from auth import ApiKeyCredential, ResolvedAuth
-from providers.models import validate_model
-import runtime
+from penhin.auth import ApiKeyCredential, ResolvedAuth
+from penhin.providers.models import validate_model
+from penhin.runtime import manager as runtime
+from penhin.runtime.factory import build_provider
 
 
 @pytest.mark.parametrize(("provider", "model"), [
@@ -31,13 +32,13 @@ def test_build_provider_selects_openai(monkeypatch) -> None:
     expected = object()
     resolved = ResolvedAuth("openai", ApiKeyCredential(key="test-key"), "test")
     from unittest.mock import patch
-    with patch("providers.openai.OpenAIProvider", return_value=expected):
-        assert runtime.build_provider("openai", resolved) is expected
+    with patch("penhin.providers.openai.OpenAIProvider", return_value=expected):
+        assert build_provider("openai", resolved) is expected
 
 
 def test_optional_runtime_start_allows_login_without_credentials(monkeypatch) -> None:
     runtime.runtime = object()
-    monkeypatch.setattr(runtime, "load_runtime_environment", lambda: None)
+    monkeypatch.setattr(runtime, "load_environment", lambda: None)
     monkeypatch.setattr(runtime, "configured_provider", lambda: "anthropic")
     monkeypatch.setattr(runtime, "resolve_runtime_auth", lambda _provider: None)
     runtime.init_runtime(required=False)
@@ -45,7 +46,7 @@ def test_optional_runtime_start_allows_login_without_credentials(monkeypatch) ->
 
 
 def test_required_runtime_start_rejects_missing_credentials(monkeypatch) -> None:
-    monkeypatch.setattr(runtime, "load_runtime_environment", lambda: None)
+    monkeypatch.setattr(runtime, "load_environment", lambda: None)
     monkeypatch.setattr(runtime, "configured_provider", lambda: "anthropic")
     monkeypatch.setattr(runtime, "resolve_runtime_auth", lambda _provider: None)
     with pytest.raises(SystemExit):

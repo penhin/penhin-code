@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from auth.browser import open_browser
+from penhin.auth.browser import open_browser
 
 
 def test_linux_browser_launch_is_detached_shell_free_and_quiet() -> None:
     with (
-        patch("auth.browser.sys.platform", "linux"),
-        patch.dict("auth.secrets.os.environ", {"OPENAI_API_KEY": "must-not-propagate"}),
-        patch("auth.browser.subprocess.Popen") as popen,
+        patch("penhin.auth.browser.sys.platform", "linux"),
+        patch.dict("penhin.auth.secrets.os.environ", {"OPENAI_API_KEY": "must-not-propagate"}),
+        patch("penhin.auth.browser.subprocess.Popen") as popen,
     ):
         open_browser("https://provider.example/authorize?state=value&scope=openid")
 
@@ -23,5 +23,5 @@ def test_linux_browser_launch_is_detached_shell_free_and_quiet() -> None:
 
 
 def test_browser_launcher_failure_is_non_fatal() -> None:
-    with patch("auth.browser.subprocess.Popen", side_effect=OSError("launcher missing")):
+    with patch("penhin.auth.browser.subprocess.Popen", side_effect=OSError("launcher missing")):
         open_browser("https://provider.example/authorize")

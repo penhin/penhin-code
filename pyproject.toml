@@ -39,8 +39,8 @@ dev = ["pytest>=8.0"]
 postgres = ["psycopg[binary]>=3.2.0"]
 
 [project.scripts]
-penhin = "main:main"
-penhin-eval = "evaluation.cli:main"
+penhin = "penhin.cli.main:main"
+penhin-eval = "penhin.evaluation.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/penhin/penhin-code"
@@ -48,39 +48,11 @@ Repository = "https://github.com/penhin/penhin-code.git"
 Issues = "https://github.com/penhin/penhin-code/issues"
 Changelog = "https://github.com/penhin/penhin-code/blob/main/CHANGELOG.md"
 
-[tool.setuptools]
-py-modules = [
-  "agent",
-  "agent_state",
-  "approval_rules",
-  "atomic_io",
-  "circuit_breaker",
-  "commands",
-  "compact",
-  "config",
-  "context",
-  "main",
-  "message_flow",
-  "message_projection",
-  "observability",
-  "permissions",
-  "prompt",
-  "quality_gate",
-  "result",
-  "runtime",
-  "skills",
-  "subagent",
-  "task",
-  "tool_runtime",
-  "transcript",
-  "ui",
-]
-
 [tool.setuptools.packages.find]
-include = ["auth*", "evaluation*", "orchestration*", "providers*", "tools*"]
+include = ["penhin*"]
 
 [tool.setuptools.package-data]
-evaluation = [
+"penhin.evaluation" = [
   "suites/**/*.yaml",
   "suites/**/fixtures/**/*.py",
   "suites/**/fixtures/**/*.md",

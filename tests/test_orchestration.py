@@ -10,14 +10,14 @@ from uuid import uuid4
 
 import pytest
 
-from orchestration.models import AgentJob, AgentRole, Artifact, IntegrationItem, IntegrationItemStatus, IntegrationRun, IntegrationRunStatus, JobStatus
-from orchestration.repositories.postgres_repository import PostgresOrchestrationRepository
-from orchestration.planning import DAG_PROTOCOL_VERSION, fallback_dag_plan, normalize_dag_plan, parse_dag_plan
-from orchestration.service import create_isolated_agent_job, implementation_jobs_for_final_outputs, materialize_dag_plan
-from orchestration.worker import prepare_dependency_context
-from orchestration.worktrees import AgentWorktree
-from orchestration.artifacts import build_handoff
-from result import Result
+from penhin.orchestration.models import AgentJob, AgentRole, Artifact, IntegrationItem, IntegrationItemStatus, IntegrationRun, IntegrationRunStatus, JobStatus
+from penhin.orchestration.repositories.postgres_repository import PostgresOrchestrationRepository
+from penhin.orchestration.planning import DAG_PROTOCOL_VERSION, fallback_dag_plan, normalize_dag_plan, parse_dag_plan
+from penhin.orchestration.service import create_isolated_agent_job, implementation_jobs_for_final_outputs, materialize_dag_plan
+from penhin.orchestration.worker import prepare_dependency_context
+from penhin.orchestration.worktrees import AgentWorktree
+from penhin.orchestration.artifacts import build_handoff
+from penhin.result import Result
 
 
 @pytest.fixture
@@ -272,7 +272,7 @@ def test_materialized_dag_uses_persistent_dependency_ids(
     repository: PostgresOrchestrationRepository, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "orchestration.service.provision_worktree",
+        "penhin.orchestration.service.provision_worktree",
         lambda job_id: AgentWorktree(path=f"/tmp/penhin-test-{job_id}", branch=f"penhin/test-{job_id[:8]}"),
     )
     planner = repository.create_root_job("plan", "plan", AgentRole.PLANNER)
@@ -368,8 +368,8 @@ def test_postgres_rejects_invalid_integration_transitions(repository: PostgresOr
 
 
 def test_worker_wraps_plain_text_result_in_runtime_handoff(monkeypatch: pytest.MonkeyPatch) -> None:
-    from orchestration import worker
-    from auth.secrets import register_secret
+    from penhin.orchestration import worker
+    from penhin.auth.secrets import register_secret
 
     register_secret("artifact-secret-sentinel")
 
@@ -394,10 +394,11 @@ def test_worker_wraps_plain_text_result_in_runtime_handoff(monkeypatch: pytest.M
     repository = Repository()
     monkeypatch.setattr(worker, "repository_from_database_url", lambda _url: repository)
     monkeypatch.setattr(worker, "parse_args", lambda: Namespace(database_url="postgresql://test", job_id=job.id, attempt_id="attempt", worker_token="token"))
-    monkeypatch.setattr(worker, "init_runtime", lambda: None)
-    monkeypatch.setitem(sys.modules, "subagent", types.SimpleNamespace(
-        run_subagent=lambda *_args, **_kwargs: Result.success('{"summary":"artifact-secret-sentinel"}'),
-    ))
+    monkeypatch.setattr(worker.runtime_manager, "initialize", lambda: None)
+    monkeypatch.setattr(
+        "penhin.agent.subagents.service.run_subagent",
+        lambda *_args, **_kwargs: Result.success('{"summary":"artifact-secret-sentinel"}'),
+    )
 
     assert worker.main() == 0
     args, kwargs = repository.finished

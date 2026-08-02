@@ -7,9 +7,9 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from task import TaskStatus, TaskStatusManager
-from tools import CHILD_TOOLS, PARENT_TOOLS, TOOL_SPECS
-from tools import tasks as task_tools
+from penhin.tools.task_state import TaskStatus, TaskStatusManager
+from penhin.tools import CHILD_TOOLS, PARENT_TOOLS, TOOL_SPECS
+from penhin.tools.builtin import tasks as task_tools
 
 from tests.helpers import run_spec_tool
 

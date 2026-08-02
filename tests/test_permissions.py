@@ -3,14 +3,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from context import RunContext
-from permissions import (
+from penhin.agent.context import RunContext
+from penhin.permissions import (
     InvalidTransitionError,
     PermissionMode,
     normalize_permission_mode,
     transition_mode,
 )
-from tool_runtime import PermissionPolicy
+from penhin.tools.execution import PermissionPolicy
 
 
 def test_permission_modes_are_runtime_parent_modes_only() -> None:

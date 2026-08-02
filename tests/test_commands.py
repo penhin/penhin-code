@@ -5,12 +5,13 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import commands
-from auth import ApiKeyCredential, InMemoryCredentialStore
-from circuit_breaker import CircuitBreaker
-from context import RunContext
+from penhin.cli.commands import _handlers as commands
+from penhin.cli.commands import router
+from penhin.auth import ApiKeyCredential, InMemoryCredentialStore
+from penhin.runtime.retry import CircuitBreaker
+from penhin.agent.context import RunContext
 from prompt_toolkit.document import Document
-from tool_runtime import ApprovalFlow, PermissionPolicy
+from penhin.tools.execution import ApprovalFlow, PermissionPolicy
 
 
 def empty_context() -> RunContext:
@@ -22,12 +23,12 @@ def empty_context() -> RunContext:
 
 
 def test_handle_local_command_ignores_normal_input() -> None:
-    assert commands.handle_local_command("hello") is False
+    assert router.handle_local_command("hello") is False
 
 
 def test_handle_local_command_shows_help() -> None:
-    with patch("commands.ui.print_info") as mocked_print_info:
-        assert commands.handle_local_command("/help") is True
+    with patch("penhin.cli.commands._handlers.ui.print_info") as mocked_print_info:
+        assert router.handle_local_command("/help") is True
 
     mocked_print_info.assert_any_call("/workspace Show workspace summary")
     mocked_print_info.assert_any_call("/permission Show or set permission mode")
@@ -43,8 +44,8 @@ def test_handle_local_command_shows_help() -> None:
 def test_handle_local_command_shows_workspace() -> None:
     workspace = {"cwd": "/tmp/project"}
 
-    with patch("commands.workspace_info", return_value=workspace), patch("commands.ui.print_json") as mocked_print_json:
-        assert commands.handle_local_command("/workspace") is True
+    with patch("penhin.cli.commands._handlers.workspace_info", return_value=workspace), patch("penhin.cli.commands._handlers.ui.print_json") as mocked_print_json:
+        assert router.handle_local_command("/workspace") is True
 
     mocked_print_json.assert_called_once_with(workspace)
 
@@ -58,7 +59,7 @@ def test_handle_local_command_shows_status() -> None:
 
     with (
         patch.dict(
-            "commands.os.environ",
+            "penhin.cli.commands._handlers.os.environ",
             {
                 "PENHIN_VERSION": "2.6.11",
                 "LLM_PROVIDER": "anthropic",
@@ -67,14 +68,14 @@ def test_handle_local_command_shows_status() -> None:
             },
             clear=True,
         ),
-        patch("commands.workspace_info", return_value={"cwd": "/tmp/project"}),
-        patch("commands.get_runtime", return_value=Runtime()),
-        patch("commands.get_permission_mode", return_value="default"),
-        patch("commands.auth_resolver", return_value=SimpleNamespace(status=lambda _provider: {"configured": False, "type": None, "source": "not set", "backend": None})),
-        patch("commands.setting_sources", return_value="User config, Project env"),
-        patch("commands.ui.print_info") as mocked_print_info,
+        patch("penhin.cli.commands._handlers.workspace_info", return_value={"cwd": "/tmp/project"}),
+        patch("penhin.cli.commands._handlers.runtime_manager.current", return_value=Runtime()),
+        patch("penhin.cli.commands._handlers.get_permission_mode", return_value="default"),
+        patch("penhin.cli.commands._handlers.auth_resolver", return_value=SimpleNamespace(status=lambda _provider: {"configured": False, "type": None, "source": "not set", "backend": None})),
+        patch("penhin.cli.commands._handlers.setting_sources", return_value="User config, Project env"),
+        patch("penhin.cli.commands._handlers.ui.print_info") as mocked_print_info,
     ):
-        assert commands.handle_local_command("/status", context) is True
+        assert router.handle_local_command("/status", context) is True
 
     lines = [call.args[0] for call in mocked_print_info.call_args_list]
     assert lines == [
@@ -98,13 +99,13 @@ def test_handle_local_command_shows_status() -> None:
 
 def test_status_uses_openai_compatible_base_url() -> None:
     with patch.dict(
-        "commands.os.environ",
+        "penhin.cli.commands._handlers.os.environ",
         {
             "LLM_PROVIDER": "openai",
             "OPENAI_BASE_URL": "https://api.deepseek.com/v1",
         },
         clear=True,
-    ), patch("commands.auth_resolver", return_value=SimpleNamespace(status=lambda _provider: {"configured": False, "type": None, "source": "not set", "backend": None})):
+    ), patch("penhin.cli.commands._handlers.auth_resolver", return_value=SimpleNamespace(status=lambda _provider: {"configured": False, "type": None, "source": "not set", "backend": None})):
         assert commands.build_status_lines()[4:7] == [
             "API provider: OpenAI API",
         "Authentication: not configured (-; not set)",
@@ -113,16 +114,16 @@ def test_status_uses_openai_compatible_base_url() -> None:
 
 
 def test_handle_local_command_reports_unknown_command() -> None:
-    with patch("commands.ui.print_error") as mocked_print_error:
-        assert commands.handle_local_command("/missing") is True
+    with patch("penhin.cli.commands._handlers.ui.print_error") as mocked_print_error:
+        assert router.handle_local_command("/missing") is True
 
     mocked_print_error.assert_called_once_with("Unknown command: /missing")
 
 
 def test_removed_auth_compatibility_commands_are_unknown() -> None:
-    with patch("commands.ui.print_error") as mocked_print_error:
-        assert commands.handle_local_command("/api-key") is True
-        assert commands.handle_local_command("/auth migrate") is True
+    with patch("penhin.cli.commands._handlers.ui.print_error") as mocked_print_error:
+        assert router.handle_local_command("/api-key") is True
+        assert router.handle_local_command("/auth migrate") is True
 
     assert [call.args[0] for call in mocked_print_error.call_args_list] == [
         "Unknown command: /api-key",
@@ -132,10 +133,10 @@ def test_removed_auth_compatibility_commands_are_unknown() -> None:
 
 def test_handle_permission_command_shows_current_mode() -> None:
     with (
-        patch("commands.get_permission_mode", return_value="auto-review"),
-        patch("commands.ui.print_info") as mocked_print_info,
+        patch("penhin.cli.commands._handlers.get_permission_mode", return_value="auto-review"),
+        patch("penhin.cli.commands._handlers.ui.print_info") as mocked_print_info,
     ):
-        assert commands.handle_local_command("/permission") is True
+        assert router.handle_local_command("/permission") is True
 
     mocked_print_info.assert_called_once_with("permission: auto-review")
 
@@ -144,10 +145,10 @@ def test_handle_permission_command_updates_config_and_context() -> None:
     context = empty_context()
 
     with (
-        patch("commands.set_permission_mode") as mocked_set_permission_mode,
-        patch("commands.ui.print_info") as mocked_print_info,
+        patch("penhin.cli.commands._handlers.set_permission_mode") as mocked_set_permission_mode,
+        patch("penhin.cli.commands._handlers.ui.print_info") as mocked_print_info,
     ):
-        assert commands.handle_local_command("/permission full-access", context) is True
+        assert router.handle_local_command("/permission full-access", context) is True
 
     mocked_set_permission_mode.assert_called_once_with("full-access")
     mocked_print_info.assert_called_once_with("permission: full-access")
@@ -157,10 +158,10 @@ def test_handle_permission_command_updates_config_and_context() -> None:
 
 def test_handle_permission_command_rejects_unknown_mode() -> None:
     with (
-        patch("commands.ui.print_error") as mocked_print_error,
-        patch("commands.ui.print_info") as mocked_print_info,
+        patch("penhin.cli.commands._handlers.ui.print_error") as mocked_print_error,
+        patch("penhin.cli.commands._handlers.ui.print_info") as mocked_print_info,
     ):
-        assert commands.handle_local_command("/permission unsafe") is True
+        assert router.handle_local_command("/permission unsafe") is True
 
     mocked_print_error.assert_called_once_with("Unknown permission mode: unsafe")
     mocked_print_info.assert_called_once()
@@ -173,10 +174,10 @@ def test_handle_circuit_command_shows_disabled_state() -> None:
         compact_circuit_breaker = None
 
     with (
-        patch("commands.get_runtime", return_value=RuntimeWithoutBreaker()),
-        patch("commands.ui.print_json") as mocked_print_json,
+        patch("penhin.cli.commands._handlers.runtime_manager.current", return_value=RuntimeWithoutBreaker()),
+        patch("penhin.cli.commands._handlers.ui.print_json") as mocked_print_json,
     ):
-        assert commands.handle_local_command("/circuit") is True
+        assert router.handle_local_command("/circuit") is True
 
     mocked_print_json.assert_called_once_with({
         "main": {"enabled": False},
@@ -193,10 +194,10 @@ def test_handle_circuit_command_shows_breaker_snapshot() -> None:
     RuntimeWithBreaker.compact_circuit_breaker.record_failure()
 
     with (
-        patch("commands.get_runtime", return_value=RuntimeWithBreaker()),
-        patch("commands.ui.print_json") as mocked_print_json,
+        patch("penhin.cli.commands._handlers.runtime_manager.current", return_value=RuntimeWithBreaker()),
+        patch("penhin.cli.commands._handlers.ui.print_json") as mocked_print_json,
     ):
-        assert commands.handle_local_command("/circuit") is True
+        assert router.handle_local_command("/circuit") is True
 
     status = mocked_print_json.call_args.args[0]
     assert status["main"]["enabled"] is True
@@ -207,8 +208,8 @@ def test_handle_circuit_command_shows_breaker_snapshot() -> None:
 
 
 def test_handle_compact_command_requires_context() -> None:
-    with patch("commands.ui.print_error") as mocked_print_error:
-        assert commands.handle_local_command("/compact keep decisions") is True
+    with patch("penhin.cli.commands._handlers.ui.print_error") as mocked_print_error:
+        assert router.handle_local_command("/compact keep decisions") is True
 
     mocked_print_error.assert_called_once_with("No active session to compact.")
 
@@ -218,9 +219,9 @@ def test_handle_compact_command_uses_hint() -> None:
 
     with (
         patch.object(context, "force_auto_compact") as mocked_force_compact,
-        patch("commands.ui.print_info") as mocked_print_info,
+        patch("penhin.cli.commands._handlers.ui.print_info") as mocked_print_info,
     ):
-        assert commands.handle_local_command("/compact keep API cache details", context) is True
+        assert router.handle_local_command("/compact keep API cache details", context) is True
 
     mocked_force_compact.assert_called_once_with(hint="keep API cache details")
     mocked_print_info.assert_called_once_with("compact: done with hint")
@@ -228,13 +229,13 @@ def test_handle_compact_command_uses_hint() -> None:
 
 def test_handle_model_command_updates_config_and_runtime() -> None:
     with (
-        patch("commands.set_env_value") as mocked_set_env_value,
-        patch("commands.set_runtime_model") as mocked_set_runtime_model,
-        patch("commands.set_provider_model") as mocked_set_provider_model,
-        patch("commands.configured_provider", return_value="anthropic"),
-        patch("commands.ui.print_info") as mocked_print_info,
+        patch("penhin.cli.commands._handlers.set_env_value") as mocked_set_env_value,
+        patch("penhin.cli.commands._handlers.runtime_manager.set_model") as mocked_set_runtime_model,
+        patch("penhin.cli.commands._handlers.set_provider_model") as mocked_set_provider_model,
+        patch("penhin.cli.commands._handlers.runtime_manager.configured_provider", return_value="anthropic"),
+        patch("penhin.cli.commands._handlers.ui.print_info") as mocked_print_info,
     ):
-        assert commands.handle_local_command("/model claude-test") is True
+        assert router.handle_local_command("/model claude-test") is True
 
     mocked_set_env_value.assert_called_once_with("MODEL_ID", "claude-test")
     mocked_set_runtime_model.assert_called_once_with("claude-test")
@@ -245,11 +246,11 @@ def test_handle_model_command_updates_config_and_runtime() -> None:
 def test_login_refuses_to_collect_credentials_without_storage_consent() -> None:
     provider = Mock()
     with (
-        patch("commands.credential_store", side_effect=commands.CredentialStoreUnavailable("unavailable")),
-        patch("commands.ui.prompt_confirm", return_value=False),
-        patch("commands.provider_auth", return_value=provider),
-        patch("commands.ui.print_info") as print_info,
-        patch("commands.ui.print_error") as print_error,
+        patch("penhin.cli.commands._handlers.credential_store", side_effect=commands.CredentialStoreUnavailable("unavailable")),
+        patch("penhin.cli.commands._handlers.ui.prompt_confirm", return_value=False),
+        patch("penhin.cli.commands._handlers.provider_auth", return_value=provider),
+        patch("penhin.cli.commands._handlers.ui.print_info") as print_info,
+        patch("penhin.cli.commands._handlers.ui.print_error") as print_error,
     ):
         commands._login_api_key("openai")
 
@@ -263,13 +264,13 @@ def test_login_storage_consent_selects_file_before_collecting_secret() -> None:
     provider = Mock()
     provider.login.return_value = ApiKeyCredential(key="stored-secret")
     with (
-        patch("commands.credential_store", side_effect=commands.CredentialStoreUnavailable("unavailable")),
-        patch("commands.ui.prompt_confirm", return_value=True),
-        patch("commands.set_credential_backend") as set_backend,
-        patch("commands.FileCredentialStore", return_value=store),
-        patch("commands.provider_auth", return_value=provider),
-        patch("commands._activate_login"),
-        patch("commands.ui.print_info"),
+        patch("penhin.cli.commands._handlers.credential_store", side_effect=commands.CredentialStoreUnavailable("unavailable")),
+        patch("penhin.cli.commands._handlers.ui.prompt_confirm", return_value=True),
+        patch("penhin.cli.commands._handlers.set_credential_backend") as set_backend,
+        patch("penhin.cli.commands._handlers.FileCredentialStore", return_value=store),
+        patch("penhin.cli.commands._handlers.provider_auth", return_value=provider),
+        patch("penhin.cli.commands._handlers._activate_login"),
+        patch("penhin.cli.commands._handlers.ui.print_info"),
     ):
         commands._login_api_key("openai")
 
@@ -280,8 +281,8 @@ def test_login_storage_consent_selects_file_before_collecting_secret() -> None:
 
 def test_login_chooses_authentication_type_before_api_key_provider() -> None:
     with (
-        patch("commands.ui.prompt_select", side_effect=["api_key", "gemini"]) as prompt_select,
-        patch("commands._login_api_key") as login_api_key,
+        patch("penhin.cli.commands._handlers.ui.prompt_select", side_effect=["api_key", "gemini"]) as prompt_select,
+        patch("penhin.cli.commands._handlers._login_api_key") as login_api_key,
     ):
         commands.handle_login_command([])
 
@@ -302,8 +303,8 @@ def test_login_chooses_authentication_type_before_api_key_provider() -> None:
 
 def test_login_account_only_lists_account_providers() -> None:
     with (
-        patch("commands.ui.prompt_select", side_effect=["oauth", "anthropic"]) as prompt_select,
-        patch("commands._login_oauth") as login_oauth,
+        patch("penhin.cli.commands._handlers.ui.prompt_select", side_effect=["oauth", "anthropic"]) as prompt_select,
+        patch("penhin.cli.commands._handlers._login_oauth") as login_oauth,
     ):
         commands.handle_login_command([])
 
@@ -319,8 +320,8 @@ def test_login_account_only_lists_account_providers() -> None:
 
 def test_login_anthropic_still_asks_for_authentication_type() -> None:
     with (
-        patch("commands.ui.prompt_select", return_value="oauth") as prompt_select,
-        patch("commands._login_oauth") as login_oauth,
+        patch("penhin.cli.commands._handlers.ui.prompt_select", return_value="oauth") as prompt_select,
+        patch("penhin.cli.commands._handlers._login_oauth") as login_oauth,
     ):
         commands.handle_login_command(["anthropic"])
 
@@ -333,8 +334,8 @@ def test_login_anthropic_still_asks_for_authentication_type() -> None:
 
 def test_login_single_method_provider_skips_authentication_type_prompt() -> None:
     with (
-        patch("commands.ui.prompt_select") as prompt_select,
-        patch("commands._login_api_key") as login_api_key,
+        patch("penhin.cli.commands._handlers.ui.prompt_select") as prompt_select,
+        patch("penhin.cli.commands._handlers._login_api_key") as login_api_key,
     ):
         commands.handle_login_command(["openai"])
 
@@ -347,10 +348,10 @@ def test_account_login_continues_to_selected_protocol_method() -> None:
     oauth = Mock()
     oauth.login.return_value = credential
     with (
-        patch("commands.ui.prompt_select", return_value="device_code") as prompt_select,
-        patch("commands._writable_store", return_value=InMemoryCredentialStore()),
-        patch("commands.provider_auth", return_value=oauth),
-        patch("commands._save_login") as save_login,
+        patch("penhin.cli.commands._handlers.ui.prompt_select", return_value="device_code") as prompt_select,
+        patch("penhin.cli.commands._handlers._writable_store", return_value=InMemoryCredentialStore()),
+        patch("penhin.cli.commands._handlers.provider_auth", return_value=oauth),
+        patch("penhin.cli.commands._handlers._save_login") as save_login,
     ):
         commands._login_oauth("openai-codex")
 
@@ -366,9 +367,9 @@ def test_account_login_continues_to_selected_protocol_method() -> None:
 def test_terminal_auth_always_shows_url_and_only_attempts_browser_launch() -> None:
     interaction = commands.TerminalAuthInteraction()
     with (
-        patch("commands.ui.print_auth_url") as print_auth_url,
-        patch("commands.open_browser") as open_browser,
-        patch("commands.ui.print_info") as print_info,
+        patch("penhin.cli.commands._handlers.ui.print_auth_url") as print_auth_url,
+        patch("penhin.cli.commands._handlers.open_browser") as open_browser,
+        patch("penhin.cli.commands._handlers.ui.print_info") as print_info,
     ):
         interaction.notify(
             "auth_url",
@@ -386,13 +387,13 @@ def test_terminal_auth_always_shows_url_and_only_attempts_browser_launch() -> No
 
 def test_handle_provider_command_switches_provider_and_model() -> None:
     with (
-        patch.dict("commands.os.environ", {"LLM_PROVIDER": "anthropic", "MODEL_ID": "claude-test", "OPENAI_API_KEY": "sk-openai"}, clear=True),
-        patch("commands.set_runtime_provider") as mocked_set_runtime_provider,
-        patch("commands.update_env_values") as mocked_update_env_values,
-        patch("commands.set_provider_model") as mocked_set_provider_model,
-        patch("commands.ui.print_info") as mocked_print_info,
+        patch.dict("penhin.cli.commands._handlers.os.environ", {"LLM_PROVIDER": "anthropic", "MODEL_ID": "claude-test", "OPENAI_API_KEY": "sk-openai"}, clear=True),
+        patch("penhin.cli.commands._handlers.runtime_manager.switch_provider") as mocked_set_runtime_provider,
+        patch("penhin.cli.commands._handlers.update_env_values") as mocked_update_env_values,
+        patch("penhin.cli.commands._handlers.set_provider_model") as mocked_set_provider_model,
+        patch("penhin.cli.commands._handlers.ui.print_info") as mocked_print_info,
     ):
-        assert commands.handle_local_command("/provider openai gpt-4.1") is True
+        assert router.handle_local_command("/provider openai gpt-4.1") is True
 
     mocked_set_runtime_provider.assert_called_once_with("openai", "gpt-4.1")
     mocked_update_env_values.assert_called_once_with({"LLM_PROVIDER": "openai", "MODEL_ID": "gpt-4.1"})
@@ -401,8 +402,8 @@ def test_handle_provider_command_switches_provider_and_model() -> None:
 
 
 def test_handle_provider_command_requires_a_matching_model_and_key() -> None:
-    with patch.dict("commands.os.environ", {"MODEL_ID": "claude-test", "OPENAI_API_KEY": "sk-openai"}, clear=True), patch("commands.ui.print_error") as mocked_print_error:
-        assert commands.handle_local_command("/provider openai") is True
+    with patch.dict("penhin.cli.commands._handlers.os.environ", {"MODEL_ID": "claude-test", "OPENAI_API_KEY": "sk-openai"}, clear=True), patch("penhin.cli.commands._handlers.ui.print_error") as mocked_print_error:
+        assert router.handle_local_command("/provider openai") is True
 
     mocked_print_error.assert_called_once_with("Model 'claude-test' is not compatible with openai. Use: /provider openai MODEL_ID")
 
@@ -415,8 +416,8 @@ def test_handle_force_snip_lists_turns() -> None:
         {"role": "user", "content": "second request"},
     ]
 
-    with patch("commands.ui.print_info") as mocked_print_info:
-        assert commands.handle_local_command("/force-snip", context) is True
+    with patch("penhin.cli.commands._handlers.ui.print_info") as mocked_print_info:
+        assert router.handle_local_command("/force-snip", context) is True
 
     mocked_print_info.assert_any_call("1: messages 1-2 first request")
     mocked_print_info.assert_any_call("2: messages 3-3 second request")
@@ -430,8 +431,8 @@ def test_handle_force_snip_marks_selected_turns() -> None:
         {"role": "user", "content": "second request"},
     ]
 
-    with patch("commands.ui.print_info") as mocked_print_info:
-        assert commands.handle_local_command("/force-snip 1", context) is True
+    with patch("penhin.cli.commands._handlers.ui.print_info") as mocked_print_info:
+        assert router.handle_local_command("/force-snip 1", context) is True
 
     assert context.messages[0]["_meta"]["snipped"] is True
     assert context.messages[1]["_meta"]["snipped"] is True
@@ -440,6 +441,6 @@ def test_handle_force_snip_marks_selected_turns() -> None:
 
 
 def test_setup_command_completion_returns_completer() -> None:
-    completer = commands.setup_command_completion()
+    completer = router.setup_command_completion()
     completions = list(completer.get_completions(Document("/wo"), None))
     assert [completion.text for completion in completions] == ["/workspace"]

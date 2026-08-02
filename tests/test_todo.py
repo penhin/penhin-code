@@ -4,8 +4,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from task import TaskStatusManager
-from tools import tasks as task_tools
+from penhin.tools.task_state import TaskStatusManager
+from penhin.tools.builtin import tasks as task_tools
 
 from tests.helpers import run_spec_tool
 

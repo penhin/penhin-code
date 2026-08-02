@@ -4,22 +4,22 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import subagent
-from agent_state import AgentDeps, AgentPhase, TerminalReason
-from circuit_breaker import CircuitBreakerOpen
-from context import RunContext
-from prompt import (
+from penhin.agent.subagents import service as subagent
+from penhin.agent.state import AgentDeps, AgentPhase, TerminalReason
+from penhin.runtime.retry import CircuitBreakerOpen
+from penhin.agent.context import RunContext
+from penhin.agent.prompts import (
     build_exploration_system,
     build_plan_agent_system,
     build_subagent_system,
     build_verification_system,
 )
-from providers.types import LLMUsage
-from result import Result
-from task import TaskStatusManager
-from tools import TOOL_SPECS
-from tools import tasks as task_tools
-from tools.plans import write_plan
+from penhin.providers.protocols import LLMUsage
+from penhin.result import Result
+from penhin.tools.task_state import TaskStatusManager
+from penhin.tools import TOOL_SPECS
+from penhin.tools.builtin import tasks as task_tools
+from penhin.tools.builtin.plans import write_plan
 
 
 class FakeResponse:
@@ -119,7 +119,7 @@ class ToolBudgetThenSummaryRuntime:
 def test_run_subagent_defaults_to_general_type() -> None:
     runtime = RecordingRuntime()
 
-    with patch("subagent.get_runtime", return_value=runtime), patch("subagent.log_usage"):
+    with patch("penhin.agent.subagents.service.runtime_manager.current", return_value=runtime), patch("penhin.agent.subagents.service.log_usage"):
         result = subagent.run_subagent("say done")
 
     assert result.ok is True
@@ -130,7 +130,7 @@ def test_run_subagent_defaults_to_general_type() -> None:
 def test_run_subagent_uses_verification_type() -> None:
     runtime = RecordingRuntime()
 
-    with patch("subagent.get_runtime", return_value=runtime), patch("subagent.log_usage"):
+    with patch("penhin.agent.subagents.service.runtime_manager.current", return_value=runtime), patch("penhin.agent.subagents.service.log_usage"):
         result = subagent.run_subagent("verify work", agent_type="verification")
 
     tool_names = {tool["name"] for tool in runtime.calls[0]["tools"]}
@@ -146,7 +146,7 @@ def test_run_subagent_uses_verification_type() -> None:
 def test_run_subagent_uses_exploration_type() -> None:
     runtime = RecordingRuntime()
 
-    with patch("subagent.get_runtime", return_value=runtime), patch("subagent.log_usage"):
+    with patch("penhin.agent.subagents.service.runtime_manager.current", return_value=runtime), patch("penhin.agent.subagents.service.log_usage"):
         result = subagent.run_subagent("find relevant files", agent_type="explore")
 
     tool_names = {tool["name"] for tool in runtime.calls[0]["tools"]}
@@ -174,7 +174,7 @@ def test_exploration_config_has_tight_turn_budget() -> None:
 def test_run_subagent_uses_plan_type() -> None:
     runtime = RecordingRuntime()
 
-    with patch("subagent.get_runtime", return_value=runtime), patch("subagent.log_usage"):
+    with patch("penhin.agent.subagents.service.runtime_manager.current", return_value=runtime), patch("penhin.agent.subagents.service.log_usage"):
         result = subagent.run_subagent("design implementation plan", agent_type="plan")
 
     tool_names = {tool["name"] for tool in runtime.calls[0]["tools"]}
@@ -207,7 +207,7 @@ def test_run_subagent_rejects_unknown_type() -> None:
 
 
 def test_run_subagent_returns_failure_when_circuit_is_open() -> None:
-    with patch("subagent.get_runtime", return_value=CircuitOpenRuntime()):
+    with patch("penhin.agent.subagents.service.runtime_manager.current", return_value=CircuitOpenRuntime()):
         result = subagent.run_subagent("say done")
 
     assert result.ok is False
@@ -218,7 +218,7 @@ def test_run_subagent_returns_failure_when_circuit_is_open() -> None:
 def test_run_subagent_requests_final_summary_when_final_response_has_no_text() -> None:
     runtime = EmptyThenSummaryRuntime()
 
-    with patch("subagent.get_runtime", return_value=runtime), patch("subagent.log_usage"):
+    with patch("penhin.agent.subagents.service.runtime_manager.current", return_value=runtime), patch("penhin.agent.subagents.service.log_usage"):
         result = subagent.run_subagent("summarize findings", agent_type="explore")
 
     assert result.ok is True
@@ -232,7 +232,7 @@ def test_run_subagent_requests_final_summary_when_final_response_has_no_text() -
 def test_run_subagent_requests_final_summary_when_final_response_hits_max_tokens() -> None:
     runtime = MaxTokensThenSummaryRuntime()
 
-    with patch("subagent.get_runtime", return_value=runtime), patch("subagent.log_usage"):
+    with patch("penhin.agent.subagents.service.runtime_manager.current", return_value=runtime), patch("penhin.agent.subagents.service.log_usage"):
         result = subagent.run_subagent("summarize findings", agent_type="explore")
 
     assert result.ok is True
@@ -245,7 +245,7 @@ def test_run_subagent_requests_final_summary_when_final_response_hits_max_tokens
 def test_run_subagent_summarizes_immediately_when_tool_budget_is_exhausted() -> None:
     runtime = ToolBudgetThenSummaryRuntime()
 
-    with patch("subagent.get_runtime", return_value=runtime), patch("subagent.log_usage"):
+    with patch("penhin.agent.subagents.service.runtime_manager.current", return_value=runtime), patch("penhin.agent.subagents.service.log_usage"):
         result = subagent.run_subagent("summarize findings", agent_type="explore")
 
     assert result.ok is True
@@ -293,7 +293,7 @@ def test_task_tool_exposes_limited_agent_types() -> None:
 
 
 def test_run_task_uses_general_subagent() -> None:
-    with patch("orchestration.service.run_recorded_subagent", return_value=Result.success("ok")) as mocked_run_subagent:
+    with patch("penhin.orchestration.service.run_recorded_subagent", return_value=Result.success("ok")) as mocked_run_subagent:
         result = task_tools.run_task("inspect work")
 
     assert result.ok is True
@@ -301,7 +301,7 @@ def test_run_task_uses_general_subagent() -> None:
 
 
 def test_run_task_uses_requested_subagent_type() -> None:
-    with patch("orchestration.service.run_recorded_subagent", return_value=Result.success("ok")) as mocked_run_subagent:
+    with patch("penhin.orchestration.service.run_recorded_subagent", return_value=Result.success("ok")) as mocked_run_subagent:
         result = task_tools.run_task("inspect work", agent_type="explore")
 
     assert result.ok is True
@@ -312,7 +312,7 @@ def test_task_tool_handler_uses_general_subagent() -> None:
     handler = TOOL_SPECS["task"].handler
     assert handler is not None
 
-    with patch("orchestration.service.run_recorded_subagent", return_value=Result.success("ok")) as mocked_run_subagent:
+    with patch("penhin.orchestration.service.run_recorded_subagent", return_value=Result.success("ok")) as mocked_run_subagent:
         result = handler(task="inspect work")
 
     assert result.ok is True
@@ -323,7 +323,7 @@ def test_task_tool_handler_uses_requested_subagent_type() -> None:
     handler = TOOL_SPECS["task"].handler
     assert handler is not None
 
-    with patch("orchestration.service.run_recorded_subagent", return_value=Result.success("ok")) as mocked_run_subagent:
+    with patch("penhin.orchestration.service.run_recorded_subagent", return_value=Result.success("ok")) as mocked_run_subagent:
         result = handler(task="inspect work", agent_type="explore")
 
     assert result.ok is True
@@ -331,7 +331,7 @@ def test_task_tool_handler_uses_requested_subagent_type() -> None:
 
 
 def test_run_verify_uses_verification_subagent() -> None:
-    with patch("orchestration.service.run_recorded_subagent", return_value=Result.success("verified")) as mocked_run_subagent:
+    with patch("penhin.orchestration.service.run_recorded_subagent", return_value=Result.success("verified")) as mocked_run_subagent:
         result = task_tools.run_verify(
             goal="add verification tool",
             plan="wire tool registry",
@@ -353,7 +353,7 @@ def test_verify_tool_handler_uses_verification_subagent() -> None:
     handler = TOOL_SPECS["verify"].handler
     assert handler is not None
 
-    with patch("orchestration.service.run_recorded_subagent", return_value=Result.success("verified")) as mocked_run_subagent:
+    with patch("penhin.orchestration.service.run_recorded_subagent", return_value=Result.success("verified")) as mocked_run_subagent:
         result = handler(goal="finish work", test_hint="run smoke")
 
     assert result.ok is True
@@ -371,7 +371,7 @@ def test_run_verify_loads_current_task_plan_slug() -> None:
         task_tools.task_status = manager
         manager.start("verify work", plan_slug=slug)
 
-        with patch("orchestration.service.run_recorded_subagent", return_value=Result.success("verified")) as mocked_run_subagent:
+        with patch("penhin.orchestration.service.run_recorded_subagent", return_value=Result.success("verified")) as mocked_run_subagent:
             result = task_tools.run_verify(goal="confirm verification")
 
         prompt = mocked_run_subagent.call_args.args[0]
@@ -399,7 +399,7 @@ def test_run_verify_loads_explicit_plan_slug() -> None:
         task_tools.task_status = manager
         manager.start("verify work", plan_slug="different-current-plan")
 
-        with patch("orchestration.service.run_recorded_subagent", return_value=Result.success("verified")) as mocked_run_subagent:
+        with patch("penhin.orchestration.service.run_recorded_subagent", return_value=Result.success("verified")) as mocked_run_subagent:
             result = task_tools.run_verify(
                 goal="confirm verification",
                 plan_slug=slug,
@@ -428,7 +428,7 @@ def test_run_verify_explicit_plan_overrides_current_task_plan_slug() -> None:
         task_tools.task_status = manager
         manager.start("verify work", plan_slug=slug)
 
-        with patch("orchestration.service.run_recorded_subagent", return_value=Result.success("verified")) as mocked_run_subagent:
+        with patch("penhin.orchestration.service.run_recorded_subagent", return_value=Result.success("verified")) as mocked_run_subagent:
             result = task_tools.run_verify(
                 goal="confirm verification",
                 plan="explicit plan wins",

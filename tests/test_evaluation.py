@@ -7,22 +7,22 @@ from pathlib import Path
 
 import pytest
 
-from evaluation.budget import BudgetExceeded, ModelPrice
-from evaluation.cases import load_suite, parse_case
-from evaluation.cli import baseline_eligibility_errors
-from evaluation.config import EvaluationConfig
-from evaluation.grader import grade_case
-from atomic_io import read_json, write_safe_json_atomic as write_json
-from evaluation.judge import judge_payload, parse_judge_score
-from evaluation.metrics import metrics_from_events, orchestration_metrics_from_events, percentile, stability_by_case
-from evaluation.models import CASE_SCHEMA_VERSION, EvaluationCase, EvaluationResult
-from evaluation.observer import EvaluationObserver, read_events
-from evaluation.observer import observing
-from evaluation.report import compare_reports, generate_report
-from evaluation.shared_budget import SharedBudget
-from evaluation.runner import shared_budget_exceeded
-from evaluation.trace import build_trace_summary
-from providers.types import LLMResponse, LLMUsage
+from penhin.evaluation.budget import BudgetExceeded, ModelPrice
+from penhin.evaluation.cases import load_suite, parse_case
+from penhin.evaluation.cli import baseline_eligibility_errors
+from penhin.evaluation.config import EvaluationConfig
+from penhin.evaluation.grader import grade_case
+from penhin.infrastructure.atomic_io import read_json, write_safe_json_atomic as write_json
+from penhin.evaluation.judge import judge_payload, parse_judge_score
+from penhin.evaluation.metrics import metrics_from_events, orchestration_metrics_from_events, percentile, stability_by_case
+from penhin.evaluation.models import CASE_SCHEMA_VERSION, EvaluationCase, EvaluationResult
+from penhin.evaluation.observer import EvaluationObserver, read_events
+from penhin.evaluation.observer import observing
+from penhin.evaluation.report import compare_reports, generate_report
+from penhin.evaluation.shared_budget import SharedBudget
+from penhin.evaluation.runner import shared_budget_exceeded
+from penhin.evaluation.trace import build_trace_summary
+from penhin.providers.protocols import LLMResponse, LLMUsage
 
 
 def case_data(fixture: str = "fixture") -> dict:
@@ -58,7 +58,7 @@ def test_baseline_requires_full_suite_with_three_repetitions() -> None:
 
 
 def test_fixture_preparation_excludes_runtime_caches(tmp_path: Path) -> None:
-    from evaluation.runner import prepare_fixture
+    from penhin.evaluation.runner import prepare_fixture
     case = load_suite("baseline-v1")[0]
     prepare_fixture(case, "baseline-v1", tmp_path / "repo")
     tracked = subprocess.run(["git", "ls-files"], cwd=tmp_path / "repo", capture_output=True, text=True, check=True).stdout
@@ -67,7 +67,7 @@ def test_fixture_preparation_excludes_runtime_caches(tmp_path: Path) -> None:
 
 
 def test_product_fingerprint_detects_content_change_without_status_shape_change(tmp_path: Path) -> None:
-    import evaluation.runner as runner
+    import penhin.evaluation.runner as runner
     init_repo(tmp_path)
     original_root = runner.PRODUCT_ROOT
     try:
@@ -143,7 +143,7 @@ def test_grader_ignores_evaluation_infrastructure(tmp_path: Path) -> None:
     init_repo(tmp_path)
     infrastructure = tmp_path / ".penhin"
     infrastructure.mkdir()
-    (infrastructure / "evaluation.sqlite3").write_text("state", encoding="utf-8")
+    (infrastructure / "penhin.evaluation.sqlite3").write_text("state", encoding="utf-8")
     tasks = tmp_path / ".tasks"
     tasks.mkdir()
     (tasks / "current.json").write_text("{}", encoding="utf-8")
@@ -206,7 +206,7 @@ def test_observer_adds_cross_process_correlation(tmp_path: Path, monkeypatch: py
 
 
 def test_runtime_emits_llm_usage_and_first_token_latency(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import runtime
+    from penhin.runtime import manager as runtime
 
     class Provider:
         retry_errors = ()
@@ -346,7 +346,7 @@ def fake_config() -> EvaluationConfig:
 
 
 def test_run_suite_resume_does_not_repeat_completed_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import evaluation.runner as runner
+    import penhin.evaluation.runner as runner
     case = EvaluationCase(CASE_SCHEMA_VERSION, "resume-case", "main", "test", "prompt", "fixture", 30)
     monkeypatch.setattr(runner, "RUNS_ROOT", tmp_path / "runs")
     monkeypatch.setattr(runner, "load_suite", lambda _suite: [case])
@@ -364,7 +364,7 @@ def test_run_suite_resume_does_not_repeat_completed_case(tmp_path: Path, monkeyp
 
 
 def test_run_suite_rejects_unknown_case_filter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import evaluation.runner as runner
+    import penhin.evaluation.runner as runner
     case = EvaluationCase(CASE_SCHEMA_VERSION, "known-case", "main", "test", "prompt", "fixture", 30)
     monkeypatch.setattr(runner, "RUNS_ROOT", tmp_path / "runs")
     monkeypatch.setattr(runner, "load_suite", lambda _suite: [case])
@@ -439,7 +439,7 @@ def test_regression_gate_does_not_let_fixture_runs_mask_model_planning_drop() ->
 
 def test_eval_cli_validates_built_in_suite() -> None:
     result = subprocess.run(
-        [os.fspath(Path(os.sys.executable)), "-m", "evaluation", "validate", "--suite", "baseline-v1"],
+        [os.fspath(Path(os.sys.executable)), "-m", "penhin.evaluation", "validate", "--suite", "baseline-v1"],
         cwd=Path(__file__).parent.parent, capture_output=True, text=True, timeout=30, check=False,
     )
     assert result.returncode == 0, result.stderr

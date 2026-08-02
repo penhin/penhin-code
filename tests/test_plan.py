@@ -11,14 +11,14 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from context import RunContext
-from permissions import PermissionMode
-from tool_runtime import (
+from penhin.agent.context import RunContext
+from penhin.permissions import PermissionMode
+from penhin.tools.execution import (
     ApprovalFlow,
     PermissionPolicy,
     execute_tool,
 )
-from tools.plans import PLANS_DIR
+from penhin.tools.builtin.plans import PLANS_DIR
 
 
 def _context(pre_plan_mode: PermissionMode | None = None) -> RunContext:
@@ -46,8 +46,8 @@ def test_enter_plan_requires_context() -> None:
     assert result.result.meta["code"] == "no_context"
 
 
-@patch("tools.plan_mode.get_permission_mode", return_value="default")
-@patch("tools.plan_mode.set_permission_mode")
+@patch("penhin.tools.builtin.plan_mode.get_permission_mode", return_value="default")
+@patch("penhin.tools.builtin.plan_mode.set_permission_mode")
 def test_enter_plan_switches_to_plan(
     mock_set: object, mock_get: object  # noqa: ARG001
 ) -> None:
@@ -62,8 +62,8 @@ def test_enter_plan_switches_to_plan(
     mock_set.assert_called_once_with("plan")  # type: ignore[attr-defined]
 
 
-@patch("tools.plan_mode.get_permission_mode", return_value="plan")
-@patch("tools.plan_mode.set_permission_mode")
+@patch("penhin.tools.builtin.plan_mode.get_permission_mode", return_value="plan")
+@patch("penhin.tools.builtin.plan_mode.set_permission_mode")
 def test_enter_plan_already_in_plan(
     mock_set: object, mock_get: object  # noqa: ARG001
 ) -> None:
@@ -75,7 +75,7 @@ def test_enter_plan_already_in_plan(
     mock_set.assert_not_called()  # type: ignore[attr-defined]
 
 
-@patch("tools.plan_mode.get_permission_mode", return_value="unknown")
+@patch("penhin.tools.builtin.plan_mode.get_permission_mode", return_value="unknown")
 def test_enter_plan_unknown_mode(mock_get: object) -> None:  # noqa: ARG001
     ctx = _context()
     result = execute_tool("enter_plan", {}, context=ctx)
@@ -90,8 +90,8 @@ def test_enter_plan_keeps_pre_plan_across_noop() -> None:
     ctx = _context(pre_plan_mode=PermissionMode.DEFAULT)
 
     with (
-        patch("tools.plan_mode.get_permission_mode", return_value="plan"),
-        patch("tools.plan_mode.set_permission_mode"),
+        patch("penhin.tools.builtin.plan_mode.get_permission_mode", return_value="plan"),
+        patch("penhin.tools.builtin.plan_mode.set_permission_mode"),
     ):
         result = execute_tool("enter_plan", {}, context=ctx)
 
@@ -104,8 +104,8 @@ def test_enter_plan_keeps_pre_plan_across_noop() -> None:
 # ── exit_plan ───────────────────────────────────────────────────────────
 
 
-@patch("tools.plan_mode.get_permission_mode", return_value="plan")
-@patch("tools.plan_mode.set_permission_mode")
+@patch("penhin.tools.builtin.plan_mode.get_permission_mode", return_value="plan")
+@patch("penhin.tools.builtin.plan_mode.set_permission_mode")
 def test_exit_plan_restores_mode_and_saves_plan(
     mock_set: object, mock_get: object  # noqa: ARG001
 ) -> None:
@@ -125,8 +125,8 @@ def test_exit_plan_restores_mode_and_saves_plan(
     _cleanup_plan_files()
 
 
-@patch("tools.plan_mode.get_permission_mode", return_value="default")
-@patch("tools.plan_mode.set_permission_mode")
+@patch("penhin.tools.builtin.plan_mode.get_permission_mode", return_value="default")
+@patch("penhin.tools.builtin.plan_mode.set_permission_mode")
 def test_exit_plan_not_in_plan_mode(
     mock_set: object, mock_get: object  # noqa: ARG001
 ) -> None:
@@ -140,7 +140,7 @@ def test_exit_plan_not_in_plan_mode(
 
 def test_exit_plan_missing_plan_content() -> None:
     ctx = _context(pre_plan_mode=PermissionMode.DEFAULT)
-    with patch("tools.plan_mode.get_permission_mode", return_value="plan"):
+    with patch("penhin.tools.builtin.plan_mode.get_permission_mode", return_value="plan"):
         result = execute_tool("exit_plan", {}, context=ctx)
 
     assert result.result.ok is False

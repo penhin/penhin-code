@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import transcript
+from penhin.agent import transcript
 
 from tests.helpers import ToolUseBlock
 
@@ -37,7 +37,7 @@ def test_save_transcript_writes_jsonl() -> None:
 
 
 def test_save_transcript_redacts_registered_secrets(tmp_path: Path) -> None:
-    from auth.secrets import register_secret
+    from penhin.auth.secrets import register_secret
 
     register_secret("transcript-secret-sentinel")
     path = transcript.TranscriptStore(tmp_path).save([

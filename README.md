@@ -1,135 +1,91 @@
 # Penhin Code
 
-一个面向本地开发的轻量 coding agent：提供交互式 CLI、结构化工具、会话恢复、任务追踪、子 Agent、持久化编排和隔离 worktree。
+Penhin Code 是一个在本地项目中运行的命令行 coding agent，支持会话恢复、文件与 Shell 工具、子 Agent 和多 Agent 任务编排。
 
-版本变更见 [CHANGELOG.md](CHANGELOG.md)。
+## 安装
 
-本项目采用 [MIT License](LICENSE)。
-
-## 快速开始
-
-作为命令行工具安装（发布到 PyPI 后）：
+推荐使用 `pipx`：
 
 ```bash
 pipx install penhin-code
-penhin --help
 ```
 
-也可直接从 Git 仓库安装：
+也可以从源码安装：
 
 ```bash
-pipx install git+https://github.com/penhin/penhin-code.git
-```
-
-`pipx` 会为命令行工具创建独立虚拟环境；首次使用前仍需按下文配置 Provider、API Key 和模型。
-
-从源码运行：
-
-```bash
+git clone https://github.com/penhin/penhin-code.git
+cd penhin-code
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install -e .
-mkdir -p ~/.penhin
-cp .env.example ~/.penhin/.env
-python main.py
 ```
 
-默认会恢复最近会话；使用 `python main.py --new` 创建空会话，使用 `python main.py --once "解释当前项目"` 执行一次请求后退出。
+## 开始使用
 
-## 配置模型与 Provider
-
-推荐在交互界面使用 `/login` 配置认证。秘密默认保存到操作系统钥匙串；系统钥匙串不可用时，Penhin 只会在用户明确确认后降级到权限为 `0600` 的 `~/.penhin/auth.json`。Provider 和模型等非秘密设置仍可保存在用户配置中，进程环境变量保持最高优先级。
+在要处理的项目目录运行：
 
 ```bash
-# Anthropic（默认）
-LLM_PROVIDER=anthropic
-ANTHROPIC_API_KEY=...
-MODEL_ID=claude-sonnet-5
+penhin
+```
 
-# OpenAI（使用 Responses API）
+首次启动后执行 `/login`。Penhin 会先让你选择认证方式，再显示可用的 Provider：
+
+- API key：Anthropic、OpenAI 或 Gemini。
+- Account：Claude Pro/Max 或 ChatGPT Plus/Pro，属于实验性 OAuth 支持。
+
+凭证优先保存到系统钥匙串。系统钥匙串不可用时，Penhin 会询问是否改用权限为 `0600` 的本地凭证文件，不会静默降级。
+
+也可以通过环境变量提供凭证：
+
+```bash
 LLM_PROVIDER=openai
-OPENAI_API_KEY=...
-MODEL_ID=gpt-5.6
-
-# Gemini
-LLM_PROVIDER=gemini
-GEMINI_API_KEY=...
-MODEL_ID=gemini-3.5-flash
+MODEL_ID=<model-id>
+OPENAI_API_KEY=<api-key>
 ```
 
-程序会校验官方 Provider 与模型前缀是否匹配。使用私有 Anthropic/OpenAI 网关时，设置对应 `*_BASE_URL` 会自动允许自定义模型；也可显式设置 `PENHIN_SKIP_MODEL_COMPATIBILITY_CHECK=1`。
+支持的 Provider 为 `anthropic`、`openai`、`openai-codex` 和 `gemini`。
 
-常用命令：
+## 常用操作
 
 ```text
-/login [provider]   先选择 Account 或 API key，再进入对应 Provider 登录
-/logout [provider]  删除 Penhin 保存的本地凭证
-/auth status        查看认证类型、来源和过期状态（不显示秘密）
-/model <model>       保存模型并立即用于当前会话
-/provider <provider> [model]  切换 Provider；可选地同时指定模型
-python main.py --model <model>  # 只覆盖当前会话
-python main.py --provider <provider> --model <model>  # 只覆盖当前会话
+/login [provider]              登录或保存 API key
+/logout [provider]             删除 Penhin 保存的凭证
+/auth status                   查看认证状态和来源
+/provider <provider> [model]   切换 Provider
+/model <model>                 切换模型
+/status                        查看当前状态
+/permission <mode>             切换权限模式
+/compact                       压缩当前会话上下文
+/help                          查看全部本地命令
 ```
 
-例如，使用隐藏输入保存 OpenAI API Key并立即切换：
-
-```text
-/login openai
-```
-
-不带 Provider 执行 `/login` 时，先选择 `Account` 或 `API key`，再只显示支持该认证类型的 Provider。`/login anthropic` 仍会要求选择 API Key 或实验性的 Claude Pro/Max OAuth；认证方式唯一的 `/login openai`、`/login gemini` 和 `/login openai-codex` 会跳过这一步。OpenAI 订阅登录使用独立的 `openai-codex` Provider，并继续选择浏览器或设备码登录，不与开发者 API Key 混用。Gemini 按 Pi 的边界只支持 API Key。
-
-OAuth 兼容能力依赖上游客户端参数和专用端点，可能随 Provider 变化。设置 `PENHIN_DISABLE_EXPERIMENTAL_OAUTH=1` 可完全禁用；所有客户端 ID、端点和 loopback 端口均提供 `PENHIN_OPENAI_OAUTH_*` / `PENHIN_ANTHROPIC_OAUTH_*` 环境覆盖。回调 host 只允许 loopback 地址。
-
-`/provider` 会校验模型兼容性和目标凭证；模型由 `/model` 与 `/status` 单独查看和设置。切换会保留当前会话记录，但建议在切换到能力差异较大的模型时使用 `/compact` 或 `--new` 开启新会话。
-
-认证优先级为：进程环境变量、新凭证库、`~/.penhin/.env`、项目根目录 `.env`。`/logout` 只删除 Penhin 凭证库记录；如果环境变量或 `.env` 仍有密钥，`/auth status` 会显示实际回退来源。项目与用户 `.env` 均不会被自动迁移或修改。
-
-## 本地编排存储
-
-多 Agent 的任务、尝试、事件、产物和集成记录默认存入项目的 `.penhin/orchestration.sqlite3`，无需安装或配置 PostgreSQL。SQLite 适用于单机运行，并启用 WAL 和事务化任务领取。
-
-需要共享存储或更高并发时，设置：
+单次执行或开启新会话：
 
 ```bash
-python -m pip install -e ".[postgres]"
+penhin --once "解释这个项目"
+penhin --new
 ```
+
+Penhin 默认恢复最近一次会话。子 Agent 会使用隔离的 Git worktree；如果需要它读取当前修改，请先提交这些修改。
+
+## 权限与本地数据
+
+权限模式包括交互确认、自动审查和完全访问。建议从默认模式开始，只在可信项目中扩大权限。
+
+本地会话、任务和编排数据保存在 `.transcripts/`、`.tasks/` 和 `.penhin/`。这些目录不会作为项目源码提交。多 Agent 默认使用本地 SQLite；需要 PostgreSQL 时安装：
 
 ```bash
-PENHIN_DATABASE_URL=postgresql://user:password@host:5432/database
+python -m pip install "penhin-code[postgres]"
 ```
 
-也可指定 SQLite 文件：
-
-```bash
-PENHIN_DATABASE_URL=sqlite:////absolute/path/to/orchestration.sqlite3
-```
-
-显式配置的后端不可用时会报错，不会静默回退到另一份本地数据。
-
-可选编排参数包括：`PENHIN_SCHEDULER_WORKERS`、`PENHIN_WORKER_KILL_GRACE_SECONDS`、`PENHIN_SYNC_AGENT_TIMEOUT_SECONDS`、`PENHIN_AGENT_POLL_INTERVAL_SECONDS`、`PENHIN_SQLITE_CONNECT_TIMEOUT_SECONDS` 和 `PENHIN_SQLITE_BUSY_TIMEOUT_MS`。
-
-## 子 Agent 与集成
-
-可执行的 Agent 会在 `.penhin/worktrees/<job-id>` 建立独立 Git worktree。`general` Agent 可在自己的 worktree 写入；`explore`、`plan`、`verify` 为只读模式。worktree 从当前已提交的 `HEAD` 创建，因此希望子 Agent 看见的改动应先提交。
-
-写入型 Agent 成功后会生成不可变的 change set。使用集成工具可以在独立 `penhin/integration-*` 分支上按顺序 cherry-pick 这些提交；集成不会直接更新主分支。
-
-## 主要工具
-
-```text
-todo_set / todo_show / todo_done / todo_clear
-task_start / task_show / task_complete
-task / verify
-agent_job_start / agent_plan_create / agent_dag_show / agent_job_show / agent_job_list
-agent_artifact_show / agent_job_wait / agent_job_cancel
-integration_start / integration_show / integration_verify
-glob / list / search / read / edit / write / bash
-workspace / compact / snip / load_skill
-```
-
-本地状态位于 `.penhin/`、`.tasks/` 与 `.transcripts/`，均不会被文件工具扫描或写入版本控制。任务待办保存在对应的 `.tasks/task_*.json` 中，不会跨任务残留。
+然后设置 `PENHIN_DATABASE_URL`。
 
 ## Agent 评测
 
-项目内置确定性与独立 Judge 结合的评测框架，覆盖主 Agent、角色型子 Agent和多 Agent 编排。离线检查可运行 `penhin-eval validate --suite baseline-v1`；真实基线、预算配置、报告和回归比较见 [docs/evaluation.md](docs/evaluation.md)。
+验证内置评测任务：
+
+```bash
+penhin-eval validate --suite baseline-v1
+```
+
+完整评测、预算和报告说明见 [docs/evaluation.md](docs/evaluation.md)。版本变化见 [CHANGELOG.md](CHANGELOG.md)。项目采用 [MIT License](LICENSE)。

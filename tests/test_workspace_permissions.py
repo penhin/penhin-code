@@ -1,7 +1,7 @@
 import os
 from unittest.mock import patch
 
-from orchestration.permissions import readonly_command_is_allowed, write_is_allowed
+from penhin.orchestration.permissions import readonly_command_is_allowed, write_is_allowed
 
 
 def test_readonly_workspace_denies_write_capability() -> None:

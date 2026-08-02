@@ -4,8 +4,8 @@ import json
 
 import httpx
 
-from providers.openai_codex import OpenAICodexProvider, codex_request_body
-from providers.types import LLMRequest
+from penhin.providers.openai_codex import OpenAICodexProvider, codex_request_body
+from penhin.providers.protocols import LLMRequest
 
 
 def request() -> LLMRequest:
@@ -51,7 +51,7 @@ def test_codex_sse_normalizes_text_tool_calls_and_usage() -> None:
 
 
 def test_codex_http_error_does_not_include_body() -> None:
-    from providers.openai_codex import CodexHTTPError
+    from penhin.providers.openai_codex import CodexHTTPError
     import pytest
 
     transport = httpx.MockTransport(lambda request: httpx.Response(401, text="access-secret leaked"))

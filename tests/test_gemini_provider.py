@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
-from providers.gemini import GeminiProvider, gemini_contents, normalize_response, request_kwargs
-from providers.types import LLMRequest
+from penhin.providers.gemini import GeminiProvider, gemini_contents, normalize_response, request_kwargs
+from penhin.providers.protocols import LLMRequest
 
 
 def request(messages=None, tools=None):

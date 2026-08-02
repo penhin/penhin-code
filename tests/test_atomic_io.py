@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import atomic_io
+from penhin.infrastructure import atomic_io
 
 
 def test_atomic_write_cleans_temp_file_on_replace_failure() -> None:

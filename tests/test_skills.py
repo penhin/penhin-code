@@ -3,7 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from skills import SkillLoader
+from penhin.skills import SkillLoader
 
 
 def test_skill_loader_discovers_user_skill_created_after_initialization(tmp_path: Path) -> None:

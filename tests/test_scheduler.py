@@ -7,9 +7,9 @@ from uuid import uuid4
 
 import pytest
 
-from orchestration.models import AgentJob, AgentRole, JobStatus
-from orchestration.repositories.postgres_repository import PostgresOrchestrationRepository
-from orchestration.scheduler import PersistentScheduler
+from penhin.orchestration.models import AgentJob, AgentRole, JobStatus
+from penhin.orchestration.repositories.postgres_repository import PostgresOrchestrationRepository
+from penhin.orchestration.scheduler import PersistentScheduler
 
 
 class SchedulerForTest(PersistentScheduler):

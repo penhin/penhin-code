@@ -3,7 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from providers.anthropic import normalize_content_block
+from penhin.providers.anthropic import normalize_content_block
 
 
 class FakeThinkingBlock:

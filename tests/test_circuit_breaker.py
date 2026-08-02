@@ -4,8 +4,9 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import runtime
-from circuit_breaker import CircuitBreaker, CircuitBreakerOpen
+from penhin.runtime import manager as runtime
+from penhin.runtime import settings as runtime_settings
+from penhin.runtime.retry import CircuitBreaker, CircuitBreakerOpen
 
 
 class ManualClock:
@@ -215,7 +216,7 @@ def test_runtime_streams_text_deltas_and_returns_final_message() -> None:
 
 def test_build_circuit_breaker_from_env_can_disable() -> None:
     with patch.dict("os.environ", {"CIRCUIT_BREAKER_ENABLED": "false"}):
-        assert runtime.build_circuit_breaker_from_env() is None
+        assert runtime_settings.build_circuit_breaker() is None
 
 
 def test_build_circuit_breaker_from_env_uses_config_values() -> None:
@@ -228,7 +229,7 @@ def test_build_circuit_breaker_from_env_uses_config_values() -> None:
             "CIRCUIT_BREAKER_SUCCESS_THRESHOLD": "2",
         },
     ):
-        breaker = runtime.build_circuit_breaker_from_env()
+        breaker = runtime_settings.build_circuit_breaker()
 
     assert breaker is not None
     assert breaker.failure_threshold == 3
@@ -246,7 +247,7 @@ def test_build_compact_circuit_breaker_from_env_uses_config_values() -> None:
             "COMPACT_CIRCUIT_BREAKER_SUCCESS_THRESHOLD": "2",
         },
     ):
-        breaker = runtime.build_compact_circuit_breaker_from_env()
+        breaker = runtime_settings.build_compact_circuit_breaker()
 
     assert breaker is not None
     assert breaker.failure_threshold == 4
