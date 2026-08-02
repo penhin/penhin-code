@@ -12,6 +12,10 @@ from dotenv import dotenv_values, load_dotenv
 
 from circuit_breaker import CircuitBreaker, CircuitBreakerOpen
 from config import ENV_FILE
+from auth import ApiKeyCredential, OAuthCredential, ResolvedAuth, auth_resolver
+from auth.resolver import provider_key_name as auth_provider_key_name, set_process_environment_names
+from auth.storage import CredentialStoreUnavailable, credential_store
+from auth.providers import provider_auth
 from providers.anthropic import AnthropicProvider
 from providers.models import validate_model
 from providers.types import LLMProvider, LLMRequest, LLMResponse, StreamCallback
@@ -21,6 +25,10 @@ runtime = None
 environment_sources: dict[str, str] = {}
 
 logger = logging.getLogger("penhin.runtime")
+
+
+class AuthenticationRequired(RuntimeError):
+    pass
 
 
 class ColorFormatter(logging.Formatter):
@@ -34,8 +42,9 @@ class ColorFormatter(logging.Formatter):
     RESET = "\033[0m"
     
     def format(self, record: logging.LogRecord) -> str:
+        from auth.secrets import redact_text
         color = self.COLORS.get(record.levelno, "")
-        message = super().format(record)
+        message = redact_text(super().format(record))
         return f"{color}{message}{self.RESET}"
 
 
@@ -53,6 +62,8 @@ def setup_logging() -> None:
 class Runtime:
     provider: LLMProvider
     model: str
+    provider_id: str = ""
+    auth_expires_at: int | None = None
     max_tokens: int = 10000
     sub_max_turns: int = 30
     sub_max_tokens: int = 2000
@@ -70,6 +81,12 @@ class Runtime:
         label: str = "messages.create",
         stream_callback: StreamCallback | None = None,
     ) -> LLMResponse:
+        if self.provider_id and self.auth_expires_at is not None and self.auth_expires_at <= int(time.time()) + 60:
+            resolved = resolve_runtime_auth(self.provider_id)
+            if resolved is None:
+                raise AuthenticationRequired(f"No credentials for {self.provider_id}. Use /login {self.provider_id} first.")
+            self.provider = build_provider(self.provider_id, resolved)
+            self.auth_expires_at = getattr(resolved.credential, "expires_at", None)
         retry_errors = self.provider.retry_errors
         delays = self.retry_delays
 
@@ -258,32 +275,50 @@ def build_compact_circuit_breaker_from_env() -> CircuitBreaker | None:
     )
 
 
-def init_runtime() -> None:
+def init_runtime(required: bool = True) -> None:
     setup_logging()
 
     global runtime
     load_runtime_environment()
 
     provider = configured_provider()
-    key_name = provider_key_name(provider)
-    if key_name is None:
-        logger.error(f"Unsupported LLM_PROVIDER={provider!r}; choose anthropic, openai, or gemini")
-        raise SystemExit(1)
-    missing_env = [name for name in (key_name, "MODEL_ID") if not os.getenv(name)]
-    if missing_env:
-        logger.error(f"Please configure {', '.join(missing_env)} in {ENV_FILE} or .env")
-        sys.exit(1)
-
-    model = os.environ["MODEL_ID"]
+    if provider not in {"anthropic", "openai", "openai-codex", "gemini"}:
+        message = f"Unsupported LLM_PROVIDER={provider!r}; choose anthropic, openai, openai-codex, or gemini"
+        if required:
+            logger.error(message)
+            raise SystemExit(1)
+        runtime = None
+        return
+    model = os.getenv("MODEL_ID", "").strip()
+    try:
+        resolved = resolve_runtime_auth(provider)
+    except CredentialStoreUnavailable as error:
+        if required:
+            logger.error(str(error))
+            raise SystemExit(1)
+        runtime = None
+        return
+    if resolved is None or not model:
+        runtime = None
+        if required:
+            missing = "credentials" if resolved is None else "MODEL_ID"
+            logger.error(f"Missing {missing}. Start interactive Penhin and use /login.")
+            raise SystemExit(1)
+        return
     try:
         validate_model(provider, model)
     except ValueError as error:
         logger.error(str(error))
-        raise SystemExit(1)
+        runtime = None
+        if required:
+            raise SystemExit(1)
+        return
     
     runtime = Runtime(
-        provider=build_provider_from_env(),
+        provider=build_provider(provider, resolved),
         model=model,
+        provider_id=provider,
+        auth_expires_at=getattr(resolved.credential, "expires_at", None),
         circuit_breaker=build_circuit_breaker_from_env(),
         compact_circuit_breaker=build_compact_circuit_breaker_from_env(),
     )
@@ -291,8 +326,12 @@ def init_runtime() -> None:
 
 def get_runtime() -> Runtime:
     if runtime is None:
-        raise RuntimeError("init_runtime() must be called before get_runtime()")
+        raise AuthenticationRequired("No authenticated runtime is available. Use /login first.")
     return runtime
+
+
+def runtime_available() -> bool:
+    return runtime is not None
 
 
 def set_runtime_model(model: str) -> None:
@@ -301,26 +340,30 @@ def set_runtime_model(model: str) -> None:
         runtime.model = model
 
 
-def set_runtime_api_key(api_key: str) -> None:
+def set_runtime_api_key(api_key: str = "") -> None:
     if runtime is not None:
         runtime.provider = build_provider_from_env()
 
 
 def set_runtime_provider(provider: str, model: str) -> None:
-    if provider_key_name(provider) is None:
+    global runtime
+    if provider not in {"anthropic", "openai", "openai-codex", "gemini"}:
         raise ValueError(f"Unsupported provider: {provider}")
     validate_model(provider, model)
-    if runtime is not None:
-        runtime.provider = build_provider_from_env()
-        runtime.model = model
+    resolved = resolve_runtime_auth(provider)
+    if resolved is None:
+        raise AuthenticationRequired(f"No credentials for {provider}. Use /login {provider} first.")
+    runtime = Runtime(
+        provider=build_provider(provider, resolved), model=model,
+        provider_id=provider,
+        auth_expires_at=getattr(resolved.credential, "expires_at", None),
+        circuit_breaker=build_circuit_breaker_from_env(),
+        compact_circuit_breaker=build_compact_circuit_breaker_from_env(),
+    )
 
 
 def provider_key_name(provider: str) -> str | None:
-    return {
-        "anthropic": "ANTHROPIC_API_KEY",
-        "openai": "OPENAI_API_KEY",
-        "gemini": "GEMINI_API_KEY",
-    }.get(provider)
+    return auth_provider_key_name(provider)
 
 
 def configured_provider() -> str:
@@ -340,6 +383,7 @@ def mark_setting_source(name: str, source: str) -> None:
 def load_runtime_environment() -> None:
     environment_sources.clear()
     original_names = set(os.environ)
+    set_process_environment_names(original_names)
     for path, label in ((ENV_FILE, "User env"), (Path(".env"), "Project env")):
         values = dotenv_values(path)
         load_dotenv(path, override=False)
@@ -352,12 +396,60 @@ def load_runtime_environment() -> None:
 
 def build_provider_from_env() -> LLMProvider:
     provider = configured_provider()
+    if provider not in {"anthropic", "openai", "openai-codex", "gemini"}:
+        raise ValueError(f"Unsupported LLM_PROVIDER={provider!r}")
+    resolved = resolve_runtime_auth(provider)
+    if resolved is None:
+        raise AuthenticationRequired(f"No credentials for {provider}. Use /login {provider} first.")
+    return build_provider(provider, resolved)
+
+
+def _refresh_if_needed(provider: str, credential):
+    if not isinstance(credential, OAuthCredential) or credential.expires_at > int(time.time()) + 60:
+        return credential
+    from evaluation.observer import emit
+    started = time.perf_counter()
+    emit("auth_refresh_started", provider=provider, auth_type="oauth")
+    store = credential_store()
+    try:
+        updated = store.modify(
+            provider,
+            lambda current: provider_auth(provider).refresh(current)
+            if isinstance(current, OAuthCredential) and current.expires_at <= int(time.time()) + 60
+            else None,
+        )
+    except Exception as error:
+        emit("auth_refresh_failed", provider=provider, error_type=type(error).__name__, duration_ms=(time.perf_counter() - started) * 1000)
+        raise
+    if not isinstance(updated, OAuthCredential):
+        raise AuthenticationRequired(f"OAuth credential for {provider} could not be refreshed")
+    emit("auth_refresh_completed", provider=provider, duration_ms=(time.perf_counter() - started) * 1000)
+    return updated
+
+
+def resolve_runtime_auth(provider: str) -> ResolvedAuth | None:
+    resolved = auth_resolver().resolve(provider)
+    if resolved is None:
+        return None
+    credential = _refresh_if_needed(provider, resolved.credential)
+    return ResolvedAuth(provider, credential, resolved.source, resolved.backend)
+
+
+def build_provider(provider: str, resolved) -> LLMProvider:
+    credential = provider_auth(provider).resolve(resolved.credential)
     if provider == "anthropic":
-        return AnthropicProvider.from_env()
-    if provider == "openai":
+        if isinstance(credential, OAuthCredential):
+            return AnthropicProvider(auth_token=credential.access_token, oauth=True, base_url=os.getenv("ANTHROPIC_BASE_URL"))
+        return AnthropicProvider(api_key=credential.key, base_url=os.getenv("ANTHROPIC_BASE_URL"))
+    if provider == "openai" and isinstance(credential, ApiKeyCredential):
         from providers.openai import OpenAIProvider
-        return OpenAIProvider.from_env()
-    if provider == "gemini":
+        return OpenAIProvider(api_key=credential.key, base_url=os.getenv("OPENAI_BASE_URL"))
+    if provider == "gemini" and isinstance(credential, ApiKeyCredential):
         from providers.gemini import GeminiProvider
-        return GeminiProvider.from_env()
-    raise ValueError(f"Unsupported LLM_PROVIDER={provider!r}")
+        return GeminiProvider(api_key=credential.key)
+    if provider == "openai-codex" and isinstance(credential, OAuthCredential):
+        from providers.openai_codex import OpenAICodexProvider
+        if not credential.account_id:
+            raise AuthenticationRequired("OpenAI Codex credential has no ChatGPT account id")
+        return OpenAICodexProvider(credential.access_token, credential.account_id)
+    raise AuthenticationRequired(f"Credential type {credential.type} is not valid for {provider}")

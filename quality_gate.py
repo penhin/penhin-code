@@ -14,8 +14,9 @@ class GateCheck:
 
 
 def _run(name: str, command: list[str], workdir: Path) -> GateCheck:
-    result = subprocess.run(command, cwd=workdir, capture_output=True, text=True, timeout=900, check=False)
-    detail = (result.stdout + result.stderr).strip()
+    from auth.secrets import redact_text, scrubbed_environment
+    result = subprocess.run(command, cwd=workdir, capture_output=True, text=True, timeout=900, check=False, env=scrubbed_environment())
+    detail = redact_text((result.stdout + result.stderr).strip())
     if len(detail) > 2000:
         detail = detail[-2000:]
     return GateCheck(name, result.returncode == 0, detail or "passed")

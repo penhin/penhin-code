@@ -91,7 +91,8 @@ class PersistentScheduler:
                 monitor.add_done_callback(lambda completed, job_id=job.id: self._complete(job_id, completed))
 
     def _spawn_worker(self, job: AgentJob, attempt: JobAttempt) -> subprocess.Popen:
-        environment = os.environ.copy()
+        from auth.secrets import trusted_worker_environment
+        environment = trusted_worker_environment()
         environment["PENHIN_DATABASE_URL"] = self.repository.database_url
         environment["PENHIN_WORKSPACE_MODE"] = job.workspace_mode
         environment["PENHIN_ROOT_TASK_ID"] = job.root_task_id

@@ -31,9 +31,27 @@ def test_validate_model_allows_a_custom_openai_gateway(monkeypatch) -> None:
 def test_build_provider_selects_openai_and_rejects_unknown_provider(monkeypatch) -> None:
     expected = object()
     monkeypatch.setenv("LLM_PROVIDER", "openai")
-    with patch("providers.openai.OpenAIProvider.from_env", return_value=expected):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    with patch("providers.openai.OpenAIProvider", return_value=expected):
         assert runtime.build_provider_from_env() is expected
 
     monkeypatch.setenv("LLM_PROVIDER", "unsupported")
     with pytest.raises(ValueError, match="Unsupported"):
         runtime.build_provider_from_env()
+
+
+def test_optional_runtime_start_allows_login_without_credentials(monkeypatch) -> None:
+    runtime.runtime = object()
+    monkeypatch.setattr(runtime, "load_runtime_environment", lambda: None)
+    monkeypatch.setattr(runtime, "configured_provider", lambda: "anthropic")
+    monkeypatch.setattr(runtime, "resolve_runtime_auth", lambda _provider: None)
+    runtime.init_runtime(required=False)
+    assert runtime.runtime is None
+
+
+def test_required_runtime_start_rejects_missing_credentials(monkeypatch) -> None:
+    monkeypatch.setattr(runtime, "load_runtime_environment", lambda: None)
+    monkeypatch.setattr(runtime, "configured_provider", lambda: "anthropic")
+    monkeypatch.setattr(runtime, "resolve_runtime_auth", lambda _provider: None)
+    with pytest.raises(SystemExit):
+        runtime.init_runtime(required=True)

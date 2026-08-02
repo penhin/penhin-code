@@ -1,10 +1,12 @@
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import commands
+from auth import ApiKeyCredential, InMemoryCredentialStore
 from circuit_breaker import CircuitBreaker
 from context import RunContext
 from prompt_toolkit.document import Document
@@ -33,7 +35,7 @@ def test_handle_local_command_shows_help() -> None:
     mocked_print_info.assert_any_call("/status Show session and runtime status")
     mocked_print_info.assert_any_call("/model Show or set model id")
     mocked_print_info.assert_any_call("/provider Show or switch provider")
-    mocked_print_info.assert_any_call("/api-key Show or set a Provider API key")
+    mocked_print_info.assert_any_call("/api-key Enter a Provider API key securely")
     mocked_print_info.assert_any_call("/circuit Show circuit breaker status")
     mocked_print_info.assert_any_call("/compact Compact current session, optionally with a hint")
     mocked_print_info.assert_any_call("/force-snip Mark selected history turns as snipped")
@@ -69,6 +71,7 @@ def test_handle_local_command_shows_status() -> None:
         patch("commands.workspace_info", return_value={"cwd": "/tmp/project"}),
         patch("commands.get_runtime", return_value=Runtime()),
         patch("commands.get_permission_mode", return_value="default"),
+        patch("commands.auth_resolver", return_value=SimpleNamespace(status=lambda _provider: {"configured": False, "type": None, "source": "not set", "backend": None})),
         patch("commands.setting_sources", return_value="User config, Project env"),
         patch("commands.ui.print_info") as mocked_print_info,
     ):
@@ -81,7 +84,7 @@ def test_handle_local_command_shows_status() -> None:
         "Session ID: demo-session",
         "cwd: /tmp/project",
         "API provider: Anthropic API",
-        "API key: not set (ANTHROPIC_API_KEY)",
+        "Authentication: not configured (-; not set)",
         "Anthropic base URL: https://api.example.com/v1",
         "Proxy: http://127.0.0.1:15715",
         "",
@@ -102,10 +105,10 @@ def test_status_uses_openai_compatible_base_url() -> None:
             "OPENAI_BASE_URL": "https://api.deepseek.com/v1",
         },
         clear=True,
-    ):
+    ), patch("commands.auth_resolver", return_value=SimpleNamespace(status=lambda _provider: {"configured": False, "type": None, "source": "not set", "backend": None})):
         assert commands.build_status_lines()[4:7] == [
             "API provider: OpenAI API",
-            "API key: not set (OPENAI_API_KEY)",
+        "Authentication: not configured (-; not set)",
             "OpenAI base URL: https://api.deepseek.com/v1",
         ]
 
@@ -217,40 +220,196 @@ def test_handle_model_command_updates_config_and_runtime() -> None:
     with (
         patch("commands.set_env_value") as mocked_set_env_value,
         patch("commands.set_runtime_model") as mocked_set_runtime_model,
+        patch("commands.set_provider_model") as mocked_set_provider_model,
+        patch("commands.configured_provider", return_value="anthropic"),
         patch("commands.ui.print_info") as mocked_print_info,
     ):
         assert commands.handle_local_command("/model claude-test") is True
 
     mocked_set_env_value.assert_called_once_with("MODEL_ID", "claude-test")
     mocked_set_runtime_model.assert_called_once_with("claude-test")
+    mocked_set_provider_model.assert_called_once_with("anthropic", "claude-test")
     mocked_print_info.assert_called_once_with("model: claude-test")
 
 
-def test_handle_api_key_command_saves_without_echoing_secret() -> None:
+def test_handle_api_key_command_rejects_secret_in_command_arguments() -> None:
     with (
         patch("commands.set_env_value") as mocked_set_env_value,
-        patch("commands.set_runtime_api_key") as mocked_set_runtime_api_key,
         patch("commands.ui.print_info") as mocked_print_info,
     ):
         assert commands.handle_local_command("/api-key sk-ant-secret") is True
 
-    mocked_set_env_value.assert_called_once_with("ANTHROPIC_API_KEY", "sk-ant-secret")
-    mocked_set_runtime_api_key.assert_called_once_with("sk-ant-secret")
-    mocked_print_info.assert_called_once_with("api-key: saved")
+    mocked_set_env_value.assert_not_called()
+    mocked_print_info.assert_not_called()
 
 
-def test_handle_api_key_command_saves_a_non_active_provider_key() -> None:
+def test_handle_api_key_command_rejects_non_active_provider_secret_argument() -> None:
     with (
         patch.dict("commands.os.environ", {"LLM_PROVIDER": "anthropic"}, clear=True),
         patch("commands.set_env_value") as mocked_set_env_value,
-        patch("commands.set_runtime_api_key") as mocked_set_runtime_api_key,
         patch("commands.ui.print_info") as mocked_print_info,
     ):
         assert commands.handle_local_command("/api-key openai sk-openai-secret") is True
 
-    mocked_set_env_value.assert_called_once_with("OPENAI_API_KEY", "sk-openai-secret")
-    mocked_set_runtime_api_key.assert_not_called()
-    mocked_print_info.assert_called_once_with("api-key: saved")
+    mocked_set_env_value.assert_not_called()
+    mocked_print_info.assert_not_called()
+
+
+def test_api_key_hidden_prompt_writes_store_without_environment_secret() -> None:
+    store = InMemoryCredentialStore()
+    with (
+        patch.dict("commands.os.environ", {"LLM_PROVIDER": "anthropic"}, clear=True),
+        patch("commands.ui.prompt_secret", return_value="hidden-secret") as prompt,
+        patch("commands._writable_store", return_value=store),
+        patch("commands._activate_login"),
+        patch("commands.ui.print_info"),
+    ):
+        assert commands.handle_local_command("/api-key") is True
+    prompt.assert_called_once()
+    assert store.read("anthropic") == ApiKeyCredential(key="hidden-secret")
+    assert "ANTHROPIC_API_KEY" not in commands.os.environ
+
+
+def test_login_refuses_to_collect_credentials_without_storage_consent() -> None:
+    provider = Mock()
+    with (
+        patch("commands.credential_store", side_effect=commands.CredentialStoreUnavailable("unavailable")),
+        patch("commands.ui.prompt_confirm", return_value=False),
+        patch("commands.provider_auth", return_value=provider),
+        patch("commands.ui.print_info") as print_info,
+        patch("commands.ui.print_error") as print_error,
+    ):
+        commands._login_api_key("openai")
+
+    provider.login.assert_not_called()
+    assert "not encrypted" in print_info.call_args.args[0]
+    assert print_error.call_args.args[0] == "login cancelled: no credential storage backend was selected"
+
+
+def test_login_storage_consent_selects_file_before_collecting_secret() -> None:
+    store = InMemoryCredentialStore()
+    provider = Mock()
+    provider.login.return_value = ApiKeyCredential(key="stored-secret")
+    with (
+        patch("commands.credential_store", side_effect=commands.CredentialStoreUnavailable("unavailable")),
+        patch("commands.ui.prompt_confirm", return_value=True),
+        patch("commands.set_credential_backend") as set_backend,
+        patch("commands.FileCredentialStore", return_value=store),
+        patch("commands.provider_auth", return_value=provider),
+        patch("commands._activate_login"),
+        patch("commands.ui.print_info"),
+    ):
+        commands._login_api_key("openai")
+
+    set_backend.assert_called_once_with("file")
+    provider.login.assert_called_once()
+    assert store.read("openai") == ApiKeyCredential(key="stored-secret")
+
+
+def test_login_chooses_authentication_type_before_api_key_provider() -> None:
+    with (
+        patch("commands.ui.prompt_select", side_effect=["api_key", "gemini"]) as prompt_select,
+        patch("commands._login_api_key") as login_api_key,
+    ):
+        commands.handle_login_command([])
+
+    assert prompt_select.call_args_list[0].args == (
+        "Choose authentication type",
+        (("oauth", "Account"), ("api_key", "API key")),
+    )
+    assert prompt_select.call_args_list[1].args == (
+        "Choose a provider",
+        (
+            ("anthropic", "Anthropic API key"),
+            ("openai", "OpenAI API key"),
+            ("gemini", "Google Gemini API key"),
+        ),
+    )
+    login_api_key.assert_called_once_with("gemini")
+
+
+def test_login_account_only_lists_account_providers() -> None:
+    with (
+        patch("commands.ui.prompt_select", side_effect=["oauth", "anthropic"]) as prompt_select,
+        patch("commands._login_oauth") as login_oauth,
+    ):
+        commands.handle_login_command([])
+
+    assert prompt_select.call_args_list[1].args == (
+        "Choose a provider",
+        (
+            ("anthropic", "Claude Pro/Max account"),
+            ("openai-codex", "ChatGPT Plus/Pro account"),
+        ),
+    )
+    login_oauth.assert_called_once_with("anthropic")
+
+
+def test_login_anthropic_still_asks_for_authentication_type() -> None:
+    with (
+        patch("commands.ui.prompt_select", return_value="oauth") as prompt_select,
+        patch("commands._login_oauth") as login_oauth,
+    ):
+        commands.handle_login_command(["anthropic"])
+
+    prompt_select.assert_called_once_with(
+        "Choose authentication type",
+        (("oauth", "Account"), ("api_key", "API key")),
+    )
+    login_oauth.assert_called_once_with("anthropic")
+
+
+def test_login_single_method_provider_skips_authentication_type_prompt() -> None:
+    with (
+        patch("commands.ui.prompt_select") as prompt_select,
+        patch("commands._login_api_key") as login_api_key,
+    ):
+        commands.handle_login_command(["openai"])
+
+    prompt_select.assert_not_called()
+    login_api_key.assert_called_once_with("openai")
+
+
+def test_account_login_continues_to_selected_protocol_method() -> None:
+    credential = SimpleNamespace(type="oauth")
+    oauth = Mock()
+    oauth.login.return_value = credential
+    with (
+        patch("commands.ui.prompt_select", return_value="device_code") as prompt_select,
+        patch("commands._writable_store", return_value=InMemoryCredentialStore()),
+        patch("commands.provider_auth", return_value=oauth),
+        patch("commands._save_login") as save_login,
+    ):
+        commands._login_oauth("openai-codex")
+
+    prompt_select.assert_called_once_with(
+        "Choose account login method",
+        (("browser", "Browser login"), ("device_code", "Device code login (headless)")),
+    )
+    assert oauth.login.call_args.args[0] == "oauth"
+    assert oauth.login.call_args.kwargs == {"oauth_method": "device_code"}
+    assert save_login.call_args.args[:2] == ("openai-codex", credential)
+
+
+def test_terminal_auth_always_shows_url_and_only_attempts_browser_launch() -> None:
+    interaction = commands.TerminalAuthInteraction()
+    with (
+        patch("commands.ui.print_auth_url") as print_auth_url,
+        patch("commands.open_browser") as open_browser,
+        patch("commands.ui.print_info") as print_info,
+    ):
+        interaction.notify(
+            "auth_url",
+            url="https://provider.example/authorize?state=temporary",
+            instructions="Complete login in your browser.",
+        )
+
+    print_auth_url.assert_called_once_with(
+        "https://provider.example/authorize?state=temporary",
+        "Complete login in your browser.",
+    )
+    open_browser.assert_called_once_with("https://provider.example/authorize?state=temporary")
+    print_info.assert_not_called()
 
 
 def test_handle_provider_command_switches_provider_and_model() -> None:
@@ -258,6 +417,7 @@ def test_handle_provider_command_switches_provider_and_model() -> None:
         patch.dict("commands.os.environ", {"LLM_PROVIDER": "anthropic", "MODEL_ID": "claude-test", "OPENAI_API_KEY": "sk-openai"}, clear=True),
         patch("commands.set_runtime_provider") as mocked_set_runtime_provider,
         patch("commands.set_env_value") as mocked_set_env_value,
+        patch("commands.set_provider_model") as mocked_set_provider_model,
         patch("commands.ui.print_info") as mocked_print_info,
     ):
         assert commands.handle_local_command("/provider openai gpt-4.1") is True
@@ -265,6 +425,7 @@ def test_handle_provider_command_switches_provider_and_model() -> None:
     mocked_set_runtime_provider.assert_called_once_with("openai", "gpt-4.1")
     assert mocked_set_env_value.call_args_list[0].args == ("LLM_PROVIDER", "openai")
     assert mocked_set_env_value.call_args_list[1].args == ("MODEL_ID", "gpt-4.1")
+    mocked_set_provider_model.assert_called_once_with("openai", "gpt-4.1")
     mocked_print_info.assert_called_once_with("provider: openai")
 
 

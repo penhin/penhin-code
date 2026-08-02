@@ -12,8 +12,9 @@ class AgentWorktree:
 
 
 def repository_root() -> Path:
+    from auth.secrets import scrubbed_environment
     result = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, timeout=5, check=False,
+        ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, timeout=5, check=False, env=scrubbed_environment(),
     )
     if result.returncode != 0:
         raise RuntimeError("Agent worktrees require a Git repository")
@@ -21,6 +22,7 @@ def repository_root() -> Path:
 
 
 def provision_worktree(job_id: str) -> AgentWorktree:
+    from auth.secrets import scrubbed_environment
     root = repository_root()
     worktree_path = root / ".penhin" / "worktrees" / job_id
     branch = f"penhin/agent-{job_id.replace('-', '')[:12]}"
@@ -34,6 +36,7 @@ def provision_worktree(job_id: str) -> AgentWorktree:
         text=True,
         timeout=30,
         check=False,
+        env=scrubbed_environment(),
     )
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "git worktree add failed")
@@ -41,6 +44,7 @@ def provision_worktree(job_id: str) -> AgentWorktree:
 
 
 def provision_integration_worktree(run_id: str, base_commit: str) -> AgentWorktree:
+    from auth.secrets import scrubbed_environment
     root = repository_root()
     worktree_path = root / ".penhin" / "integrations" / run_id
     branch = f"penhin/integration-{run_id.replace('-', '')[:12]}"
@@ -49,7 +53,7 @@ def provision_integration_worktree(run_id: str, base_commit: str) -> AgentWorktr
     worktree_path.parent.mkdir(parents=True, exist_ok=True)
     result = subprocess.run(
         ["git", "worktree", "add", "-b", branch, str(worktree_path), base_commit],
-        cwd=root, capture_output=True, text=True, timeout=30, check=False,
+        cwd=root, capture_output=True, text=True, timeout=30, check=False, env=scrubbed_environment(),
     )
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "git worktree add failed")

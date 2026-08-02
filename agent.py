@@ -73,8 +73,9 @@ def resolve_approval(
     if tool_name == "bash":
         command = str(tool_input.get("command", ""))
         suggested_prefix = suggest_bash_prefix(command)
+        from auth.secrets import redact_text
         print("[approval] bash")
-        print(command)
+        print(redact_text(command))
         print()
         print("1. allow once")
         print("2. allow exact command this session")

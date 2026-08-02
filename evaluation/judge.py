@@ -5,6 +5,8 @@ import re
 from typing import Any
 
 from providers.gemini import GeminiProvider
+from auth import ApiKeyCredential
+from runtime import resolve_runtime_auth
 from providers.types import LLMRequest
 
 from .budget import BudgetExceeded
@@ -49,7 +51,10 @@ def run_judge(case: EvaluationCase, final_answer: str, diff_summary: str, checks
     import os
     model = os.environ["PENHIN_EVAL_JUDGE_MODEL"]
     prompt = judge_payload(case, final_answer, diff_summary, checks)
-    provider = GeminiProvider.from_env()
+    resolved = resolve_runtime_auth("gemini")
+    if resolved is None or not isinstance(resolved.credential, ApiKeyCredential):
+        raise ValueError("Gemini judge credentials are not configured")
+    provider = GeminiProvider(api_key=resolved.credential.key)
     budget = budget_from_env()
     price = price_from_env("judge")
     last_error: Exception | None = None

@@ -11,7 +11,7 @@ from commands import handle_local_command, setup_command_completion
 from config import get_permission_mode, get_version
 from context import RunContext
 from permissions import normalize_permission_mode
-from runtime import get_runtime, init_runtime
+from runtime import AuthenticationRequired, get_runtime, init_runtime, runtime_available
 from tool_runtime import runtime_permission_setup
 from tools.registry import tool_names
 from tools.workspace import workspace_info
@@ -62,7 +62,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--resume", "-r", metavar="ID", help="resume a specific session")
     parser.add_argument("--quality-gate", action="store_true", help="run syntax, diff, and test quality gates")
     parser.add_argument("--model", metavar="MODEL", help="use a model for this session without changing saved configuration")
-    parser.add_argument("--provider", choices=("anthropic", "openai", "gemini"), help="use a Provider for this session without changing saved configuration")
+    parser.add_argument("--provider", choices=("anthropic", "openai", "openai-codex", "gemini"), help="use a Provider for this session without changing saved configuration")
     return parser.parse_args(args)
 
 
@@ -93,7 +93,7 @@ def main() -> None:
             raise SystemExit(1)
         return
 
-    init_runtime()
+    init_runtime(required=bool(args.once))
     logger.info(workspace_summary_line())
 
     if args.once:
@@ -125,11 +125,11 @@ def main() -> None:
     )
     workspace = workspace_info()
     provider = os.getenv("LLM_PROVIDER", "").strip().lower() or "anthropic"
-    api_label = {"anthropic": "Anthropic API", "openai": "OpenAI API", "gemini": "Gemini API"}.get(provider, provider or "Configured API")
+    api_label = {"anthropic": "Anthropic API", "openai": "OpenAI API", "openai-codex": "OpenAI ChatGPT Plus/Pro", "gemini": "Gemini API"}.get(provider, provider or "Configured API")
     print_welcome(
         version=get_version(),
         api=api_label,
-        model=get_runtime().model,
+        model=get_runtime().model if runtime_available() else "not configured",
         workspace=str(workspace.get("cwd", ".")),
     )
 
@@ -138,6 +138,7 @@ def main() -> None:
             user_input = prompt_input(completer=command_completer).strip()
             
             if user_input.startswith("/"):
+                print_info("")
                 handled = handle_local_command(user_input, context)
                 if handled:
                     print_info("")
@@ -151,7 +152,11 @@ def main() -> None:
 
         context.add_user_message(user_input)
         print_user_message(user_input)
-        agent_loop(context)
+        try:
+            agent_loop(context)
+        except AuthenticationRequired as error:
+            print_error(str(error))
+            continue
         context.session_path = transcripts.save_session(context.session_path, context.messages)
 
 

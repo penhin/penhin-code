@@ -34,6 +34,40 @@ def prompt_input(prompt: str = "❯ ", completer=None) -> str:
     )
 
 
+async def prompt_text_async(message: str) -> str:
+    value = await get_prompt_session().prompt_async(f"{message}: ")
+    return value.strip()
+
+
+def prompt_secret(message: str) -> str:
+    return get_prompt_session().prompt(f"{message}: ", is_password=True).strip()
+
+
+def prompt_text(message: str) -> str:
+    return get_prompt_session().prompt(f"{message}: ").strip()
+
+
+def prompt_confirm(message: str, default: bool = False) -> bool:
+    suffix = "[Y/n]" if default else "[y/N]"
+    answer = get_prompt_session().prompt(f"{message} {suffix} ").strip().lower()
+    return answer in ({"", "y", "yes"} if default else {"y", "yes"})
+
+
+def prompt_select(message: str, options: tuple[tuple[str, str], ...]) -> str:
+    console.print(message, style="cyan")
+    for index, (_value, label) in enumerate(options, 1):
+        console.print(f"  {index}. {label}")
+    console.print()
+    answer = get_prompt_session().prompt("Choose: ").strip()
+    try:
+        index = int(answer) - 1
+    except ValueError as error:
+        raise ValueError("invalid selection") from error
+    if index < 0 or index >= len(options):
+        raise ValueError("invalid selection")
+    return options[index][0]
+
+
 def print_welcome(*, version: str, api: str, model: str, workspace: str) -> None:
     """Render the compact first-turn identity block shown by terminal coding agents."""
     mark = Text()
@@ -99,16 +133,40 @@ def finish_stream(stream: AssistantStream | None = None) -> None:
 
 
 def print_user_message(message: str) -> None:
-    console.print("\n")
+    console.print()
     console.print(_message_panel("You", message, "cyan"))
 
 
+def print_auth_url(url: str, instructions: str = "") -> None:
+    console.print()
+    console.print(Text("Open this link to continue authentication:", style="bold cyan"))
+    link = Text(url, style="bright_blue")
+    link.stylize(f"link {url}")
+    console.print(link)
+    console.print(Text("Ctrl/Cmd+click to open, or copy it into a browser.", style="dim"))
+    if instructions:
+        console.print(Text(instructions, style="yellow"))
+    console.print()
+
+
+def print_device_code(verification_uri: str, user_code: str) -> None:
+    console.print()
+    console.print(Text("Open this link to continue authentication:", style="bold cyan"))
+    link = Text(verification_uri, style="bright_blue")
+    link.stylize(f"link {verification_uri}")
+    console.print(link)
+    console.print(Text(f"Enter code: {user_code}", style="bold yellow"))
+    console.print()
+
+
 def print_info(message: str) -> None:
-    console.print(message, style="cyan")
+    from auth.secrets import redact_text
+    console.print(Text(redact_text(message), style="cyan"))
 
 
 def print_error(message: str) -> None:
-    console.print(message, style="red")
+    from auth.secrets import redact_text
+    console.print(Text(redact_text(message), style="red"))
 
 
 def print_json(data: object) -> None:

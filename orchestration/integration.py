@@ -10,7 +10,8 @@ from .worktrees import provision_integration_worktree
 
 
 def _git(worktree: str, *args: str) -> str:
-    result = subprocess.run(["git", *args], cwd=worktree, capture_output=True, text=True, timeout=60, check=False)
+    from auth.secrets import scrubbed_environment
+    result = subprocess.run(["git", *args], cwd=worktree, capture_output=True, text=True, timeout=60, check=False, env=scrubbed_environment())
     if result.returncode:
         raise RuntimeError(result.stderr.strip() or f"git {' '.join(args)} failed")
     return result.stdout.strip()
@@ -103,9 +104,10 @@ def verify_integration(repository: OrchestrationRepository, run_id: str, command
         command_digest=anonymous_id("\0".join(command)),
     )
     repository.transition_integration_run(run.id, IntegrationRunStatus.VERIFYING, result_commit=run.result_commit)
-    result = subprocess.run(command, cwd=run.worktree_path, capture_output=True, text=True, timeout=900, check=False)
+    from auth.secrets import redact_text, scrubbed_environment
+    result = subprocess.run(command, cwd=run.worktree_path, capture_output=True, text=True, timeout=900, check=False, env=scrubbed_environment())
     if result.returncode:
-        error = (result.stdout + "\n" + result.stderr).strip()[-4000:]
+        error = redact_text((result.stdout + "\n" + result.stderr).strip())[-4000:]
         repository.transition_integration_run(run.id, IntegrationRunStatus.VERIFICATION_FAILED, result_commit=run.result_commit, error=error)
     else:
         repository.transition_integration_run(run.id, IntegrationRunStatus.VERIFIED, result_commit=run.result_commit)

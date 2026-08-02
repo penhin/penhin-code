@@ -14,7 +14,10 @@ from uuid import uuid4
 
 _observer: ContextVar["EvaluationObserver | None"] = ContextVar("penhin_evaluation_observer", default=None)
 _write_lock = threading.Lock()
-SENSITIVE_NAMES = {"api_key", "authorization", "password", "secret", "access_token", "bearer_token"}
+SENSITIVE_NAMES = {
+    "access_token", "api_key", "authorization", "authorization_code", "auth_url", "bearer_token",
+    "client_secret", "code_verifier", "credential", "device_code", "password", "refresh_token", "secret",
+}
 CORRELATION_ENV = {
     "trace_id": "PENHIN_TRACE_ID",
     "root_task_id": "PENHIN_ROOT_TASK_ID",
@@ -29,11 +32,8 @@ def _sensitive_key(key: object) -> bool:
 
 
 def redact_secrets(text: str) -> str:
-    redacted = text
-    for name, value in os.environ.items():
-        if value and len(value) >= 6 and _sensitive_key(name):
-            redacted = redacted.replace(value, "<redacted>")
-    return redacted
+    from auth.secrets import redact_text
+    return redact_text(text)
 
 
 def anonymous_id(value: str) -> str:

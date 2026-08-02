@@ -6,6 +6,18 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+### Added
+
+- Added Pi-style `/login`, `/logout`, and `/auth` commands with account/API-key selection and hidden API-key input.
+- Added system-keyring credential storage with an explicit, permission-hardened file fallback.
+- Added experimental Claude Pro/Max and ChatGPT Plus/Pro OAuth with PKCE, loopback/manual callbacks, device authorization, and serialized token refresh.
+- Added an isolated `openai-codex` SSE provider for ChatGPT subscription credentials.
+
+### Security
+
+- Removed API keys from command arguments and scrubbed credentials from tool subprocess environments, logs, and evaluation events.
+- Added explicit user-env migration and source-aware authentication status without modifying project `.env` files.
+
 ## [0.1.1] - 2026-07-30
 
 ### Fixed

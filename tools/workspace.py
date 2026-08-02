@@ -14,6 +14,11 @@ IGNORED_PATH_PARTS = [
     ".tasks",
     ".transcripts",
     ".venv",
+    ".env",
+    ".git-credentials",
+    ".netrc",
+    ".npmrc",
+    ".pypirc",
     "__pycache__",
     "skills",
 ]
@@ -25,7 +30,7 @@ def is_ignored_path(path: Path) -> bool:
     except ValueError:
         return True
 
-    return any(part in IGNORED_PATH_PARTS for part in relative_parts)
+    return any(part in IGNORED_PATH_PARTS or part.startswith(".env.") for part in relative_parts)
 
 
 def iter_workspace_files(root: Path):
@@ -47,12 +52,15 @@ def iter_workspace_files(root: Path):
 
 def run_git(args: list[str]) -> subprocess.CompletedProcess[str] | None:
     try:
+        from auth.secrets import scrubbed_environment
         result = subprocess.run(
             ["git", *args],
             cwd=WORKDIR,
             capture_output=True,
             text=True,
             timeout=5,
+            env=scrubbed_environment(),
+            check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
         return None

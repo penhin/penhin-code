@@ -161,7 +161,8 @@ def main() -> int:
             result = Result.failure(str(error), code="evaluation_worker_error", error_type=type(error).__name__)
         duration_ms = (time.perf_counter() - started) * 1000
         emit("agent_run_completed", status="ok" if result.ok else "error", duration_ms=duration_ms, code=result.meta.get("code"), **{key: value for key, value in result.meta.items() if key in {"turns", "terminal_reason"}})
-    write_json(Path(args.output), result._to_dict() | {"duration_ms": duration_ms})
+    from auth.secrets import safe_value
+    write_json(Path(args.output), safe_value(result._to_dict() | {"duration_ms": duration_ms}))
     return 0 if result.ok else 1
 
 

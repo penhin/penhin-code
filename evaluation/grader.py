@@ -18,9 +18,10 @@ EVALUATION_INFRASTRUCTURE_PATHS = (
 
 
 def git_changed_files(workdir: Path, base_commit: str = "") -> list[str]:
+    from auth.secrets import scrubbed_environment
     result = subprocess.run(
         ["git", "status", "--porcelain", "--untracked-files=all"], cwd=workdir,
-        capture_output=True, text=True, timeout=30, check=False,
+        capture_output=True, text=True, timeout=30, check=False, env=scrubbed_environment(),
     )
     if result.returncode:
         raise RuntimeError(result.stderr.strip() or "git status failed")
@@ -28,7 +29,7 @@ def git_changed_files(workdir: Path, base_commit: str = "") -> list[str]:
     if base_commit:
         committed = subprocess.run(
             ["git", "diff", "--name-only", f"{base_commit}..HEAD", "--", "."], cwd=workdir,
-            capture_output=True, text=True, timeout=30, check=False,
+            capture_output=True, text=True, timeout=30, check=False, env=scrubbed_environment(),
         )
         if committed.returncode:
             raise RuntimeError(committed.stderr.strip() or "git diff --name-only failed")
@@ -69,8 +70,12 @@ def grade_case(case: EvaluationCase, workdir: Path, base_commit: str = "") -> tu
         checks.append(CheckResult(f"content:{item.path}", passed, detail))
     for index, item in enumerate(case.commands):
         try:
-            result = subprocess.run(item.command, cwd=workdir, capture_output=True, text=True, timeout=item.timeout_seconds, check=False)
-            output = (result.stdout + result.stderr).strip()[-2000:]
+            from auth.secrets import redact_text, scrubbed_environment
+            result = subprocess.run(
+                item.command, cwd=workdir, capture_output=True, text=True,
+                timeout=item.timeout_seconds, check=False, env=scrubbed_environment(),
+            )
+            output = redact_text((result.stdout + result.stderr).strip())[-2000:]
             checks.append(CheckResult(f"command:{index}", result.returncode == 0, output or f"exit={result.returncode}"))
         except (OSError, subprocess.TimeoutExpired) as error:
             checks.append(CheckResult(f"command:{index}", False, str(error)))
@@ -82,5 +87,6 @@ def diff_summary(workdir: Path, limit: int = 8000, base_commit: str = "") -> str
     if base_commit:
         command.append(f"{base_commit}..HEAD")
     command.extend(["--", "."])
-    result = subprocess.run(command, cwd=workdir, capture_output=True, text=True, timeout=30, check=False)
+    from auth.secrets import scrubbed_environment
+    result = subprocess.run(command, cwd=workdir, capture_output=True, text=True, timeout=30, check=False, env=scrubbed_environment())
     return result.stdout.strip()[:limit]

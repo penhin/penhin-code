@@ -7,8 +7,10 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from runtime import configured_provider, load_runtime_environment, provider_key_name
+from runtime import configured_provider, load_runtime_environment
 from providers.models import validate_model
+from auth import auth_resolver
+from auth.storage import CredentialStoreUnavailable
 
 from .budget import ModelPrice
 
@@ -70,11 +72,14 @@ def load_evaluation_config() -> EvaluationConfig:
     judge_model = os.getenv("PENHIN_EVAL_JUDGE_MODEL", "").strip()
     errors = []
     for selected_provider, selected_model, label in ((provider, model, "primary"), (judge_provider, judge_model, "judge")):
-        key = provider_key_name(selected_provider)
-        if key is None:
+        if selected_provider not in {"anthropic", "openai", "openai-codex", "gemini"}:
             errors.append(f"unsupported {label} provider: {selected_provider}")
-        elif not os.getenv(key):
-            errors.append(f"{key} is required for {label} provider")
+        else:
+            try:
+                if auth_resolver().resolve(selected_provider) is None:
+                    errors.append(f"credentials are required for {label} provider {selected_provider}")
+            except CredentialStoreUnavailable as error:
+                errors.append(str(error))
         if not selected_model:
             errors.append(f"{'MODEL_ID' if label == 'primary' else 'PENHIN_EVAL_JUDGE_MODEL'} is required")
     if judge_provider != "gemini":

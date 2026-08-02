@@ -6,6 +6,7 @@ import os
 MODEL_PREFIXES = {
     "anthropic": ("claude-",),
     "openai": ("gpt-", "o1", "o3", "o4", "chatgpt-", "codex-"),
+    "openai-codex": ("gpt-", "codex-"),
     "gemini": ("gemini-",),
 }
 

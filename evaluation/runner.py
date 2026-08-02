@@ -55,7 +55,8 @@ def evaluation_environment(run_dir: Path, run_id: str, config: EvaluationConfig)
 
 
 def _git(workdir: Path, *args: str) -> str:
-    result = subprocess.run(["git", *args], cwd=workdir, capture_output=True, text=True, timeout=30, check=False)
+    from auth.secrets import scrubbed_environment
+    result = subprocess.run(["git", *args], cwd=workdir, capture_output=True, text=True, timeout=30, check=False, env=scrubbed_environment())
     if result.returncode:
         raise RuntimeError(result.stderr.strip() or f"git {' '.join(args)} failed")
     return result.stdout.strip()
@@ -66,9 +67,10 @@ def product_status() -> str:
 
 
 def product_fingerprint() -> str:
+    from auth.secrets import scrubbed_environment
     result = subprocess.run(
         ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
-        cwd=PRODUCT_ROOT, capture_output=True, timeout=30, check=True,
+        cwd=PRODUCT_ROOT, capture_output=True, timeout=30, check=True, env=scrubbed_environment(),
     )
     digest = hashlib.sha256()
     for raw_path in sorted(item for item in result.stdout.split(b"\0") if item):
@@ -105,7 +107,8 @@ def execute_case(run_dir: Path, run_id: str, suite: str, case: EvaluationCase, r
         case_file = run_dir / "case_inputs" / f"{case.id}-{repetition}.json"
         worker_output = run_dir / "worker_outputs" / f"{case.id}-{repetition}.json"
         write_json(case_file, asdict(case))
-        env = os.environ.copy()
+        from auth.secrets import trusted_worker_environment
+        env = trusted_worker_environment()
         env.update({
             "PYTHONPATH": str(PRODUCT_ROOT) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""),
             "PENHIN_EVAL_RUN_DIR": str(run_dir), "PENHIN_EVAL_RUN_ID": run_id,
@@ -150,7 +153,8 @@ def execute_case(run_dir: Path, run_id: str, suite: str, case: EvaluationCase, r
                     result.status = "failed"
                 result.metrics.update(worker.get("meta", {}))
             else:
-                result.status, result.error = "crashed", (stderr or stdout or f"worker exit={process.returncode}")[-4000:]
+                from auth.secrets import redact_text
+                result.status, result.error = "crashed", redact_text(stderr or stdout or f"worker exit={process.returncode}")[-4000:]
         result.metrics["end_to_end_ms"] = (time.perf_counter() - started) * 1000
         result.metrics["execution_status"] = result.status
         result.metrics["orchestration_plan_mode"] = (
@@ -183,11 +187,13 @@ def execute_case(run_dir: Path, run_id: str, suite: str, case: EvaluationCase, r
                 with observing(observer):
                     result.judge = run_judge(case, result.final_answer, result.diff_summary, [asdict(check) for check in checks], f"{case.id}:{repetition}")
             except BudgetExceeded as error:
-                result.judge_error = str(error)
+                from auth.secrets import redact_text
+                result.judge_error = redact_text(str(error))
                 if shared_budget_exceeded(error):
                     result.status = "budget_stopped"
             except Exception as error:
-                result.judge_error = str(error)
+                from auth.secrets import redact_text
+                result.judge_error = redact_text(str(error))
         else:
             result.judge_error = "judge not run for non-completed execution"
         return result

@@ -1,6 +1,8 @@
 import json
 import sys
+import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -8,7 +10,7 @@ from tools import CHILD_TOOLS, PARENT_TOOLS, TOOL_SPECS, ToolCategory
 from tools.cache import tool_result_cache
 from tools.files import run_list, run_read, run_search, run_write
 from tools.glob import run_glob
-from tools.shell import command_escapes_workspace, command_is_dangerous
+from tools.shell import command_escapes_workspace, command_is_dangerous, command_references_ignored_path, run_bash
 
 from tests.helpers import run_spec_tool
 
@@ -23,6 +25,26 @@ def test_list_ignores_internal_files() -> None:
     assert ".penhin_todos.json" not in paths
     assert not any(path == ".transcripts" or path.startswith(".transcripts/") for path in paths)
     assert not any(path == ".tasks" or path.startswith(".tasks/") for path in paths)
+    assert ".env" not in paths
+
+
+def test_environment_files_are_blocked_from_file_and_shell_tools() -> None:
+    assert run_read(".env").ok is False
+    assert command_references_ignored_path("cat .env")
+    assert command_references_ignored_path("cat .env.production")
+    assert command_references_ignored_path("python -c 'import keyring; keyring.get_password(\"penhin-code\", \"openai\")'")
+    assert command_references_ignored_path("secret-tool lookup service penhin-code")
+
+
+def test_shell_redacts_registered_secret_from_all_result_fields() -> None:
+    from auth.secrets import register_secret
+    register_secret("tool-secret-sentinel")
+    completed = subprocess.CompletedProcess("echo", 0, "tool-secret-sentinel\n", "tool-secret-sentinel\n")
+    with patch("tools.shell.write_is_allowed", return_value=True), patch("tools.shell.subprocess.run", return_value=completed):
+        result = run_bash("echo tool-secret-sentinel")
+    assert result.message == "<redacted>\n"
+    assert result.error == "<redacted>\n"
+    assert result.data["command"] == "echo <redacted>"
 
 
 def test_list_ignored_skills_path_mentions_loader() -> None:

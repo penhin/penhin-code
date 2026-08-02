@@ -38,7 +38,7 @@ python main.py
 
 ## 配置模型与 Provider
 
-可以为多个 Provider 同时保存密钥，并在 CLI 中切换当前 Provider 与模型。配置保存在 `~/.penhin/.env`；进程环境变量可覆盖该配置。
+推荐在交互界面使用 `/login` 配置认证。秘密默认保存到操作系统钥匙串；系统钥匙串不可用时，Penhin 只会在用户明确确认后降级到权限为 `0600` 的 `~/.penhin/auth.json`。Provider 和模型等非秘密设置仍可保存在用户配置中，进程环境变量保持最高优先级。
 
 ```bash
 # Anthropic（默认）
@@ -62,23 +62,30 @@ MODEL_ID=gemini-3.5-flash
 常用命令：
 
 ```text
-/api-key [provider] [key]  查看或保存指定 Provider 的密钥
+/login [provider]   先选择 Account 或 API key，再进入对应 Provider 登录
+/logout [provider]  删除 Penhin 保存的本地凭证
+/auth status        查看认证类型、来源和过期状态（不显示秘密）
+/auth migrate       经逐项确认迁移 ~/.penhin/.env 中的 API Key
+/api-key [provider] /login API Key 流程的兼容别名；不接受命令参数中的密钥
 /model <model>       保存模型并立即用于当前会话
 /provider <provider> [model]  切换 Provider；可选地同时指定模型
 python main.py --model <model>  # 只覆盖当前会话
 python main.py --provider <provider> --model <model>  # 只覆盖当前会话
 ```
 
-例如，先保存 OpenAI 密钥，再切换：
+例如，使用隐藏输入保存 OpenAI API Key并立即切换：
 
 ```text
-/api-key openai sk-...
-/provider openai gpt-5.6
+/login openai
 ```
 
-`/provider` 会校验模型兼容性和目标密钥；模型由 `/model` 与 `/status` 单独查看和设置。切换会保留当前会话记录，但建议在切换到能力差异较大的模型时使用 `/compact` 或 `--new` 开启新会话。
+不带 Provider 执行 `/login` 时，先选择 `Account` 或 `API key`，再只显示支持该认证类型的 Provider。`/login anthropic` 仍会要求选择 API Key 或实验性的 Claude Pro/Max OAuth；认证方式唯一的 `/login openai`、`/login gemini` 和 `/login openai-codex` 会跳过这一步。OpenAI 订阅登录使用独立的 `openai-codex` Provider，并继续选择浏览器或设备码登录，不与开发者 API Key 混用。Gemini 按 Pi 的边界只支持 API Key。
 
-启动环境变量优先级为：进程环境变量、`~/.penhin/.env`、项目根目录 `.env`。`/api-key`、`/model` 和 `/provider` 写入用户级 `~/.penhin/.env`。
+OAuth 兼容能力依赖上游客户端参数和专用端点，可能随 Provider 变化。设置 `PENHIN_DISABLE_EXPERIMENTAL_OAUTH=1` 可完全禁用；所有客户端 ID、端点和 loopback 端口均提供 `PENHIN_OPENAI_OAUTH_*` / `PENHIN_ANTHROPIC_OAUTH_*` 环境覆盖。回调 host 只允许 loopback 地址。
+
+`/provider` 会校验模型兼容性和目标凭证；模型由 `/model` 与 `/status` 单独查看和设置。切换会保留当前会话记录，但建议在切换到能力差异较大的模型时使用 `/compact` 或 `--new` 开启新会话。
+
+认证优先级为：进程环境变量、新凭证库、`~/.penhin/.env`、项目根目录 `.env`。`/logout` 只删除 Penhin 凭证库记录；如果环境变量或 `.env` 仍有密钥，`/auth status` 会显示实际回退来源。`/auth migrate` 永不修改项目 `.env`。
 
 ## 本地编排存储
 

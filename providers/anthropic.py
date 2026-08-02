@@ -11,10 +11,26 @@ from providers.types import LLMRequest, LLMResponse, LLMUsage, StreamCallback
 class AnthropicProvider:
     retry_errors = (APIConnectionError, RateLimitError, InternalServerError)
 
-    def __init__(self, api_key: str | None = None, base_url: str | None = None):
+    def __init__(
+        self,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        *,
+        auth_token: str | None = None,
+        oauth: bool = False,
+    ):
+        default_headers = None
+        if oauth:
+            default_headers = {
+                "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
+                "user-agent": "claude-cli/penhin",
+                "x-app": "cli",
+            }
         self.client = Anthropic(
-            api_key=api_key,
+            api_key=api_key if not auth_token else None,
+            auth_token=auth_token,
             base_url=base_url,
+            default_headers=default_headers,
         )
 
     @classmethod

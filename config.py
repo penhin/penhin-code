@@ -19,7 +19,8 @@ def get_version() -> str:
     if override:
         return override
     try:
-        return version(PACKAGE_NAME)
+        installed = version(PACKAGE_NAME)
+        return installed or "dev"
     except PackageNotFoundError:
         return "dev"
 
@@ -44,6 +45,7 @@ def save_config(config: dict[str, Any]) -> None:
     atomic_write_text(
         CONFIG_FILE,
         json.dumps(config, ensure_ascii=False, indent=2) + "\n",
+        mode=0o600,
     )
 
 
@@ -76,7 +78,7 @@ def set_env_value(name: str, value: str) -> None:
     if not updated:
         new_lines.append(replacement)
 
-    atomic_write_text(ENV_FILE, "\n".join(new_lines).rstrip() + "\n")
+    atomic_write_text(ENV_FILE, "\n".join(new_lines).rstrip() + "\n", mode=0o600)
 
 
 def get_permission_mode() -> str:
@@ -87,3 +89,37 @@ def set_permission_mode(mode: str) -> None:
     config = load_config()
     config["permission_mode"] = mode
     save_config(config)
+
+
+def get_credential_backend() -> str:
+    return str(load_config().get("credential_backend", "keyring"))
+
+
+def set_credential_backend(backend: str) -> None:
+    if backend not in {"keyring", "file"}:
+        raise ValueError(f"unsupported credential backend: {backend}")
+    config = load_config()
+    config["credential_backend"] = backend
+    save_config(config)
+
+
+def get_provider_model(provider: str) -> str:
+    models = load_config().get("provider_models", {})
+    return str(models.get(provider, "")) if isinstance(models, dict) else ""
+
+
+def set_provider_model(provider: str, model: str) -> None:
+    config = load_config()
+    models = config.get("provider_models", {})
+    if not isinstance(models, dict):
+        models = {}
+    config["provider_models"] = {**models, provider: model}
+    save_config(config)
+
+
+def delete_env_value(name: str) -> None:
+    if not ENV_FILE.exists():
+        return
+    lines = ENV_FILE.read_text(encoding="utf-8").splitlines()
+    kept = [line for line in lines if not ("=" in line and not line.lstrip().startswith("#") and line.split("=", 1)[0].strip() == name)]
+    atomic_write_text(ENV_FILE, "\n".join(kept).rstrip() + ("\n" if kept else ""), mode=0o600)

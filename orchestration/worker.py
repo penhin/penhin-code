@@ -47,7 +47,8 @@ def finish_failure(repository: OrchestrationRepository, attempt_id: str, error: 
 
 
 def _git(worktree: str, *args: str) -> str:
-    result = subprocess.run(["git", *args], cwd=worktree, capture_output=True, text=True, timeout=30, check=False)
+    from auth.secrets import scrubbed_environment
+    result = subprocess.run(["git", *args], cwd=worktree, capture_output=True, text=True, timeout=30, check=False, env=scrubbed_environment())
     if result.returncode:
         raise RuntimeError(result.stderr.strip() or f"git {' '.join(args)} failed")
     return result.stdout.strip()
@@ -109,9 +110,10 @@ def prepare_dependency_context(repository: OrchestrationRepository, job) -> tupl
                 try:
                     _git(job.worktree_path, "cherry-pick", commit)
                 except RuntimeError:
+                    from auth.secrets import scrubbed_environment
                     subprocess.run(
                         ["git", "cherry-pick", "--abort"], cwd=job.worktree_path,
-                        capture_output=True, text=True, timeout=30, check=False,
+                        capture_output=True, text=True, timeout=30, check=False, env=scrubbed_environment(),
                     )
                     emit(
                         "orchestration_dependency_integration_failed", root_task_id=job.root_task_id,

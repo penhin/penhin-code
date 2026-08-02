@@ -12,9 +12,18 @@ from .workspace import IGNORED_PATH_PARTS, WORKDIR
 DANGEROUS_COMMAND_NAMES = {"sudo", "shutdown", "reboot"}
 DANGEROUS_RM_ROOT = re.compile(r"(^|[;&|]\s*)rm\s+(-[A-Za-z]*[rf][A-Za-z]*\s+)+/(\s|$)")
 PARENT_TRAVERSAL = re.compile(r"(^|[\s/'\"=])\.\.($|[\s/'\";&|])")
+SENSITIVE_CREDENTIAL_COMMAND = re.compile(
+    r"(?:\bkeyring\b|\bsecret-tool\b|find-generic-password|\bcmdkey\b|credentialmanager|auth\.json|penhin-code)",
+    re.IGNORECASE,
+)
 
 
 def command_references_ignored_path(command: str) -> str | None:
+    if SENSITIVE_CREDENTIAL_COMMAND.search(command):
+        return "credential access"
+    environment_file = re.search(r"(^|[\s/\"'`=])\.env(?:\.[A-Za-z0-9_-]+)?($|[\s/\"'`/*])", command)
+    if environment_file:
+        return environment_file.group(0).strip() or ".env"
     for part in IGNORED_PATH_PARTS:
         pattern = rf"(^|[\s/\"'`=]){re.escape(part)}($|[\s/\"'`/*])"
         if re.search(pattern, command):
@@ -84,6 +93,7 @@ def run_bash(command: str) -> Result:
             ignored_part=ignored_part,
         )
     try:
+        from auth.secrets import scrubbed_environment
         result = subprocess.run(
             command,
             shell=True,
@@ -91,19 +101,24 @@ def run_bash(command: str) -> Result:
             capture_output=True,
             text=True,
             timeout=30,
+            env=scrubbed_environment(),
+            check=False,
         )
     except subprocess.TimeoutExpired:
         return Result.failure("Error: Timeout (30s)", code="timeout", timeout_seconds=30)
     except OSError as error:
         return Result.failure(f"Error: {error}", code="os_error")
+    from auth.secrets import redact_text
+    stdout = redact_text(result.stdout)
+    stderr = redact_text(result.stderr)
     return Result(
         ok=result.returncode == 0,
-        message=result.stdout,
-        error=result.stderr,
+        message=stdout,
+        error=stderr,
         data={
-            "command": command,
+            "command": redact_text(command),
             "returncode": result.returncode,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
+            "stdout": stdout,
+            "stderr": stderr,
         },
     )

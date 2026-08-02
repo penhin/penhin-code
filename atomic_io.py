@@ -1,16 +1,23 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 from pathlib import Path
 from typing import Any
 
 
-def atomic_write_text(path: Path, content: str) -> None:
-    temp_path = path.with_name(f".{path.name}.{threading.get_ident()}.tmp")
+def atomic_write_text(path: Path, content: str, mode: int | None = None) -> None:
+    temp_path = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     try:
-        temp_path.write_text(content, encoding="utf-8")
+        descriptor = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode if mode is not None else 0o666)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
         temp_path.replace(path)
+        if mode is not None:
+            os.chmod(path, mode)
     except Exception:
         temp_path.unlink(missing_ok=True)
         raise
