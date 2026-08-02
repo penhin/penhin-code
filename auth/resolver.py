@@ -7,24 +7,16 @@ from dotenv import dotenv_values
 
 from config import ENV_FILE
 from .models import ApiKeyCredential, ResolvedAuth
+from .providers import provider_key_name
 from .storage import CredentialStore, CredentialStoreUnavailable, credential_store
 
 
-PROVIDER_KEYS = {
-    "anthropic": "ANTHROPIC_API_KEY",
-    "openai": "OPENAI_API_KEY",
-    "gemini": "GEMINI_API_KEY",
-}
 _process_environment_names: set[str] | None = None
 
 
 def set_process_environment_names(names: set[str]) -> None:
     global _process_environment_names
     _process_environment_names = set(names)
-
-
-def provider_key_name(provider: str) -> str | None:
-    return PROVIDER_KEYS.get(provider)
 
 
 class AuthResolver:

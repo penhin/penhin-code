@@ -50,6 +50,10 @@ def save_config(config: dict[str, Any]) -> None:
 
 
 def set_env_value(name: str, value: str) -> None:
+    update_env_values({name: value})
+
+
+def update_env_values(values: dict[str, str]) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
     lines = []
@@ -59,8 +63,7 @@ def set_env_value(name: str, value: str) -> None:
         except OSError:
             lines = []
 
-    replacement = f"{name}={value}"
-    updated = False
+    pending = dict(values)
     new_lines = []
     for line in lines:
         stripped = line.strip()
@@ -69,14 +72,12 @@ def set_env_value(name: str, value: str) -> None:
             continue
 
         key = line.split("=", 1)[0].strip()
-        if key == name:
-            new_lines.append(replacement)
-            updated = True
+        if key in pending:
+            new_lines.append(f"{key}={pending.pop(key)}")
         else:
             new_lines.append(line)
 
-    if not updated:
-        new_lines.append(replacement)
+    new_lines.extend(f"{name}={value}" for name, value in pending.items())
 
     atomic_write_text(ENV_FILE, "\n".join(new_lines).rstrip() + "\n", mode=0o600)
 
@@ -115,11 +116,3 @@ def set_provider_model(provider: str, model: str) -> None:
         models = {}
     config["provider_models"] = {**models, provider: model}
     save_config(config)
-
-
-def delete_env_value(name: str) -> None:
-    if not ENV_FILE.exists():
-        return
-    lines = ENV_FILE.read_text(encoding="utf-8").splitlines()
-    kept = [line for line in lines if not ("=" in line and not line.lstrip().startswith("#") and line.split("=", 1)[0].strip() == name)]
-    atomic_write_text(ENV_FILE, "\n".join(kept).rstrip() + ("\n" if kept else ""), mode=0o600)

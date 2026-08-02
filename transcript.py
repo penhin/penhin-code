@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from atomic_io import read_jsonl, write_jsonl_atomic
+from auth.secrets import safe_value
 from prompt import PROJECT_INSTRUCTIONS_TAG
 
 TRANSCRIPT_DIR = Path(".transcripts")
@@ -136,11 +137,7 @@ def tool_result_failed(tool_result: dict[str, Any]) -> bool:
         return False
 
     ok = result.get("ok")
-    if isinstance(ok, bool):
-        return not ok
-
-    # Backward compatibility for transcripts written before Result JSON used ok/error.
-    return result.get("exit_code", 0) != 0
+    return not ok if isinstance(ok, bool) else False
 
 
 def tool_result_error_code(tool_result: dict[str, Any]) -> str:
@@ -248,7 +245,7 @@ class TranscriptStore:
         messages = self.expand_compacted_history(messages)
         write_jsonl_atomic(
             transcript_path,
-            [serialize_for_json(msg) for msg in messages],
+            safe_value([serialize_for_json(msg) for msg in messages]),
         )
         return transcript_path
     
@@ -257,7 +254,7 @@ class TranscriptStore:
         messages = self.expand_compacted_history(messages)
         write_jsonl_atomic(
             path,
-            [serialize_for_json(msg) for msg in messages],
+            safe_value([serialize_for_json(msg) for msg in messages]),
         )
         return path
 

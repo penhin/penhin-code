@@ -6,6 +6,7 @@ import time
 from uuid import uuid4
 
 from evaluation.observer import anonymous_id, emit
+from auth.secrets import redact_text
 from result import Result
 
 from .models import AgentJob, AgentRole, JobStatus, TERMINAL_JOB_STATUSES
@@ -29,6 +30,10 @@ ROLE_BY_AGENT_TYPE = {
     "verification": AgentRole.VERIFY,
     "general": AgentRole.GENERAL,
 }
+
+
+def agent_types() -> tuple[str, ...]:
+    return tuple(ROLE_BY_AGENT_TYPE)
 
 
 _scheduler: PersistentScheduler | None = None
@@ -76,9 +81,13 @@ def create_isolated_agent_job(
     priority: int = 0,
     timeout_seconds: int | None = None,
 ) -> AgentJob:
+    task = redact_text(task)
     job_id = str(uuid4())
     worktree = provision_worktree(job_id)
-    role = ROLE_BY_AGENT_TYPE.get(agent_type, AgentRole.GENERAL)
+    try:
+        role = ROLE_BY_AGENT_TYPE[agent_type]
+    except KeyError as error:
+        raise ValueError(f"Unknown agent type: {agent_type}") from error
     created = repository.create_job(AgentJob(
         id=job_id,
         root_task_id=root_task_id or job_id,

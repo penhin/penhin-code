@@ -6,7 +6,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
-from .io import read_json, write_json
+from atomic_io import read_json, write_safe_json_atomic as write_json
 from .metrics import orchestration_metrics_from_events, percentile, stability_by_case
 from .observer import read_events
 

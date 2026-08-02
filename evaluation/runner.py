@@ -18,7 +18,7 @@ from .budget import BudgetExceeded
 from .cases import load_suite
 from .config import EvaluationConfig
 from .grader import diff_summary, grade_case
-from .io import read_json, write_json
+from atomic_io import read_json, write_safe_json_atomic as write_json
 from .judge import run_judge
 from .metrics import metrics_from_events
 from .models import EvaluationCase, EvaluationResult

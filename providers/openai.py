@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from typing import Any
 
 from openai import APIConnectionError, InternalServerError, OpenAI, RateLimitError
@@ -14,10 +13,6 @@ class OpenAIProvider:
 
     def __init__(self, api_key: str | None = None, base_url: str | None = None):
         self.client = OpenAI(api_key=api_key, base_url=base_url)
-
-    @classmethod
-    def from_env(cls) -> "OpenAIProvider":
-        return cls(api_key=os.getenv("OPENAI_API_KEY"), base_url=os.getenv("OPENAI_BASE_URL"))
 
     def create_message(self, request: LLMRequest) -> LLMResponse:
         return normalize_response(self.client.responses.create(**request_kwargs(request)))

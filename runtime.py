@@ -12,11 +12,10 @@ from dotenv import dotenv_values, load_dotenv
 
 from circuit_breaker import CircuitBreaker, CircuitBreakerOpen
 from config import ENV_FILE
-from auth import ApiKeyCredential, OAuthCredential, ResolvedAuth, auth_resolver
-from auth.resolver import provider_key_name as auth_provider_key_name, set_process_environment_names
+from auth import ApiKeyCredential, OAuthCredential, ResolvedAuth, auth_resolver, provider_auth_ids
+from auth.resolver import set_process_environment_names
 from auth.storage import CredentialStoreUnavailable, credential_store
 from auth.providers import provider_auth
-from providers.anthropic import AnthropicProvider
 from providers.models import validate_model
 from providers.types import LLMProvider, LLMRequest, LLMResponse, StreamCallback
 
@@ -282,7 +281,7 @@ def init_runtime(required: bool = True) -> None:
     load_runtime_environment()
 
     provider = configured_provider()
-    if provider not in {"anthropic", "openai", "openai-codex", "gemini"}:
+    if provider not in provider_auth_ids():
         message = f"Unsupported LLM_PROVIDER={provider!r}; choose anthropic, openai, openai-codex, or gemini"
         if required:
             logger.error(message)
@@ -340,14 +339,9 @@ def set_runtime_model(model: str) -> None:
         runtime.model = model
 
 
-def set_runtime_api_key(api_key: str = "") -> None:
-    if runtime is not None:
-        runtime.provider = build_provider_from_env()
-
-
 def set_runtime_provider(provider: str, model: str) -> None:
     global runtime
-    if provider not in {"anthropic", "openai", "openai-codex", "gemini"}:
+    if provider not in provider_auth_ids():
         raise ValueError(f"Unsupported provider: {provider}")
     validate_model(provider, model)
     resolved = resolve_runtime_auth(provider)
@@ -360,10 +354,6 @@ def set_runtime_provider(provider: str, model: str) -> None:
         circuit_breaker=build_circuit_breaker_from_env(),
         compact_circuit_breaker=build_compact_circuit_breaker_from_env(),
     )
-
-
-def provider_key_name(provider: str) -> str | None:
-    return auth_provider_key_name(provider)
 
 
 def configured_provider() -> str:
@@ -392,16 +382,6 @@ def load_runtime_environment() -> None:
                 environment_sources[name] = label
     for name in original_names:
         environment_sources[name] = "Process environment"
-
-
-def build_provider_from_env() -> LLMProvider:
-    provider = configured_provider()
-    if provider not in {"anthropic", "openai", "openai-codex", "gemini"}:
-        raise ValueError(f"Unsupported LLM_PROVIDER={provider!r}")
-    resolved = resolve_runtime_auth(provider)
-    if resolved is None:
-        raise AuthenticationRequired(f"No credentials for {provider}. Use /login {provider} first.")
-    return build_provider(provider, resolved)
 
 
 def _refresh_if_needed(provider: str, credential):
@@ -438,6 +418,7 @@ def resolve_runtime_auth(provider: str) -> ResolvedAuth | None:
 def build_provider(provider: str, resolved) -> LLMProvider:
     credential = provider_auth(provider).resolve(resolved.credential)
     if provider == "anthropic":
+        from providers.anthropic import AnthropicProvider
         if isinstance(credential, OAuthCredential):
             return AnthropicProvider(auth_token=credential.access_token, oauth=True, base_url=os.getenv("ANTHROPIC_BASE_URL"))
         return AnthropicProvider(api_key=credential.key, base_url=os.getenv("ANTHROPIC_BASE_URL"))

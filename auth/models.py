@@ -4,9 +4,6 @@ from dataclasses import asdict, dataclass
 from typing import Literal, TypeAlias
 
 
-SUPPORTED_AUTH_PROVIDERS = frozenset({"anthropic", "openai", "openai-codex", "gemini"})
-
-
 @dataclass(frozen=True)
 class ApiKeyCredential:
     type: Literal["api_key"] = "api_key"

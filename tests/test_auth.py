@@ -13,7 +13,7 @@ import pytest
 from auth.models import ApiKeyCredential, OAuthCredential, credential_from_dict
 from auth.oauth import LoopbackCallback, OAuthError, _browser_result, _pkce, login_anthropic, login_openai_codex, refresh_oauth
 from auth.resolver import AuthResolver
-from auth.providers import provider_auth
+from auth.providers import provider_auth, provider_key_name
 from auth.secrets import redact_text, register_secret, safe_value, scrubbed_environment
 from auth.storage import CredentialStoreUnavailable, FileCredentialStore, InMemoryCredentialStore, KeyringCredentialStore
 
@@ -35,6 +35,10 @@ def test_provider_auth_capabilities_match_runtime_protocols() -> None:
     assert provider_auth("openai").methods() == ("api_key",)
     assert provider_auth("openai-codex").methods() == ("oauth",)
     assert provider_auth("gemini").methods() == ("api_key",)
+    assert provider_key_name("anthropic") == "ANTHROPIC_API_KEY"
+    assert provider_key_name("openai") == "OPENAI_API_KEY"
+    assert provider_key_name("openai-codex") is None
+    assert provider_key_name("gemini") == "GEMINI_API_KEY"
     with pytest.raises(ValueError):
         provider_auth("openai-codex").resolve(ApiKeyCredential(key="wrong-kind"))
 

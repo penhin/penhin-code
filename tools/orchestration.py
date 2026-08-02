@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 
 from orchestration.integration import apply_integration, start_integration, verify_integration
-from orchestration.service import create_dag_plan, finalize_dag, repository_from_env, wait_for_job
+from orchestration.service import (
+    agent_types, create_dag_plan, enqueue_subagent_job, finalize_dag, repository_from_env,
+    scheduler_from_env, wait_for_job,
+)
 from result import Result
 
 
@@ -12,6 +15,19 @@ def _repository_or_failure() -> tuple[object | None, Result | None]:
         return repository_from_env(), None
     except Exception as error:
         return None, Result.failure(f"Orchestration storage is unavailable: {error}", code="orchestration_unavailable")
+
+
+def run_agent_job_start(task: str, agent_type: str = "general", root_task_id: str = "") -> Result:
+    if not task.strip():
+        return Result.failure("task must not be empty", code="invalid_task")
+    if agent_type not in agent_types():
+        return Result.failure(f"Unknown agent type: {agent_type}", code="unknown_agent_type")
+    try:
+        job = enqueue_subagent_job(task, agent_type=agent_type, root_task_id=root_task_id or None)
+    except Exception as error:
+        return Result.failure(f"Unable to enqueue agent job: {error}", code="scheduler_unavailable")
+    data = job.to_dict()
+    return Result.success(json.dumps(data, ensure_ascii=False, indent=2), data=data)
 
 
 def run_agent_job_show(id: str) -> Result:
@@ -54,13 +70,12 @@ def run_agent_artifact_show(job_id: str) -> Result:
 
 
 def run_agent_job_cancel(id: str) -> Result:
-    repository, failure = _repository_or_failure()
-    if failure:
-        return failure
     try:
-        job = repository.request_cancel(id)
+        job = scheduler_from_env().request_cancel(id)
     except KeyError:
         return Result.failure(f"Agent job {id} not found", code="not_found")
+    except Exception as error:
+        return Result.failure(f"Unable to cancel agent job: {error}", code="scheduler_unavailable")
     return Result.success(json.dumps(job.to_dict(), ensure_ascii=False, indent=2), data=job.to_dict())
 
 

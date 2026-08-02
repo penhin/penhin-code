@@ -140,7 +140,7 @@ def policy_for_runtime_mode(mode: str) -> PermissionPolicy:
             allow.add("compact")
         return PermissionPolicy(
             allow=allow,
-            deny={"write", "edit", "bash", "task", "background_start"},
+            deny={"write", "edit", "bash", "task", "agent_job_start"},
         )
 
     return PARENT_AGENT_POLICY

@@ -11,8 +11,10 @@ from typing import TypeVar
 
 from filelock import FileLock
 
+from atomic_io import atomic_write_text
 from config import CONFIG_DIR, get_credential_backend
-from .models import SUPPORTED_AUTH_PROVIDERS, Credential, credential_from_dict, credential_to_dict
+from .models import Credential, credential_from_dict, credential_to_dict
+from .providers import provider_auth_ids
 from .secrets import register_secret
 
 
@@ -21,6 +23,10 @@ AUTH_LOCK_FILE = CONFIG_DIR / "auth.lock"
 SCHEMA_VERSION = "penhin.auth/v1"
 KEYRING_SERVICE = "penhin-code"
 T = TypeVar("T")
+
+
+def _supported_providers() -> frozenset[str]:
+    return frozenset(provider_auth_ids())
 
 
 class CredentialStoreUnavailable(RuntimeError):
@@ -33,30 +39,6 @@ def _secure_directory() -> None:
         os.chmod(CONFIG_DIR, 0o700)
     except OSError:
         pass
-
-
-def _secure_atomic_write(path: Path, content: str) -> None:
-    _secure_directory()
-    temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    descriptor = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temp, path)
-        os.chmod(path, 0o600)
-        try:
-            directory_fd = os.open(path.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
-        except OSError:
-            pass
-    except Exception:
-        temp.unlink(missing_ok=True)
-        raise
 
 
 def _harden_regular_file(path: Path) -> None:
@@ -135,13 +117,19 @@ class FileCredentialStore(CredentialStore):
         if not isinstance(data, dict) or data.get("schema_version") != SCHEMA_VERSION or set(data) != {"schema_version", "providers"}:
             raise ValueError("unsupported or invalid credential file")
         providers = data["providers"]
-        if not isinstance(providers, dict) or any(provider not in SUPPORTED_AUTH_PROVIDERS for provider in providers):
+        if not isinstance(providers, dict) or any(provider not in _supported_providers() for provider in providers):
             raise ValueError("invalid credential provider")
         return {provider: credential_from_dict(value) for provider, value in providers.items()}
 
     def _save_unlocked(self, values: dict[str, Credential]) -> None:
         payload = {"schema_version": SCHEMA_VERSION, "providers": {key: credential_to_dict(value) for key, value in sorted(values.items())}}
-        _secure_atomic_write(self.path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+        _secure_directory()
+        atomic_write_text(
+            self.path,
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            0o600,
+            fsync_directory=True,
+        )
 
     def _lock(self) -> FileLock:
         _secure_directory()
@@ -161,7 +149,7 @@ class FileCredentialStore(CredentialStore):
             return {key: _register(value) for key, value in self._load_unlocked().items()}  # type: ignore[misc]
 
     def modify(self, provider: str, fn: Callable[[Credential | None], Credential | None]) -> Credential | None:
-        if provider not in SUPPORTED_AUTH_PROVIDERS:
+        if provider not in _supported_providers():
             raise ValueError(f"unsupported auth provider: {provider}")
         with self._lock():
             values = self._load_unlocked()
@@ -225,10 +213,10 @@ class KeyringCredentialStore(CredentialStore):
             return self._read_unlocked(provider)
 
     def list(self) -> dict[str, Credential]:
-        return {provider: credential for provider in sorted(SUPPORTED_AUTH_PROVIDERS) if (credential := self.read(provider)) is not None}
+        return {provider: credential for provider in provider_auth_ids() if (credential := self.read(provider)) is not None}
 
     def modify(self, provider: str, fn: Callable[[Credential | None], Credential | None]) -> Credential | None:
-        if provider not in SUPPORTED_AUTH_PROVIDERS:
+        if provider not in _supported_providers():
             raise ValueError(f"unsupported auth provider: {provider}")
         with self._lock():
             current = self._read_unlocked(provider)

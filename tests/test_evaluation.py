@@ -12,7 +12,7 @@ from evaluation.cases import load_suite, parse_case
 from evaluation.cli import baseline_eligibility_errors
 from evaluation.config import EvaluationConfig
 from evaluation.grader import grade_case
-from evaluation.io import read_json, write_json
+from atomic_io import read_json, write_safe_json_atomic as write_json
 from evaluation.judge import judge_payload, parse_judge_score
 from evaluation.metrics import metrics_from_events, orchestration_metrics_from_events, percentile, stability_by_case
 from evaluation.models import CASE_SCHEMA_VERSION, EvaluationCase, EvaluationResult

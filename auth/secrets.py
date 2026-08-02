@@ -4,6 +4,7 @@ import os
 import re
 import threading
 from collections.abc import Mapping
+from dataclasses import asdict, is_dataclass
 
 
 _lock = threading.Lock()
@@ -44,13 +45,21 @@ def redact_text(value: str) -> str:
     return result
 
 
-def safe_value(value):
+def safe_value(value, *, max_string_chars: int | None = None):
+    if is_dataclass(value):
+        value = asdict(value)
     if isinstance(value, Mapping):
-        return {str(key): "<redacted>" if sensitive_name(key) else safe_value(item) for key, item in value.items()}
+        return {
+            str(key): "<redacted>" if sensitive_name(key) else safe_value(item, max_string_chars=max_string_chars)
+            for key, item in value.items()
+        }
     if isinstance(value, (list, tuple)):
-        return [safe_value(item) for item in value]
+        return [safe_value(item, max_string_chars=max_string_chars) for item in value]
     if isinstance(value, str):
-        return redact_text(value)
+        redacted = redact_text(value)
+        if max_string_chars is not None and len(redacted) > max_string_chars:
+            return redacted[:max_string_chars] + f"...<truncated:{len(redacted) - max_string_chars}>"
+        return redacted
     return value
 
 

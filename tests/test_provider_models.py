@@ -1,7 +1,6 @@
-from unittest.mock import patch
-
 import pytest
 
+from auth import ApiKeyCredential, ResolvedAuth
 from providers.models import validate_model
 import runtime
 
@@ -28,16 +27,12 @@ def test_validate_model_allows_a_custom_openai_gateway(monkeypatch) -> None:
     validate_model("openai", "custom-model")
 
 
-def test_build_provider_selects_openai_and_rejects_unknown_provider(monkeypatch) -> None:
+def test_build_provider_selects_openai(monkeypatch) -> None:
     expected = object()
-    monkeypatch.setenv("LLM_PROVIDER", "openai")
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    resolved = ResolvedAuth("openai", ApiKeyCredential(key="test-key"), "test")
+    from unittest.mock import patch
     with patch("providers.openai.OpenAIProvider", return_value=expected):
-        assert runtime.build_provider_from_env() is expected
-
-    monkeypatch.setenv("LLM_PROVIDER", "unsupported")
-    with pytest.raises(ValueError, match="Unsupported"):
-        runtime.build_provider_from_env()
+        assert runtime.build_provider("openai", resolved) is expected
 
 
 def test_optional_runtime_start_allows_login_without_credentials(monkeypatch) -> None:

@@ -6,6 +6,7 @@ from typing import Any
 
 from providers.gemini import GeminiProvider
 from auth import ApiKeyCredential
+from auth.secrets import safe_value
 from runtime import resolve_runtime_auth
 from providers.types import LLMRequest
 
@@ -40,11 +41,10 @@ def parse_judge_score(text: str) -> JudgeScore:
 
 
 def judge_payload(case: EvaluationCase, final_answer: str, diff_summary: str, checks: list[dict[str, Any]]) -> str:
-    from .observer import redact_secrets
-    return json.dumps({
+    return json.dumps(safe_value({
         "task": case.prompt, "rubric": case.rubric,
-        "final_answer": redact_secrets(final_answer[:12000]), "diff_summary": redact_secrets(diff_summary[:8000]), "deterministic_checks": checks,
-    }, ensure_ascii=False, sort_keys=True)
+        "final_answer": final_answer[:12000], "diff_summary": diff_summary[:8000], "deterministic_checks": checks,
+    }), ensure_ascii=False, sort_keys=True)
 
 
 def run_judge(case: EvaluationCase, final_answer: str, diff_summary: str, checks: list[dict[str, Any]], budget_key: str = "") -> JudgeScore:

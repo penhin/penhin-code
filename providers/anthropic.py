@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from anthropic import Anthropic, APIConnectionError, InternalServerError, RateLimitError
@@ -31,13 +30,6 @@ class AnthropicProvider:
             auth_token=auth_token,
             base_url=base_url,
             default_headers=default_headers,
-        )
-
-    @classmethod
-    def from_env(cls) -> "AnthropicProvider":
-        return cls(
-            api_key=os.getenv("ANTHROPIC_API_KEY"),
-            base_url=os.getenv("ANTHROPIC_BASE_URL"),
         )
 
     def create_message(self, request: LLMRequest) -> LLMResponse:

@@ -10,9 +10,70 @@ from tools import CHILD_TOOLS, PARENT_TOOLS, TOOL_SPECS, ToolCategory
 from tools.cache import tool_result_cache
 from tools.files import run_list, run_read, run_search, run_write
 from tools.glob import run_glob
+from tools.orchestration import (
+    run_agent_job_cancel, run_agent_job_list, run_agent_job_show,
+    run_agent_job_start, run_agent_job_wait,
+)
 from tools.shell import command_escapes_workspace, command_is_dangerous, command_references_ignored_path, run_bash
+from orchestration.models import AgentJob, AgentRole, Artifact
+from result import Result
 
 from tests.helpers import run_spec_tool
+
+
+def test_agent_job_start_returns_persistent_uuid_and_preserves_root() -> None:
+    job = AgentJob(
+        id="job-uuid",
+        root_task_id="root-uuid",
+        parent_id="root-uuid",
+        role=AgentRole.VERIFY,
+        subject="verify release",
+        instruction="verify release",
+    )
+    with patch("tools.orchestration.enqueue_subagent_job", return_value=job) as enqueue:
+        result = run_agent_job_start("verify release", "verification", "root-uuid")
+
+    assert result.ok is True
+    assert result.data["id"] == "job-uuid"
+    assert result.data["root_task_id"] == "root-uuid"
+    enqueue.assert_called_once_with("verify release", agent_type="verification", root_task_id="root-uuid")
+
+
+def test_agent_job_start_validates_role_before_scheduling() -> None:
+    with patch("tools.orchestration.enqueue_subagent_job") as enqueue:
+        result = run_agent_job_start("inspect", "review")
+
+    assert result.ok is False
+    assert result.meta["code"] == "unknown_agent_type"
+    enqueue.assert_not_called()
+
+
+def test_agent_job_query_wait_and_cancel_use_persistent_state() -> None:
+    job = AgentJob(
+        id="job-uuid", root_task_id="root-uuid", role=AgentRole.EXPLORE,
+        subject="inspect", instruction="inspect", result_artifact_id="artifact-uuid",
+    )
+    artifact = Artifact("artifact-uuid", job.id, "agent_handoff.v1", {"summary": "done"})
+    repository = type("Repository", (), {
+        "get_job": lambda self, _id: job,
+        "list_jobs": lambda self, root, status: [job],
+    })()
+    scheduler = type("Scheduler", (), {"request_cancel": lambda self, _id: job})()
+    wait_result = Result.success("done", data={"job": job.to_dict(), "artifact": artifact})
+    with (
+        patch("tools.orchestration._repository_or_failure", return_value=(repository, None)),
+        patch("tools.orchestration.scheduler_from_env", return_value=scheduler),
+        patch("tools.orchestration.wait_for_job", return_value=wait_result),
+    ):
+        shown = run_agent_job_show(job.id)
+        listed = run_agent_job_list("root-uuid", "queued")
+        waited = run_agent_job_wait(job.id, 5)
+        cancelled = run_agent_job_cancel(job.id)
+
+    assert shown.data["id"] == job.id
+    assert [item["id"] for item in listed.data] == [job.id]
+    assert waited.data["artifact"]["content"] == {"summary": "done"}
+    assert cancelled.data["id"] == job.id
 
 
 def test_list_ignores_internal_files() -> None:
@@ -294,7 +355,7 @@ def test_tool_schemas_match_handlers() -> None:
     assert child_tool_names | parent_tool_names == spec_names
     assert approval_tool_names == {
         "agent_dag_finalize",
-        "background_start",
+        "agent_job_start",
         "bash",
         "integration_verify",
         "write",
@@ -324,8 +385,6 @@ def test_tool_specs_declare_parallel_safety() -> None:
         "agent_job_list",
         "agent_job_show",
         "agent_job_wait",
-        "background_list",
-        "background_show",
         "glob",
         "integration_show",
         "list",

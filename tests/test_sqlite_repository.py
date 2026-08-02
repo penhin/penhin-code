@@ -41,6 +41,24 @@ def test_sqlite_records_job_lifecycle_artifact_and_events(repository: SqliteOrch
     assert [event.event_type for event in repository.list_events(job.id)] == ["job_created", "job_started", "job_succeeded"]
 
 
+def test_agent_job_instruction_is_redacted_before_persistence(
+    repository: SqliteOrchestrationRepository, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    from types import SimpleNamespace
+    from auth.secrets import register_secret
+    from orchestration import service
+
+    register_secret("job-secret-sentinel")
+    monkeypatch.setattr(service, "provision_worktree", lambda _job_id: SimpleNamespace(
+        path=str(tmp_path), branch="penhin/test-redaction",
+    ))
+
+    job = service.create_isolated_agent_job(repository, "inspect job-secret-sentinel", "explore")
+
+    assert job.instruction == "inspect <redacted>"
+    assert job.subject == "inspect <redacted>"
+
+
 def test_sqlite_claim_respects_dependencies_and_records_integration(repository: SqliteOrchestrationRepository) -> None:
     parent = executable_job(repository, "parent")
     child = repository.create_job(AgentJob(
@@ -53,7 +71,7 @@ def test_sqlite_claim_respects_dependencies_and_records_integration(repository: 
     repository.finish_attempt(claim[1].id, JobStatus.SUCCEEDED, artifact=Artifact(id=str(uuid4()), job_id=parent.id, kind="test", content={}))
     assert repository.claim_next_job()[0].id == child.id
 
-    root = repository.create_root_task("integration", "integration")
+    root = repository.create_root_job("integration", "integration", status=JobStatus.SUCCEEDED)
     source = repository.create_job(AgentJob(id=str(uuid4()), root_task_id=root.id, parent_id=root.id, role=AgentRole.GENERAL, subject="source", instruction="source", workspace_mode="isolated_write", worktree_path="/tmp/source", worktree_branch="penhin/source"))
     run = IntegrationRun(id=str(uuid4()), root_task_id=root.id, base_commit="a" * 40, worktree_path="/tmp/integration", worktree_branch="penhin/integration")
     item = IntegrationItem(id=str(uuid4()), run_id=run.id, job_id=source.id, ordinal=0, source_branch=source.worktree_branch, commits=["b" * 40])

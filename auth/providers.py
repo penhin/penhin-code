@@ -21,14 +21,14 @@ class ProviderAuth(Protocol):
 @dataclass(frozen=True)
 class BuiltinProviderAuth:
     provider_id: str
-    api_key: bool = False
+    api_key_env: str | None = None
     oauth: bool = False
 
     def methods(self) -> tuple[str, ...]:
-        return (("api_key",) if self.api_key else ()) + (("oauth",) if self.oauth else ())
+        return (("api_key",) if self.api_key_env else ()) + (("oauth",) if self.oauth else ())
 
     def login(self, auth_type: str, interaction: AuthInteraction, *, oauth_method: str = "browser") -> Credential:
-        if auth_type == "api_key" and self.api_key:
+        if auth_type == "api_key" and self.api_key_env:
             key = interaction.prompt("secret", f"Enter {self.provider_id} API key")
             if not key:
                 raise ValueError("API key cannot be empty")
@@ -47,7 +47,7 @@ class BuiltinProviderAuth:
         return refresh_oauth(self.provider_id, credential)
 
     def resolve(self, credential: Credential) -> Credential:
-        if isinstance(credential, ApiKeyCredential) and self.api_key:
+        if isinstance(credential, ApiKeyCredential) and self.api_key_env:
             return credential
         if isinstance(credential, OAuthCredential) and self.oauth:
             return credential
@@ -55,10 +55,10 @@ class BuiltinProviderAuth:
 
 
 PROVIDER_AUTHS: dict[str, BuiltinProviderAuth] = {
-    "anthropic": BuiltinProviderAuth("anthropic", api_key=True, oauth=True),
-    "openai": BuiltinProviderAuth("openai", api_key=True),
+    "anthropic": BuiltinProviderAuth("anthropic", api_key_env="ANTHROPIC_API_KEY", oauth=True),
+    "openai": BuiltinProviderAuth("openai", api_key_env="OPENAI_API_KEY"),
     "openai-codex": BuiltinProviderAuth("openai-codex", oauth=True),
-    "gemini": BuiltinProviderAuth("gemini", api_key=True),
+    "gemini": BuiltinProviderAuth("gemini", api_key_env="GEMINI_API_KEY"),
 }
 
 
@@ -71,3 +71,7 @@ def provider_auth(provider: str) -> BuiltinProviderAuth:
         return PROVIDER_AUTHS[provider]
     except KeyError as error:
         raise ValueError(f"unsupported auth provider: {provider}") from error
+
+
+def provider_key_name(provider: str) -> str | None:
+    return provider_auth(provider).api_key_env

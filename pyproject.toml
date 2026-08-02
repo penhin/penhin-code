@@ -29,7 +29,6 @@ dependencies = [
   "keyring>=25.0.0",
   "openai>=1.0.0",
   "prompt_toolkit>=3.0.52",
-  "psycopg[binary]>=3.2.0",
   "python-dotenv>=1.0.0",
   "pyyaml>=6.0",
   "rich>=13.7.0",
@@ -37,6 +36,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+postgres = ["psycopg[binary]>=3.2.0"]
 
 [project.scripts]
 penhin = "main:main"

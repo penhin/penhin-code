@@ -1,13 +1,9 @@
 import json
-import threading
 from typing import Any
 
 from result import Result
 from task import task_status
 from tools.plans import read_plan
-
-
-BACKGROUND_DISPATCH_THREAD_PREFIX = "background-task-"
 
 
 def run_task(task: str, agent_type: str = "general") -> Result:
@@ -70,8 +66,6 @@ def current_running_task() -> dict[str, Any] | None:
     result = task_status(action="show")
     if not result.ok or result.data is None:
         return None
-    if result.data.get("kind") != "main":
-        return None
     if result.data.get("status") != "running":
         return None
     return result.data
@@ -94,11 +88,15 @@ def run_task_start(
 
     orchestration_job_id = ""
     try:
+        from auth.secrets import redact_text
         from orchestration.service import repository_from_env
+        from orchestration.models import JobStatus
 
         repository = repository_from_env()
         if repository is not None:
-            root_job = repository.create_root_task(subject, description or subject)
+            root_job = repository.create_root_job(
+                redact_text(subject), redact_text(description or subject), status=JobStatus.SUCCEEDED,
+            )
             orchestration_job_id = root_job.id
     except Exception as error:
         return Result.failure(f"Task was not started because orchestration storage failed: {error}", code="orchestration_unavailable")
@@ -134,48 +132,6 @@ def run_task_show(id: int = None) -> Result:
         data=data,
         action="show",
     )
-
-
-def _sync_background_status(data: dict[str, Any]) -> dict[str, Any]:
-    job_id = str(data.get("orchestration_job_id", ""))
-    if not job_id:
-        return data
-    try:
-        from orchestration.service import repository_from_env
-
-        repository = repository_from_env()
-        job = repository.get_job(job_id) if repository else None
-        if job is None:
-            return data
-        data["agent_job_status"] = str(job.status)
-        if data.get("status") == "running" and str(job.status) in {"succeeded", "failed", "cancelled", "timed_out"}:
-            result = repository.get_artifact(job.result_artifact_id) if job.result_artifact_id else None
-            completed = task_status.finish_background(
-                int(data["id"]),
-                "completed" if str(job.status) == "succeeded" else "failed",
-                result.content.get("summary", "") if result else "",
-                job.error,
-            )
-            return completed.to_dict() | {"agent_job_status": str(job.status)}
-    except Exception:
-        return data
-    return data
-
-
-def run_background_show(id: int) -> Result:
-    result = task_status(action="background_show", id=id)
-    if not result.ok or result.data is None:
-        return result
-    data = _sync_background_status(dict(result.data))
-    return Result.success(json.dumps(data, ensure_ascii=False, indent=2), data=data, action="background_show")
-
-
-def run_background_list() -> Result:
-    result = task_status(action="background_list")
-    if not result.ok:
-        return result
-    data = [_sync_background_status(dict(item)) for item in result.data]
-    return Result.success(json.dumps(data, ensure_ascii=False, indent=2), data=data, action="background_list")
 
 
 def current_todos() -> list[dict[str, Any]]:
@@ -217,30 +173,3 @@ def run_task_complete(note: str = None) -> Result:
         data=data,
         action="complete",
     )
-
-
-def run_background_start(task: str) -> Result:
-    if threading.current_thread().name.startswith(BACKGROUND_DISPATCH_THREAD_PREFIX):
-        return Result.failure(
-            "Error: background tasks cannot start nested background tasks",
-            code="nested_background_task",
-        )
-    try:
-        from orchestration.service import enqueue_subagent_job, scheduler_from_env
-
-        current = current_running_task()
-        root_task_id = str(current.get("orchestration_job_id", "")) if current else None
-        job = enqueue_subagent_job(task, root_task_id=root_task_id or None, dispatch=False)
-    except Exception as error:
-        return Result.failure(f"Unable to enqueue background task: {error}", code="scheduler_unavailable")
-
-    background_task = task_status.start_background(task, orchestration_job_id=job.id)
-    # This daemon only wakes the bounded scheduler; agent execution itself is owned by its executor.
-    thread = threading.Thread(
-        target=lambda: scheduler_from_env().dispatch(),
-        args=(),
-        daemon=True,
-        name=f"{BACKGROUND_DISPATCH_THREAD_PREFIX}{background_task.id}",
-    )
-    thread.start()
-    return Result.success(background_task.to_json(), data=background_task.to_dict())

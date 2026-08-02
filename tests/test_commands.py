@@ -35,7 +35,6 @@ def test_handle_local_command_shows_help() -> None:
     mocked_print_info.assert_any_call("/status Show session and runtime status")
     mocked_print_info.assert_any_call("/model Show or set model id")
     mocked_print_info.assert_any_call("/provider Show or switch provider")
-    mocked_print_info.assert_any_call("/api-key Enter a Provider API key securely")
     mocked_print_info.assert_any_call("/circuit Show circuit breaker status")
     mocked_print_info.assert_any_call("/compact Compact current session, optionally with a hint")
     mocked_print_info.assert_any_call("/force-snip Mark selected history turns as snipped")
@@ -118,6 +117,17 @@ def test_handle_local_command_reports_unknown_command() -> None:
         assert commands.handle_local_command("/missing") is True
 
     mocked_print_error.assert_called_once_with("Unknown command: /missing")
+
+
+def test_removed_auth_compatibility_commands_are_unknown() -> None:
+    with patch("commands.ui.print_error") as mocked_print_error:
+        assert commands.handle_local_command("/api-key") is True
+        assert commands.handle_local_command("/auth migrate") is True
+
+    assert [call.args[0] for call in mocked_print_error.call_args_list] == [
+        "Unknown command: /api-key",
+        "Unknown auth command: migrate",
+    ]
 
 
 def test_handle_permission_command_shows_current_mode() -> None:
@@ -230,44 +240,6 @@ def test_handle_model_command_updates_config_and_runtime() -> None:
     mocked_set_runtime_model.assert_called_once_with("claude-test")
     mocked_set_provider_model.assert_called_once_with("anthropic", "claude-test")
     mocked_print_info.assert_called_once_with("model: claude-test")
-
-
-def test_handle_api_key_command_rejects_secret_in_command_arguments() -> None:
-    with (
-        patch("commands.set_env_value") as mocked_set_env_value,
-        patch("commands.ui.print_info") as mocked_print_info,
-    ):
-        assert commands.handle_local_command("/api-key sk-ant-secret") is True
-
-    mocked_set_env_value.assert_not_called()
-    mocked_print_info.assert_not_called()
-
-
-def test_handle_api_key_command_rejects_non_active_provider_secret_argument() -> None:
-    with (
-        patch.dict("commands.os.environ", {"LLM_PROVIDER": "anthropic"}, clear=True),
-        patch("commands.set_env_value") as mocked_set_env_value,
-        patch("commands.ui.print_info") as mocked_print_info,
-    ):
-        assert commands.handle_local_command("/api-key openai sk-openai-secret") is True
-
-    mocked_set_env_value.assert_not_called()
-    mocked_print_info.assert_not_called()
-
-
-def test_api_key_hidden_prompt_writes_store_without_environment_secret() -> None:
-    store = InMemoryCredentialStore()
-    with (
-        patch.dict("commands.os.environ", {"LLM_PROVIDER": "anthropic"}, clear=True),
-        patch("commands.ui.prompt_secret", return_value="hidden-secret") as prompt,
-        patch("commands._writable_store", return_value=store),
-        patch("commands._activate_login"),
-        patch("commands.ui.print_info"),
-    ):
-        assert commands.handle_local_command("/api-key") is True
-    prompt.assert_called_once()
-    assert store.read("anthropic") == ApiKeyCredential(key="hidden-secret")
-    assert "ANTHROPIC_API_KEY" not in commands.os.environ
 
 
 def test_login_refuses_to_collect_credentials_without_storage_consent() -> None:
@@ -416,15 +388,14 @@ def test_handle_provider_command_switches_provider_and_model() -> None:
     with (
         patch.dict("commands.os.environ", {"LLM_PROVIDER": "anthropic", "MODEL_ID": "claude-test", "OPENAI_API_KEY": "sk-openai"}, clear=True),
         patch("commands.set_runtime_provider") as mocked_set_runtime_provider,
-        patch("commands.set_env_value") as mocked_set_env_value,
+        patch("commands.update_env_values") as mocked_update_env_values,
         patch("commands.set_provider_model") as mocked_set_provider_model,
         patch("commands.ui.print_info") as mocked_print_info,
     ):
         assert commands.handle_local_command("/provider openai gpt-4.1") is True
 
     mocked_set_runtime_provider.assert_called_once_with("openai", "gpt-4.1")
-    assert mocked_set_env_value.call_args_list[0].args == ("LLM_PROVIDER", "openai")
-    assert mocked_set_env_value.call_args_list[1].args == ("MODEL_ID", "gpt-4.1")
+    mocked_update_env_values.assert_called_once_with({"LLM_PROVIDER": "openai", "MODEL_ID": "gpt-4.1"})
     mocked_set_provider_model.assert_called_once_with("openai", "gpt-4.1")
     mocked_print_info.assert_called_once_with("provider: openai")
 

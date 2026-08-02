@@ -8,7 +8,6 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from task import TaskStatus, TaskStatusManager
-from orchestration.models import AgentJob, AgentRole
 from tools import CHILD_TOOLS, PARENT_TOOLS, TOOL_SPECS
 from tools import tasks as task_tools
 
@@ -23,9 +22,7 @@ def test_task_status_tool_registered() -> None:
         "task_start",
         "task_show",
         "task_complete",
-        "background_start",
-        "background_list",
-        "background_show",
+        "agent_job_start",
     }:
         assert tool_name in parent_tool_names
         assert tool_name not in child_tool_names
@@ -64,9 +61,26 @@ def test_task_status_manager_flow() -> None:
 
 
 def test_old_task_without_todos_loads_with_empty_list() -> None:
-    restored = TaskStatus.from_dict({"id": 1, "subject": "legacy task"})
+    restored = TaskStatus.from_dict({
+        "id": 1,
+        "subject": "legacy task",
+        "kind": "main",
+        "blocked_by": [2],
+        "error": "old error",
+        "result": "old result",
+    })
 
     assert restored.todos == []
+
+
+def test_legacy_background_record_is_not_exposed(tmp_path: Path) -> None:
+    manager = TaskStatusManager(tmp_path)
+    manager._task_path(7).write_text('{"id": 7, "subject": "old", "kind": "background"}', encoding="utf-8")
+
+    result = manager("show", id=7)
+
+    assert result.ok is False
+    assert result.meta["code"] == "not_found"
 
 
 def test_task_status_write_cleans_temp_file_on_failure() -> None:
@@ -102,83 +116,6 @@ def test_task_status_current_write_cleans_temp_file_on_failure() -> None:
                 raise AssertionError("expected replace failure")
 
         assert not temp_path.exists()
-
-
-def test_background_task_manager_flow() -> None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        manager = TaskStatusManager(Path(tmpdir))
-        main_task = manager.start("main task")
-        background = manager.start_background("inspect parser")
-        completed = manager.finish_background(background.id, "completed", result="parser summary")
-        listed = json.loads(manager("background_list").message)
-        shown = json.loads(manager("background_show", id=background.id).message)
-        main_show = manager("background_show", id=main_task.id)
-
-    assert background.kind == "background"
-    assert completed.status == "completed"
-    assert completed.result == "parser summary"
-    assert [task["id"] for task in listed] == [background.id]
-    assert "result" not in listed[0]
-    assert shown["kind"] == "background"
-    assert shown["result"] == "parser summary"
-    assert main_show.ok is False
-    assert "Background task" in main_show.error
-
-
-def test_background_start_rejects_nested_background_tasks() -> None:
-    results = []
-    thread = threading.Thread(
-        target=lambda: results.append(task_tools.run_background_start("nested")),
-        name="background-task-test",
-    )
-    thread.start()
-    thread.join()
-
-    assert results[0].ok is False
-    assert "cannot start nested background tasks" in results[0].error
-
-
-def test_background_start_uses_daemon_thread() -> None:
-    original_task_status = task_tools.task_status
-    created_threads = []
-
-    class FakeThread:
-        def __init__(self, target, args, daemon, name):
-            self.target = target
-            self.args = args
-            self.daemon = daemon
-            self.name = name
-            self.started = False
-            created_threads.append(self)
-
-        def start(self):
-            self.started = True
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        try:
-            task_tools.task_status = TaskStatusManager(Path(tmpdir))
-            fake_job = AgentJob(
-                id="test-background-job",
-                root_task_id="test-background-job",
-                role=AgentRole.GENERAL,
-                subject="summarize files",
-                instruction="summarize files",
-                workspace_mode="isolated_write",
-                worktree_path="/tmp/test-background-worktree",
-                worktree_branch="penhin/test-background",
-            )
-            with patch.object(task_tools.threading, "Thread", FakeThread), patch(
-                "orchestration.service.enqueue_subagent_job", return_value=fake_job,
-            ):
-                result = task_tools.run_background_start("summarize files")
-        finally:
-            task_tools.task_status = original_task_status
-
-    assert result.ok is True
-    assert len(created_threads) == 1
-    assert created_threads[0].daemon is True
-    assert created_threads[0].started is True
-    assert created_threads[0].name.startswith("background-task-")
 
 
 def test_task_status_tool_handler() -> None:

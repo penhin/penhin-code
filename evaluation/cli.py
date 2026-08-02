@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .cases import load_suite
 from .config import load_evaluation_config, offline_preflight
-from .io import read_json, write_json
+from atomic_io import read_json, write_safe_json_atomic as write_json
 from .report import compare_reports, generate_report
 from .runner import RUNS_ROOT, run_suite
 from .observer import read_events

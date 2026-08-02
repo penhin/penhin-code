@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from typing import Any
 from uuid import uuid4
 
@@ -16,10 +15,6 @@ class GeminiProvider:
 
     def __init__(self, api_key: str | None = None):
         self.client = genai.Client(api_key=api_key)
-
-    @classmethod
-    def from_env(cls) -> "GeminiProvider":
-        return cls(api_key=os.getenv("GEMINI_API_KEY"))
 
     def create_message(self, request: LLMRequest) -> LLMResponse:
         return normalize_response(self.client.models.generate_content(**request_kwargs(request)))

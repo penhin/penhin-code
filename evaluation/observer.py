@@ -6,18 +6,15 @@ import threading
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, Iterator
 from uuid import uuid4
 
+from auth.secrets import safe_value
+
 
 _observer: ContextVar["EvaluationObserver | None"] = ContextVar("penhin_evaluation_observer", default=None)
 _write_lock = threading.Lock()
-SENSITIVE_NAMES = {
-    "access_token", "api_key", "authorization", "authorization_code", "auth_url", "bearer_token",
-    "client_secret", "code_verifier", "credential", "device_code", "password", "refresh_token", "secret",
-}
 CORRELATION_ENV = {
     "trace_id": "PENHIN_TRACE_ID",
     "root_task_id": "PENHIN_ROOT_TASK_ID",
@@ -26,36 +23,9 @@ CORRELATION_ENV = {
 }
 
 
-def _sensitive_key(key: object) -> bool:
-    name = str(key).lower()
-    return name in SENSITIVE_NAMES or name.endswith(("_api_key", "_password", "_secret"))
-
-
-def redact_secrets(text: str) -> str:
-    from auth.secrets import redact_text
-    return redact_text(text)
-
-
 def anonymous_id(value: str) -> str:
     import hashlib
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
-
-
-def _safe(value: Any) -> Any:
-    if is_dataclass(value):
-        value = asdict(value)
-    if isinstance(value, dict):
-        return {
-            str(key): "<redacted>" if _sensitive_key(key) else _safe(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, (list, tuple)):
-        return [_safe(item) for item in value]
-    if isinstance(value, str):
-        value = redact_secrets(value)
-        if len(value) > 4000:
-            return value[:4000] + f"...<truncated:{len(value) - 4000}>"
-    return value
 
 
 class EvaluationObserver:
@@ -87,8 +57,9 @@ class EvaluationObserver:
             "pid": os.getpid(),
             "thread_id": threading.get_ident(),
             "correlation": correlation,
-            "payload": _safe(payload),
+            "payload": payload,
         }
+        event = safe_value(event, max_string_chars=4000)
         path = self.event_path
         path.parent.mkdir(parents=True, exist_ok=True)
         with _write_lock, path.open("a", encoding="utf-8") as stream:

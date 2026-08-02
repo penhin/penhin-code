@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from agent import agent_loop
 from context import RunContext
-from evaluation.io import write_json
+from atomic_io import write_safe_json_atomic as write_json
 from evaluation.models import CommandCheck, ContentCheck, EvaluationCase
 from evaluation.observer import EvaluationObserver, emit, observing
 from result import Result

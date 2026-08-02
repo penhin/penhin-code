@@ -30,12 +30,10 @@ TOOL_PROMPTS = {
     "task_start": "Call the `task_start` tool with subject exactly `llm tool test task`.",
     "task_show": "Call the `task_show` tool with id 1.",
     "task_complete": "Call the `task_complete` tool with note exactly `done`.",
-    "background_start": (
-        "Call the `background_start` tool with task exactly "
+    "agent_job_start": (
+        "Call the `agent_job_start` tool with task exactly "
         "`Reply with the word done and do not use tools.`."
     ),
-    "background_list": "Call the `background_list` tool with an empty input object.",
-    "background_show": "Call the `background_show` tool with id 2.",
     "bash": "Call the `bash` tool with command exactly `printf llm_tool_test`.",
     "read": "Call the `read` tool with path exactly `README.md` and limit 1.",
     "write": "Call the `write` tool with path exactly `.llm_tool_test.txt` and content exactly `hello`.",
@@ -67,8 +65,6 @@ EXECUTE_HANDLER_TOOLS = {
     "task_start",
     "task_show",
     "task_complete",
-    "background_list",
-    "background_show",
 }
 
 
@@ -166,10 +162,7 @@ def call_expected_tool(runtime, expected_tool: str):
 def prepare_handler_state() -> TaskStatusManager:
     manager = TaskStatusManager(Path(tempfile.mkdtemp(prefix="penhin-llm-tools-")))
     main_task = manager.start("existing main task")
-    background = manager.start_background("existing background task")
-    manager.finish_background(background.id, "completed", result="background result")
     assert main_task.id == 1
-    assert background.id == 2
 
     return manager
 

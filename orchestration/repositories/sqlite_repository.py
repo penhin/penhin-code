@@ -116,13 +116,15 @@ class SqliteOrchestrationRepository:
             connection.execute("PRAGMA journal_mode = WAL")
             connection.executescript(SCHEMA_SQL)
 
-    def create_root_job(self, subject: str, instruction: str, role: AgentRole = AgentRole.GENERAL) -> AgentJob:
+    def create_root_job(
+        self, subject: str, instruction: str, role: AgentRole = AgentRole.GENERAL,
+        status: JobStatus = JobStatus.QUEUED,
+    ) -> AgentJob:
         job_id = str(uuid4())
-        return self.create_job(AgentJob(id=job_id, root_task_id=job_id, role=role, subject=subject, instruction=instruction))
-
-    def create_root_task(self, subject: str, instruction: str) -> AgentJob:
-        job_id = str(uuid4())
-        return self.create_job(AgentJob(id=job_id, root_task_id=job_id, role=AgentRole.GENERAL, subject=subject, instruction=instruction, status=JobStatus.SUCCEEDED))
+        return self.create_job(AgentJob(
+            id=job_id, root_task_id=job_id, role=role, subject=subject,
+            instruction=instruction, status=status,
+        ))
 
     def create_job(self, job: AgentJob) -> AgentJob:
         if job.workspace_mode not in {"readonly", "isolated_write"}:

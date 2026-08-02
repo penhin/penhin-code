@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from .postgres_repository import PostgresOrchestrationRepository
 from .protocol import OrchestrationRepository
 from .sqlite_repository import SqliteOrchestrationRepository, sqlite_database_url
 
@@ -19,6 +18,7 @@ def database_url_from_env() -> str:
 
 def repository_from_database_url(database_url: str) -> OrchestrationRepository:
     if database_url.startswith(("postgresql://", "postgres://")):
+        from .postgres_repository import PostgresOrchestrationRepository
         return PostgresOrchestrationRepository(database_url)
     if database_url.startswith("sqlite:///"):
         return SqliteOrchestrationRepository(database_url)
@@ -27,7 +27,6 @@ def repository_from_database_url(database_url: str) -> OrchestrationRepository:
 
 __all__ = [
     "OrchestrationRepository",
-    "PostgresOrchestrationRepository",
     "SqliteOrchestrationRepository",
     "database_url_from_env",
     "repository_from_database_url",

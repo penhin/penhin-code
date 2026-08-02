@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 
+from auth.secrets import redact_text, safe_value
 from config import ENV_FILE
 from evaluation.observer import anonymous_id, emit
 from result import Result
@@ -40,7 +41,7 @@ def agent_type_for_role(role: str) -> str:
 
 def finish_failure(repository: OrchestrationRepository, attempt_id: str, error: str, reason: str) -> None:
     try:
-        repository.finish_attempt(attempt_id, JobStatus.FAILED, error=error, terminal_reason=reason)
+        repository.finish_attempt(attempt_id, JobStatus.FAILED, error=redact_text(error), terminal_reason=reason)
     except ValueError:
         # Cancellation or timeout may have terminalized the attempt before this process observed it.
         pass
@@ -317,7 +318,8 @@ def main() -> int:
                         for path in change_set["changed_files"]
                     ]
             artifact = Artifact(
-                id=str(uuid4()), job_id=job.id, kind=artifact_kind, content=content, schema_valid=schema_valid,
+                id=str(uuid4()), job_id=job.id, kind=artifact_kind,
+                content=safe_value(content), schema_valid=schema_valid,
             )
             if claim_invalid_artifact_injection(job):
                 artifact.schema_valid = False

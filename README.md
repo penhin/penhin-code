@@ -28,7 +28,7 @@ pipx install git+https://github.com/penhin/penhin-code.git
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -e .
 mkdir -p ~/.penhin
 cp .env.example ~/.penhin/.env
 python main.py
@@ -65,8 +65,6 @@ MODEL_ID=gemini-3.5-flash
 /login [provider]   先选择 Account 或 API key，再进入对应 Provider 登录
 /logout [provider]  删除 Penhin 保存的本地凭证
 /auth status        查看认证类型、来源和过期状态（不显示秘密）
-/auth migrate       经逐项确认迁移 ~/.penhin/.env 中的 API Key
-/api-key [provider] /login API Key 流程的兼容别名；不接受命令参数中的密钥
 /model <model>       保存模型并立即用于当前会话
 /provider <provider> [model]  切换 Provider；可选地同时指定模型
 python main.py --model <model>  # 只覆盖当前会话
@@ -85,13 +83,17 @@ OAuth 兼容能力依赖上游客户端参数和专用端点，可能随 Provide
 
 `/provider` 会校验模型兼容性和目标凭证；模型由 `/model` 与 `/status` 单独查看和设置。切换会保留当前会话记录，但建议在切换到能力差异较大的模型时使用 `/compact` 或 `--new` 开启新会话。
 
-认证优先级为：进程环境变量、新凭证库、`~/.penhin/.env`、项目根目录 `.env`。`/logout` 只删除 Penhin 凭证库记录；如果环境变量或 `.env` 仍有密钥，`/auth status` 会显示实际回退来源。`/auth migrate` 永不修改项目 `.env`。
+认证优先级为：进程环境变量、新凭证库、`~/.penhin/.env`、项目根目录 `.env`。`/logout` 只删除 Penhin 凭证库记录；如果环境变量或 `.env` 仍有密钥，`/auth status` 会显示实际回退来源。项目与用户 `.env` 均不会被自动迁移或修改。
 
 ## 本地编排存储
 
 多 Agent 的任务、尝试、事件、产物和集成记录默认存入项目的 `.penhin/orchestration.sqlite3`，无需安装或配置 PostgreSQL。SQLite 适用于单机运行，并启用 WAL 和事务化任务领取。
 
 需要共享存储或更高并发时，设置：
+
+```bash
+python -m pip install -e ".[postgres]"
+```
 
 ```bash
 PENHIN_DATABASE_URL=postgresql://user:password@host:5432/database
@@ -118,9 +120,8 @@ PENHIN_DATABASE_URL=sqlite:////absolute/path/to/orchestration.sqlite3
 ```text
 todo_set / todo_show / todo_done / todo_clear
 task_start / task_show / task_complete
-background_start / background_list / background_show
 task / verify
-agent_plan_create / agent_dag_show / agent_job_show / agent_job_list
+agent_job_start / agent_plan_create / agent_dag_show / agent_job_show / agent_job_list
 agent_artifact_show / agent_job_wait / agent_job_cancel
 integration_start / integration_show / integration_verify
 glob / list / search / read / edit / write / bash

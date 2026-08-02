@@ -25,7 +25,7 @@ POST_DELEGATION_BLOCKED_TOOLS = {
     "task_start",
     "verify",
     "workspace",
-    "background_start",
+    "agent_job_start",
     "todo_clear",
     "todo_done",
     "todo_set",

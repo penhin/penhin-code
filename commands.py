@@ -9,10 +9,10 @@ from prompt_toolkit.completion import Completer, Completion
 import ui
 
 from config import (
-    CONFIG_FILE, ENV_FILE, delete_env_value, get_permission_mode, get_provider_model, get_version,
-    set_credential_backend, set_env_value, set_permission_mode, set_provider_model,
+    CONFIG_FILE, ENV_FILE, get_permission_mode, get_provider_model, get_version,
+    set_credential_backend, set_env_value, set_permission_mode, set_provider_model, update_env_values,
 )
-from auth import ApiKeyCredential, auth_resolver, credential_store, provider_auth, provider_auth_ids
+from auth import auth_resolver, credential_store, provider_auth, provider_auth_ids, provider_key_name
 from auth.browser import open_browser
 from auth.interaction import AuthInteraction
 from auth.storage import CredentialStoreUnavailable, FileCredentialStore
@@ -22,7 +22,6 @@ from runtime import (
     configured_provider,
     get_runtime,
     mark_setting_source,
-    provider_key_name,
     set_runtime_model,
     set_runtime_provider,
     setting_source,
@@ -231,18 +230,9 @@ def handle_provider_command(args: list[str], context: RunContext | None = None):
         return
 
     provider = args[0].lower()
-    if provider not in {"anthropic", "openai", "openai-codex", "gemini"}:
+    if provider not in provider_auth_ids():
         ui.print_error(f"Unsupported provider: {provider}; choose anthropic, openai, openai-codex, or gemini")
         return
-    try:
-        configured = auth_resolver().resolve(provider)
-    except CredentialStoreUnavailable as error:
-        ui.print_error(str(error))
-        return
-    if configured is None:
-        ui.print_error(f"No credentials for {provider}. Use /login {provider} first.")
-        return
-
     model = " ".join(args[1:]).strip() or runtime_model()
     try:
         validate_model(provider, model)
@@ -250,45 +240,12 @@ def handle_provider_command(args: list[str], context: RunContext | None = None):
         ui.print_error(f"Model {model!r} is not compatible with {provider}. Use: /provider {provider} MODEL_ID")
         return
 
-    old_provider = os.environ.get("LLM_PROVIDER")
-    old_model = os.environ.get("MODEL_ID")
-    os.environ["LLM_PROVIDER"] = provider
-    os.environ["MODEL_ID"] = model
     try:
-        set_runtime_provider(provider, model)
+        _apply_provider_selection(provider, model)
     except Exception as error:
-        if old_provider is None:
-            os.environ.pop("LLM_PROVIDER", None)
-        else:
-            os.environ["LLM_PROVIDER"] = old_provider
-        if old_model is None:
-            os.environ.pop("MODEL_ID", None)
-        else:
-            os.environ["MODEL_ID"] = old_model
         ui.print_error(str(error))
         return
-
-    set_env_value("LLM_PROVIDER", provider)
-    set_env_value("MODEL_ID", model)
-    set_provider_model(provider, model)
-    mark_setting_source("LLM_PROVIDER", "User env")
-    mark_setting_source("MODEL_ID", "User env")
     ui.print_info(f"provider: {provider}")
-
-
-def handle_api_key_command(args: list[str], context: RunContext | None = None):
-    provider = configured_provider()
-    if args and provider_key_name(args[0].lower()) is not None:
-        provider = args[0].lower()
-        args = args[1:]
-    key_name = provider_key_name(provider)
-    if key_name is None:
-        ui.print_error(f"{provider} does not support API key login")
-        return
-    if args:
-        ui.print_error("Do not put secrets in command arguments. Use /api-key [provider] and enter the key at the hidden prompt.")
-        return
-    _login_api_key(provider)
 
 
 class TerminalAuthInteraction(AuthInteraction):
@@ -330,16 +287,7 @@ def _writable_store():
         return FileCredentialStore()
 
 
-def _activate_login(provider: str) -> None:
-    model = get_provider_model(provider)
-    if not model:
-        current = runtime_model()
-        try:
-            validate_model(provider, current)
-            model = current
-        except ValueError:
-            model = ui.prompt_text(f"Model ID for {provider}")
-    validate_model(provider, model)
+def _apply_provider_selection(provider: str, model: str) -> None:
     old_provider, old_model = os.environ.get("LLM_PROVIDER"), os.environ.get("MODEL_ID")
     os.environ["LLM_PROVIDER"], os.environ["MODEL_ID"] = provider, model
     try:
@@ -354,11 +302,23 @@ def _activate_login(provider: str) -> None:
         else:
             os.environ["MODEL_ID"] = old_model
         raise
-    set_env_value("LLM_PROVIDER", provider)
-    set_env_value("MODEL_ID", model)
+    update_env_values({"LLM_PROVIDER": provider, "MODEL_ID": model})
     set_provider_model(provider, model)
     mark_setting_source("LLM_PROVIDER", "User env")
     mark_setting_source("MODEL_ID", "User env")
+
+
+def _activate_login(provider: str) -> None:
+    model = get_provider_model(provider)
+    if not model:
+        current = runtime_model()
+        try:
+            validate_model(provider, current)
+            model = current
+        except ValueError:
+            model = ui.prompt_text(f"Model ID for {provider}")
+    validate_model(provider, model)
+    _apply_provider_selection(provider, model)
 
 
 def _save_login(provider: str, credential, started: float | None = None, store=None) -> None:
@@ -488,7 +448,7 @@ def handle_logout_command(args: list[str], context: RunContext | None = None):
                 ui.print_info("logout: no stored credentials")
                 return
             provider = ui.prompt_select("Choose a provider to log out", tuple((item, provider_label(item)) for item in values))
-        if provider not in {"anthropic", "openai", "openai-codex", "gemini"}:
+        if provider not in provider_auth_ids():
             ui.print_error(f"Unsupported provider: {provider}")
             return
         if provider not in values:
@@ -507,7 +467,7 @@ def handle_logout_command(args: list[str], context: RunContext | None = None):
 
 
 def _auth_status() -> None:
-    for provider in ("anthropic", "openai", "openai-codex", "gemini"):
+    for provider in provider_auth_ids():
         try:
             status = auth_resolver().status(provider)
         except CredentialStoreUnavailable as error:
@@ -515,46 +475,11 @@ def _auth_status() -> None:
         ui.print_json(status)
 
 
-def _auth_migrate() -> None:
-    from dotenv import dotenv_values
-    values = dotenv_values(ENV_FILE)
-    project_values = dotenv_values(Path(".env"))
-    migrated = 0
-    store = None
-    for provider in ("anthropic", "openai", "gemini"):
-        key_name = provider_key_name(provider)
-        value = values.get(key_name) if key_name else None
-        if not value or not ui.prompt_confirm(f"Move {key_name} from user .env into the credential store?"):
-            continue
-        store = store or _writable_store()
-        credential = ApiKeyCredential(key=str(value))
-        store.modify(provider, lambda _current, item=credential: item)
-        if store.read(provider) != credential:
-            raise RuntimeError(f"migration verification failed for {provider}")
-        delete_env_value(key_name)
-        os.environ.pop(key_name, None)
-        migrated += 1
-    project_keys = [name for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY") if project_values.get(name)]
-    if project_keys:
-        ui.print_info(f"Project .env keys were not modified: {', '.join(project_keys)}")
-    if migrated:
-        init_runtime(required=False)
-    from evaluation.observer import emit
-    emit("auth_migration_completed", migrated_count=migrated, project_key_count=len(project_keys))
-    ui.print_info(f"auth migrate: {migrated} credential(s) migrated")
-
-
 def handle_auth_command(args: list[str], context: RunContext | None = None):
-    action = args[0].lower() if args else "status"
-    if action == "status" and len(args) <= 1:
+    if not args or args == ["status"]:
         _auth_status()
-    elif action == "migrate" and len(args) <= 1:
-        try:
-            _auth_migrate()
-        except Exception as error:
-            ui.print_error(str(error))
     else:
-        ui.print_error("Usage: /auth [status|migrate]")
+        ui.print_error(f"Unknown auth command: {' '.join(args)}")
 
 
 def handle_circuit_command(args: list[str], context: RunContext | None = None):
@@ -664,11 +589,6 @@ LOCAL_COMMANDS = {
         description="Show or switch provider",
         handler=handle_provider_command,
     ),
-    "/api-key": LocalCommand(
-        name="/api-key",
-        description="Enter a Provider API key securely",
-        handler=handle_api_key_command,
-    ),
     "/login": LocalCommand(
         name="/login",
         description="Configure provider authentication",
@@ -681,7 +601,7 @@ LOCAL_COMMANDS = {
     ),
     "/auth": LocalCommand(
         name="/auth",
-        description="Show authentication status or migrate credentials",
+        description="Show authentication status",
         handler=handle_auth_command,
     ),
     "/circuit": LocalCommand(

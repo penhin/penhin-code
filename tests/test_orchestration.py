@@ -329,7 +329,7 @@ def test_postgres_claim_only_releases_dag_node_after_all_dependencies_succeed(
 
 
 def test_postgres_records_integration_run_and_ordered_items(repository: PostgresOrchestrationRepository) -> None:
-    root = repository.create_root_task("integration root", "integration root")
+    root = repository.create_root_job("integration root", "integration root", status=JobStatus.SUCCEEDED)
     source = repository.create_job(AgentJob(
         id=str(uuid4()), root_task_id=root.id, parent_id=root.id, role=AgentRole.GENERAL,
         subject="source", instruction="source", workspace_mode="isolated_write",
@@ -357,7 +357,7 @@ def test_postgres_records_integration_run_and_ordered_items(repository: Postgres
 
 
 def test_postgres_rejects_invalid_integration_transitions(repository: PostgresOrchestrationRepository) -> None:
-    root = repository.create_root_task("integration transitions", "integration transitions")
+    root = repository.create_root_job("integration transitions", "integration transitions", status=JobStatus.SUCCEEDED)
     run = repository.create_integration_run(IntegrationRun(
         id=str(uuid4()), root_task_id=root.id, base_commit="a" * 40,
         worktree_path="/tmp/integration", worktree_branch="penhin/integration-transitions",
@@ -369,6 +369,9 @@ def test_postgres_rejects_invalid_integration_transitions(repository: PostgresOr
 
 def test_worker_wraps_plain_text_result_in_runtime_handoff(monkeypatch: pytest.MonkeyPatch) -> None:
     from orchestration import worker
+    from auth.secrets import register_secret
+
+    register_secret("artifact-secret-sentinel")
 
     job = AgentJob(
         id=str(uuid4()), root_task_id=str(uuid4()), role=AgentRole.EXPLORE, subject="invalid", instruction="invalid",
@@ -392,11 +395,13 @@ def test_worker_wraps_plain_text_result_in_runtime_handoff(monkeypatch: pytest.M
     monkeypatch.setattr(worker, "repository_from_database_url", lambda _url: repository)
     monkeypatch.setattr(worker, "parse_args", lambda: Namespace(database_url="postgresql://test", job_id=job.id, attempt_id="attempt", worker_token="token"))
     monkeypatch.setattr(worker, "init_runtime", lambda: None)
-    monkeypatch.setitem(sys.modules, "subagent", types.SimpleNamespace(run_subagent=lambda *_args, **_kwargs: Result.success('{"summary":"invalid"}')))
+    monkeypatch.setitem(sys.modules, "subagent", types.SimpleNamespace(
+        run_subagent=lambda *_args, **_kwargs: Result.success('{"summary":"artifact-secret-sentinel"}'),
+    ))
 
     assert worker.main() == 0
     args, kwargs = repository.finished
     assert args[1] == JobStatus.SUCCEEDED
     assert kwargs["terminal_reason"] == "completed"
     assert kwargs["artifact"].schema_valid is True
-    assert kwargs["artifact"].content["summary"] == '{"summary":"invalid"}'
+    assert kwargs["artifact"].content["summary"] == '{"summary":"<redacted>"}'

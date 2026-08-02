@@ -10,6 +10,11 @@ import transcript
 from tests.helpers import ToolUseBlock
 
 
+def test_tool_result_failure_uses_current_result_schema_only() -> None:
+    assert transcript.tool_result_failed({"content": '{"ok": false, "error": "failed"}'}) is True
+    assert transcript.tool_result_failed({"content": '{"exit_code": 1}'}) is False
+
+
 def test_save_transcript_writes_jsonl() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         store = transcript.TranscriptStore(Path(tmpdir))
@@ -29,6 +34,19 @@ def test_save_transcript_writes_jsonl() -> None:
     assert json.loads(lines[0]) == {"role": "user", "content": "hello"}
     assert json.loads(lines[1])["content"][0]["type"] == "ToolUseBlock"
     assert stored_messages[0] == {"role": "user", "content": "hello"}
+
+
+def test_save_transcript_redacts_registered_secrets(tmp_path: Path) -> None:
+    from auth.secrets import register_secret
+
+    register_secret("transcript-secret-sentinel")
+    path = transcript.TranscriptStore(tmp_path).save([
+        {"role": "user", "content": "value=transcript-secret-sentinel"},
+    ])
+
+    content = path.read_text(encoding="utf-8")
+    assert "transcript-secret-sentinel" not in content
+    assert "<redacted>" in content
 
 
 def test_transcript_read_rejects_unsafe_paths() -> None:

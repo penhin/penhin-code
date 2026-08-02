@@ -2,6 +2,7 @@ import hashlib
 import json
 from typing import Any
 
+from orchestration.service import agent_types
 from skills import load_skill
 from . import tasks as task_tools
 from .files import run_edit, run_list, run_read, run_search, run_write
@@ -13,6 +14,7 @@ from .orchestration import (
     run_agent_job_cancel,
     run_agent_job_list,
     run_agent_job_show,
+    run_agent_job_start,
     run_agent_job_wait,
     run_agent_plan_create,
     run_integration_show,
@@ -216,38 +218,22 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         available_to_parent=True,
         approval=ToolApproval(),
     ),
-    "background_start": ToolSpec(
-        name="background_start",
-        description="Start a focused background task and return immediately with its task id.",
-        input_schema=object_schema({"task": {"type": "string"}}, ["task"]),
+    "agent_job_start": ToolSpec(
+        name="agent_job_start",
+        description="Start a persistent Agent job and return its UUID immediately.",
+        input_schema=object_schema({
+            "task": {"type": "string"},
+            "agent_type": {"type": "string", "enum": list(agent_types())},
+            "root_task_id": {"type": "string"},
+        }, ["task"]),
         category=ToolCategory.agent,
-        handler=lambda **kwargs: task_tools.run_background_start(kwargs["task"]),
+        handler=lambda **kwargs: run_agent_job_start(
+            kwargs["task"], kwargs.get("agent_type", "general"), kwargs.get("root_task_id", ""),
+        ),
         parallel_safe=False,
         available_to_child=False,
         available_to_parent=True,
         approval=ToolApproval(requires_approval=True, key=lambda tool_input: _short_digest(tool_input.get("task", ""))),
-    ),
-    "background_list": ToolSpec(
-        name="background_list",
-        description="Show all background tasks and their current statuses.",
-        input_schema=object_schema(),
-        category=ToolCategory.state,
-        handler=lambda **kwargs: task_tools.run_background_list(),
-        parallel_safe=True,
-        available_to_child=False,
-        available_to_parent=True,
-        approval=ToolApproval(),
-    ),
-    "background_show": ToolSpec(
-        name="background_show",
-        description="Show one background task with its result or error.",
-        input_schema=object_schema({"id": {"type": "integer"}}, ["id"]),
-        category=ToolCategory.state,
-        handler=lambda **kwargs: task_tools.run_background_show(id=kwargs["id"]),
-        parallel_safe=True,
-        available_to_child=False,
-        available_to_parent=True,
-        approval=ToolApproval(),
     ),
     "agent_job_show": ToolSpec(
         name="agent_job_show",

@@ -136,7 +136,10 @@ class PostgresOrchestrationRepository:
         with self._connection() as connection, connection.cursor() as cursor:
             cursor.execute(SCHEMA_SQL)
 
-    def create_root_job(self, subject: str, instruction: str, role: AgentRole = AgentRole.GENERAL) -> AgentJob:
+    def create_root_job(
+        self, subject: str, instruction: str, role: AgentRole = AgentRole.GENERAL,
+        status: JobStatus = JobStatus.QUEUED,
+    ) -> AgentJob:
         job_id = str(uuid4())
         return self.create_job(AgentJob(
             id=job_id,
@@ -144,18 +147,7 @@ class PostgresOrchestrationRepository:
             role=role,
             subject=subject,
             instruction=instruction,
-        ))
-
-    def create_root_task(self, subject: str, instruction: str) -> AgentJob:
-        """Create a completed coordination root that is never claimed by a Worker."""
-        job_id = str(uuid4())
-        return self.create_job(AgentJob(
-            id=job_id,
-            root_task_id=job_id,
-            role=AgentRole.GENERAL,
-            subject=subject,
-            instruction=instruction,
-            status=JobStatus.SUCCEEDED,
+            status=status,
         ))
 
     def create_job(self, job: AgentJob) -> AgentJob:
