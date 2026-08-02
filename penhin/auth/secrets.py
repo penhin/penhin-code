@@ -76,8 +76,8 @@ def trusted_worker_environment(source: Mapping[str, str] | None = None) -> dict[
     values = os.environ if source is None else source
     exact = {
         "PATH", "PYTHONPATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "TZ",
-        "LLM_PROVIDER", "MODEL_ID", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY",
-        "ANTHROPIC_BASE_URL", "OPENAI_BASE_URL", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY",
+        "LLM_PROVIDER", "MODEL_ID", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY",
+        "ANTHROPIC_BASE_URL", "OPENAI_BASE_URL", "DEEPSEEK_BASE_URL", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY",
         "https_proxy", "http_proxy", "no_proxy", "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR",
     }
     return {

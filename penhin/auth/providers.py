@@ -59,6 +59,7 @@ PROVIDER_AUTHS: dict[str, BuiltinProviderAuth] = {
     "openai": BuiltinProviderAuth("openai", api_key_env="OPENAI_API_KEY"),
     "openai-codex": BuiltinProviderAuth("openai-codex", oauth=True),
     "gemini": BuiltinProviderAuth("gemini", api_key_env="GEMINI_API_KEY"),
+    "deepseek": BuiltinProviderAuth("deepseek", api_key_env="DEEPSEEK_API_KEY"),
 }
 
 

@@ -62,7 +62,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--resume", "-r", metavar="ID", help="resume a specific session")
     parser.add_argument("--quality-gate", action="store_true", help="run syntax, diff, and test quality gates")
     parser.add_argument("--model", metavar="MODEL", help="use a model for this session without changing saved configuration")
-    parser.add_argument("--provider", choices=("anthropic", "openai", "openai-codex", "gemini"), help="use a Provider for this session without changing saved configuration")
+    parser.add_argument("--provider", choices=("anthropic", "openai", "openai-codex", "gemini", "deepseek"), help="use a Provider for this session without changing saved configuration")
     return parser.parse_args(args)
 
 
@@ -124,8 +124,8 @@ def main() -> None:
         session_path=session_path,
     )
     workspace = workspace_info()
-    provider = os.getenv("LLM_PROVIDER", "").strip().lower() or "anthropic"
-    api_label = {"anthropic": "Anthropic API", "openai": "OpenAI API", "openai-codex": "OpenAI ChatGPT Plus/Pro", "gemini": "Gemini API"}.get(provider, provider or "Configured API")
+    provider = runtime_manager.configured_provider()
+    api_label = {"anthropic": "Anthropic API", "openai": "OpenAI API", "openai-codex": "OpenAI ChatGPT Plus/Pro", "gemini": "Gemini API", "deepseek": "DeepSeek API"}.get(provider, provider or "Configured API")
     print_welcome(
         version=get_version(),
         api=api_label,

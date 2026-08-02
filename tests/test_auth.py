@@ -36,10 +36,12 @@ def test_provider_auth_capabilities_match_runtime_protocols() -> None:
     assert provider_auth("openai").methods() == ("api_key",)
     assert provider_auth("openai-codex").methods() == ("oauth",)
     assert provider_auth("gemini").methods() == ("api_key",)
+    assert provider_auth("deepseek").methods() == ("api_key",)
     assert provider_key_name("anthropic") == "ANTHROPIC_API_KEY"
     assert provider_key_name("openai") == "OPENAI_API_KEY"
     assert provider_key_name("openai-codex") is None
     assert provider_key_name("gemini") == "GEMINI_API_KEY"
+    assert provider_key_name("deepseek") == "DEEPSEEK_API_KEY"
     with pytest.raises(ValueError):
         provider_auth("openai-codex").resolve(ApiKeyCredential(key="wrong-kind"))
 

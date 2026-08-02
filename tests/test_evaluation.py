@@ -207,19 +207,24 @@ def test_observer_adds_cross_process_correlation(tmp_path: Path, monkeypatch: py
 
 def test_runtime_emits_llm_usage_and_first_token_latency(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from penhin.runtime import manager as runtime
+    requests = []
 
     class Provider:
         retry_errors = ()
 
-        def stream_message(self, _request, callback):
+        def stream_message(self, request, callback):
+            requests.append(request)
             callback("hello")
             return LLMResponse([{"type": "text", "text": "hello"}], "end_turn", LLMUsage(11, 4))
 
     monkeypatch.delenv("PENHIN_EVAL_BUDGET_FILE", raising=False)
     observer = EvaluationObserver(tmp_path, "run", "case", 1)
     with observing(observer):
-        response = runtime.Runtime(Provider(), "model").call_with_retry("system", [], stream_callback=lambda _text: None)
+        response = runtime.Runtime(Provider(), "model", thinking_level="max").call_with_retry(
+            "system", [], stream_callback=lambda _text: None,
+        )
     assert response.usage.input_tokens == 11
+    assert requests[0].thinking_level == "max"
     completed = [event for event in read_events(tmp_path) if event["event_type"] == "llm_call_completed"][0]
     assert completed["payload"]["usage"]["output_tokens"] == 4
     assert completed["payload"]["first_token_ms"] is not None

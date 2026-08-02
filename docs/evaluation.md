@@ -11,7 +11,7 @@ python -m pytest -q tests/test_evaluation.py
 
 ## 真实基线配置
 
-除正常的 `LLM_PROVIDER`、`MODEL_ID` 和 Provider 密钥外，必须显式设置：
+先通过 `/login` 选择主 Provider、凭证和模型。Judge 模型与价格仍必须显式设置：
 
 ```text
 PENHIN_EVAL_JUDGE_PROVIDER=gemini

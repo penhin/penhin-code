@@ -34,7 +34,7 @@ def test_handle_local_command_shows_help() -> None:
     mocked_print_info.assert_any_call("/permission Show or set permission mode")
     mocked_print_info.assert_any_call("/help Show local commands")
     mocked_print_info.assert_any_call("/status Show session and runtime status")
-    mocked_print_info.assert_any_call("/model Show or set model id")
+    mocked_print_info.assert_any_call("/model Select a model")
     mocked_print_info.assert_any_call("/provider Show or switch provider")
     mocked_print_info.assert_any_call("/circuit Show circuit breaker status")
     mocked_print_info.assert_any_call("/compact Compact current session, optionally with a hint")
@@ -89,6 +89,7 @@ def test_handle_local_command_shows_status() -> None:
         "Proxy: http://127.0.0.1:15715",
         "",
         "Model: claude-test",
+        "Thinking: -",
         "Model compatibility: compatible",
         "IDE: Not connected",
         "MCP servers: none",
@@ -229,7 +230,6 @@ def test_handle_compact_command_uses_hint() -> None:
 
 def test_handle_model_command_updates_config_and_runtime() -> None:
     with (
-        patch("penhin.cli.commands._handlers.set_env_value") as mocked_set_env_value,
         patch("penhin.cli.commands._handlers.runtime_manager.set_model") as mocked_set_runtime_model,
         patch("penhin.cli.commands._handlers.set_provider_model") as mocked_set_provider_model,
         patch("penhin.cli.commands._handlers.runtime_manager.configured_provider", return_value="anthropic"),
@@ -237,10 +237,21 @@ def test_handle_model_command_updates_config_and_runtime() -> None:
     ):
         assert router.handle_local_command("/model claude-test") is True
 
-    mocked_set_env_value.assert_called_once_with("MODEL_ID", "claude-test")
     mocked_set_runtime_model.assert_called_once_with("claude-test")
     mocked_set_provider_model.assert_called_once_with("anthropic", "claude-test")
-    mocked_print_info.assert_called_once_with("model: claude-test")
+    mocked_print_info.assert_called_once_with("model: anthropic/claude-test")
+
+
+def test_handle_model_command_switches_provider_with_pi_style_reference() -> None:
+    with (
+        patch("penhin.cli.commands._handlers.runtime_manager.configured_provider", return_value="anthropic"),
+        patch("penhin.cli.commands._handlers._apply_provider_selection") as apply_selection,
+        patch("penhin.cli.commands._handlers.ui.print_info") as print_info,
+    ):
+        assert router.handle_local_command("/model deepseek/deepseek-v4-pro:max") is True
+
+    apply_selection.assert_called_once_with("deepseek", "deepseek-v4-pro", "max")
+    print_info.assert_called_once_with("model: deepseek/deepseek-v4-pro · thinking max")
 
 
 def test_login_refuses_to_collect_credentials_without_storage_consent() -> None:
@@ -269,7 +280,8 @@ def test_login_storage_consent_selects_file_before_collecting_secret() -> None:
         patch("penhin.cli.commands._handlers.set_credential_backend") as set_backend,
         patch("penhin.cli.commands._handlers.FileCredentialStore", return_value=store),
         patch("penhin.cli.commands._handlers.provider_auth", return_value=provider),
-        patch("penhin.cli.commands._handlers._activate_login"),
+        patch("penhin.cli.commands._handlers._select_provider_model", return_value="gpt-5.4"),
+        patch("penhin.cli.commands._handlers._apply_provider_selection"),
         patch("penhin.cli.commands._handlers.ui.print_info"),
     ):
         commands._login_api_key("openai")
@@ -296,6 +308,7 @@ def test_login_chooses_authentication_type_before_api_key_provider() -> None:
             ("anthropic", "Anthropic API key"),
             ("openai", "OpenAI API key"),
             ("gemini", "Google Gemini API key"),
+            ("deepseek", "DeepSeek API key"),
         ),
     )
     login_api_key.assert_called_once_with("gemini")
@@ -389,23 +402,43 @@ def test_handle_provider_command_switches_provider_and_model() -> None:
     with (
         patch.dict("penhin.cli.commands._handlers.os.environ", {"LLM_PROVIDER": "anthropic", "MODEL_ID": "claude-test", "OPENAI_API_KEY": "sk-openai"}, clear=True),
         patch("penhin.cli.commands._handlers.runtime_manager.switch_provider") as mocked_set_runtime_provider,
-        patch("penhin.cli.commands._handlers.update_env_values") as mocked_update_env_values,
+        patch("penhin.cli.commands._handlers.set_active_provider") as mocked_set_active_provider,
         patch("penhin.cli.commands._handlers.set_provider_model") as mocked_set_provider_model,
         patch("penhin.cli.commands._handlers.ui.print_info") as mocked_print_info,
     ):
         assert router.handle_local_command("/provider openai gpt-4.1") is True
 
     mocked_set_runtime_provider.assert_called_once_with("openai", "gpt-4.1")
-    mocked_update_env_values.assert_called_once_with({"LLM_PROVIDER": "openai", "MODEL_ID": "gpt-4.1"})
+    mocked_set_active_provider.assert_called_once_with("openai")
     mocked_set_provider_model.assert_called_once_with("openai", "gpt-4.1")
     mocked_print_info.assert_called_once_with("provider: openai")
 
 
-def test_handle_provider_command_requires_a_matching_model_and_key() -> None:
-    with patch.dict("penhin.cli.commands._handlers.os.environ", {"MODEL_ID": "claude-test", "OPENAI_API_KEY": "sk-openai"}, clear=True), patch("penhin.cli.commands._handlers.ui.print_error") as mocked_print_error:
+def test_handle_provider_command_selects_model_when_provider_has_no_saved_model() -> None:
+    with (
+        patch("penhin.cli.commands._handlers.get_provider_model", return_value=""),
+        patch("penhin.cli.commands._handlers._select_provider_model", return_value="gpt-5.4") as select_model,
+        patch("penhin.cli.commands._handlers._apply_provider_selection") as apply_selection,
+        patch("penhin.cli.commands._handlers.ui.print_info"),
+    ):
         assert router.handle_local_command("/provider openai") is True
 
-    mocked_print_error.assert_called_once_with("Model 'claude-test' is not compatible with openai. Use: /provider openai MODEL_ID")
+    select_model.assert_called_once_with("openai")
+    apply_selection.assert_called_once_with("openai", "gpt-5.4")
+
+
+def test_model_command_without_argument_opens_provider_model_selector() -> None:
+    with (
+        patch("penhin.cli.commands._handlers.runtime_manager.configured_provider", return_value="anthropic"),
+        patch("penhin.cli.commands._handlers._select_model_provider", return_value="anthropic"),
+        patch("penhin.cli.commands._handlers._select_provider_model", return_value="claude-sonnet-5") as select_model,
+        patch("penhin.cli.commands._handlers.runtime_manager.set_model"),
+        patch("penhin.cli.commands._handlers.set_provider_model"),
+        patch("penhin.cli.commands._handlers.ui.print_info"),
+    ):
+        assert router.handle_local_command("/model") is True
+
+    select_model.assert_called_once_with("anthropic")
 
 
 def test_handle_force_snip_lists_turns() -> None:

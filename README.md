@@ -30,20 +30,12 @@ penhin
 
 首次启动后执行 `/login`。Penhin 会先让你选择认证方式，再显示可用的 Provider：
 
-- API key：Anthropic、OpenAI 或 Gemini。
+- API key：Anthropic、OpenAI、Gemini 或 DeepSeek。
 - Account：Claude Pro/Max 或 ChatGPT Plus/Pro，属于实验性 OAuth 支持。
 
-凭证优先保存到系统钥匙串。系统钥匙串不可用时，Penhin 会询问是否改用权限为 `0600` 的本地凭证文件，不会静默降级。
+凭证优先保存到系统钥匙串。系统钥匙串不可用时，Penhin 会询问是否改用权限为 `0600` 的本地凭证文件，不会静默降级。认证成功后会列出该 Provider 的兼容模型，选择结果保存在用户配置中。
 
-也可以通过环境变量提供凭证：
-
-```bash
-LLM_PROVIDER=openai
-MODEL_ID=<model-id>
-OPENAI_API_KEY=<api-key>
-```
-
-支持的 Provider 为 `anthropic`、`openai`、`openai-codex` 和 `gemini`。
+支持的 Provider 为 `anthropic`、`openai`、`openai-codex`、`gemini` 和 `deepseek`。
 
 ## 常用操作
 
@@ -52,11 +44,19 @@ OPENAI_API_KEY=<api-key>
 /logout [provider]             删除 Penhin 保存的凭证
 /auth status                   查看认证状态和来源
 /provider <provider> [model]   切换 Provider
-/model <model>                 切换模型
+/model [provider/model]        选择模型；不带参数时打开列表
+/thinking [off|high|max]       调整当前模型的思考等级
 /status                        查看当前状态
 /permission <mode>             切换权限模式
 /compact                       压缩当前会话上下文
 /help                          查看全部本地命令
+```
+
+例如选择 DeepSeek Pro，或同时指定思考等级：
+
+```text
+/model deepseek/deepseek-v4-pro
+/model deepseek/deepseek-v4-pro:max
 ```
 
 单次执行或开启新会话：

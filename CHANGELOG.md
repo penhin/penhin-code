@@ -6,19 +6,22 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-02
+
 ### Added
 
 - Added Pi-style `/login`, `/logout`, and `/auth` commands with account/API-key selection and hidden API-key input.
 - Added system-keyring credential storage with an explicit, permission-hardened file fallback.
 - Added experimental Claude Pro/Max and ChatGPT Plus/Pro OAuth with PKCE, loopback/manual callbacks, device authorization, and serialized token refresh.
 - Added an isolated `openai-codex` SSE provider for ChatGPT subscription credentials.
+- Added DeepSeek V4 Pro/Flash with tool calling, reasoning replay, and Pi-style model/thinking selection.
+- Expanded Agent evaluation with trace diagnostics, budget controls, resumable runs, and regression reporting.
 
-### Security
+### Changed
 
-- Removed API keys from command arguments and scrubbed credentials from tool subprocess environments, logs, and evaluation events.
-- Added explicit user-env migration and source-aware authentication status without modifying project `.env` files.
-
-## [0.1.1] - 2026-07-30
+- Established stable CLI, Agent, runtime, auth, Provider, tool, orchestration, evaluation, and infrastructure package boundaries.
+- Removed legacy background-task, credential migration, runtime compatibility, and duplicate state layers.
+- Simplified user-facing configuration around `/login`; `pyproject.toml` is now the dependency source of truth.
 
 ### Fixed
 
@@ -26,11 +29,13 @@ All notable changes to this project will be documented in this file. The format 
 - Isolated default tests from developer database configuration and made PostgreSQL integration opt-in.
 - Prevented Agent shell commands from traversing outside their assigned worktree.
 - Added explicit DAG finalization into an isolated, verifiable integration worktree.
+- Fixed browser authorization fallback behavior and restored normal terminal input after interrupted secret prompts.
 
-### Changed
+### Security
 
-- Split model-driven and fixture-driven multi-agent regression gates.
-- Diversified the baseline suite across Python, JavaScript, and Go fixtures.
+- Removed API keys from command arguments and scrubbed credentials from tool subprocess environments, logs, and evaluation events.
+- Added source-aware authentication status while keeping project `.env` files untouched.
+- Added secret sentinels and unified redaction across transcripts, events, reports, artifacts, logs, and worker environments.
 
 ## [0.1.0] - 2026-07-30
 

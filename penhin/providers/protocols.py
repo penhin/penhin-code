@@ -24,6 +24,7 @@ class LLMRequest:
     messages: list[dict[str, Any]]
     max_tokens: int
     tools: list[dict[str, Any]] | None = None
+    thinking_level: str | None = None
 
 
 @dataclass(frozen=True)

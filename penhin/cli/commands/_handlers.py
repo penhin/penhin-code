@@ -5,8 +5,9 @@ from pathlib import Path
 from penhin.cli import ui
 
 from penhin.infrastructure.config import (
-    CONFIG_FILE, ENV_FILE, get_permission_mode, get_provider_model, get_version,
-    set_credential_backend, set_env_value, set_permission_mode, set_provider_model, update_env_values,
+    CONFIG_FILE, ENV_FILE, get_permission_mode, get_provider_model, get_provider_thinking_level, get_version,
+    set_active_provider, set_credential_backend, set_permission_mode, set_provider_model,
+    set_provider_thinking_level,
 )
 from penhin.auth import auth_resolver, credential_store, provider_auth, provider_auth_ids, provider_key_name
 from penhin.auth.browser import open_browser
@@ -15,7 +16,9 @@ from penhin.auth.storage import CredentialStoreUnavailable, FileCredentialStore
 from penhin.agent.context import RunContext, conversation_turn_ranges, parse_snip_selectors
 from penhin.permissions import PERMISSION_MODES, PermissionMode, transition_mode
 from penhin.runtime import runtime_manager
-from penhin.providers.models import validate_model
+from penhin.providers.models import (
+    model_options, model_thinking_levels, parse_model_reference, supports_custom_model, validate_model,
+)
 from penhin.tools.execution import runtime_permission_setup
 from penhin.tools.registry import tool_names
 from penhin.tools.builtin.workspace import workspace_info
@@ -32,6 +35,7 @@ def provider_label(provider: str) -> str:
         "openai": "OpenAI API",
         "openai-codex": "OpenAI ChatGPT Plus/Pro",
         "gemini": "Gemini API",
+        "deepseek": "DeepSeek API",
     }
     return labels.get(provider, provider or "-")
 
@@ -41,6 +45,7 @@ def provider_base_url(provider: str) -> tuple[str, str] | None:
         "anthropic": ("ANTHROPIC_BASE_URL", "Anthropic base URL"),
         "openai": ("OPENAI_BASE_URL", "OpenAI base URL"),
         "openai-codex": ("PENHIN_OPENAI_CODEX_BASE_URL", "OpenAI Codex base URL"),
+        "deepseek": ("DEEPSEEK_BASE_URL", "DeepSeek base URL"),
     }
     env_name, label = env_names.get(
         provider,
@@ -83,7 +88,59 @@ def runtime_model() -> str:
     try:
         return runtime_manager.current().model
     except RuntimeError:
-        return os.getenv("MODEL_ID", "-")
+        return get_provider_model(runtime_manager.configured_provider()) or "-"
+
+
+def _select_provider_model(provider: str) -> str:
+    current = get_provider_model(provider)
+    options = tuple(
+        (
+            item.id,
+            f"{item.name}  ·  {item.id}" + ("  (current)" if item.id == current else ""),
+        )
+        for item in model_options(provider)
+    )
+    if supports_custom_model(provider):
+        options += (("__custom__", "Custom model ID"),)
+    if not options:
+        raise ValueError(f"No model catalog is available for {provider}")
+    selected = ui.prompt_select(f"Choose a model for {provider}", options)
+    if selected == "__custom__":
+        selected = ui.prompt_text(f"Custom model ID for {provider}")
+    validate_model(provider, selected)
+    return selected
+
+
+def _select_model_provider() -> str:
+    current = runtime_manager.configured_provider()
+    configured: list[str] = []
+    for provider in provider_auth_ids():
+        try:
+            if auth_resolver().status(provider).get("configured"):
+                configured.append(provider)
+        except CredentialStoreUnavailable:
+            continue
+    if current not in configured:
+        configured.insert(0, current)
+    else:
+        configured = [current, *(provider for provider in configured if provider != current)]
+    if len(configured) == 1:
+        return configured[0]
+    return ui.prompt_select(
+        "Choose a provider",
+        tuple((provider, provider_label(provider)) for provider in configured),
+    )
+
+
+def _effective_thinking_level(provider: str, model: str, requested: str | None = None) -> str | None:
+    levels = model_thinking_levels(provider, model)
+    if not levels:
+        return None
+    saved = get_provider_thinking_level(provider)
+    level = requested or (saved if saved in levels else "high" if "high" in levels else levels[0])
+    if level not in levels:
+        raise ValueError(f"Thinking level {level!r} is not supported; choose {', '.join(levels)}")
+    return level
 
 
 def build_status_lines(context: RunContext | None = None) -> list[str]:
@@ -109,6 +166,7 @@ def build_status_lines(context: RunContext | None = None) -> list[str]:
         f"Proxy: {proxy_url()}",
         "",
         f"Model: {runtime_model()}",
+        f"Thinking: {get_provider_thinking_level(provider) or '-'}",
         model_compatibility_line(provider),
         "IDE: Not connected",
         "MCP servers: none",
@@ -156,28 +214,63 @@ def handle_permission_command(args: list[str], context: RunContext | None = None
 
 
 def handle_model_command(args: list[str], context: RunContext | None = None):
-    if not args:
-        try:
-            ui.print_info(f"model: {runtime_manager.current().model}")
-        except RuntimeError:
-            ui.print_error("Runtime is not initialized.")
-        return
-
-    model = " ".join(args).strip()
-    if not model:
-        ui.print_error("Usage: /model MODEL_ID")
+    current_provider = runtime_manager.configured_provider()
+    try:
+        if args:
+            reference = " ".join(args).strip()
+            try:
+                provider, model, requested_level = parse_model_reference(reference, current_provider)
+            except ValueError:
+                # Custom gateways retain direct model-ID support for the active provider.
+                if "/" in reference or ":" in reference:
+                    raise
+                validate_model(current_provider, reference)
+                provider, model, requested_level = current_provider, reference, None
+        else:
+            provider = _select_model_provider()
+            model = _select_provider_model(provider)
+            requested_level = None
+        thinking_level = _effective_thinking_level(provider, model, requested_level)
+    except (ValueError, KeyboardInterrupt) as error:
+        ui.print_error("model selection cancelled" if isinstance(error, KeyboardInterrupt) else str(error))
         return
 
     try:
-        runtime_manager.set_model(model)
-    except ValueError as error:
+        if provider == current_provider:
+            runtime_manager.set_model(model)
+            runtime_manager.set_thinking_level(thinking_level)
+            set_provider_model(provider, model)
+            if thinking_level is not None:
+                set_provider_thinking_level(provider, thinking_level)
+        else:
+            _apply_provider_selection(provider, model, thinking_level)
+    except (ValueError, RuntimeError) as error:
         ui.print_error(str(error))
         return
-    os.environ["MODEL_ID"] = model
-    set_env_value("MODEL_ID", model)
-    set_provider_model(runtime_manager.configured_provider(), model)
-    runtime_manager.mark_setting_source("MODEL_ID", "User env")
-    ui.print_info(f"model: {model}")
+    suffix = f" · thinking {thinking_level}" if thinking_level else ""
+    ui.print_info(f"model: {provider}/{model}{suffix}")
+
+
+def handle_thinking_command(args: list[str], context: RunContext | None = None):
+    provider = runtime_manager.configured_provider()
+    model = runtime_model()
+    levels = model_thinking_levels(provider, model)
+    if not levels:
+        ui.print_error(f"{provider}/{model} does not expose configurable thinking levels")
+        return
+    try:
+        level = args[0].lower() if args else ui.prompt_select(
+            "Choose a thinking level",
+            tuple((item, item + ("  (current)" if item == get_provider_thinking_level(provider) else "")) for item in levels),
+        )
+        if level not in levels:
+            raise ValueError(f"Unsupported thinking level: {level}; choose {', '.join(levels)}")
+    except (ValueError, KeyboardInterrupt) as error:
+        ui.print_error("thinking selection cancelled" if isinstance(error, KeyboardInterrupt) else str(error))
+        return
+    runtime_manager.set_thinking_level(level)
+    set_provider_thinking_level(provider, level)
+    ui.print_info(f"thinking: {level}")
 
 
 def handle_provider_command(args: list[str], context: RunContext | None = None):
@@ -187,9 +280,20 @@ def handle_provider_command(args: list[str], context: RunContext | None = None):
 
     provider = args[0].lower()
     if provider not in provider_auth_ids():
-        ui.print_error(f"Unsupported provider: {provider}; choose anthropic, openai, openai-codex, or gemini")
+        ui.print_error(f"Unsupported provider: {provider}; choose anthropic, openai, openai-codex, gemini, or deepseek")
         return
-    model = " ".join(args[1:]).strip() or runtime_model()
+    model = " ".join(args[1:]).strip()
+    if not model:
+        saved = get_provider_model(provider)
+        try:
+            if saved:
+                validate_model(provider, saved)
+                model = saved
+            else:
+                model = _select_provider_model(provider)
+        except (ValueError, KeyboardInterrupt) as error:
+            ui.print_error("model selection cancelled" if isinstance(error, KeyboardInterrupt) else str(error))
+            return
     try:
         validate_model(provider, model)
     except ValueError:
@@ -243,45 +347,22 @@ def _writable_store():
         return FileCredentialStore()
 
 
-def _apply_provider_selection(provider: str, model: str) -> None:
-    old_provider, old_model = os.environ.get("LLM_PROVIDER"), os.environ.get("MODEL_ID")
-    os.environ["LLM_PROVIDER"], os.environ["MODEL_ID"] = provider, model
-    try:
-        runtime_manager.switch_provider(provider, model)
-    except Exception:
-        if old_provider is None:
-            os.environ.pop("LLM_PROVIDER", None)
-        else:
-            os.environ["LLM_PROVIDER"] = old_provider
-        if old_model is None:
-            os.environ.pop("MODEL_ID", None)
-        else:
-            os.environ["MODEL_ID"] = old_model
-        raise
-    update_env_values({"LLM_PROVIDER": provider, "MODEL_ID": model})
+def _apply_provider_selection(provider: str, model: str, thinking_level: str | None = None) -> None:
+    runtime_manager.switch_provider(provider, model)
+    level = _effective_thinking_level(provider, model, thinking_level)
+    runtime_manager.set_thinking_level(level)
+    set_active_provider(provider)
     set_provider_model(provider, model)
-    runtime_manager.mark_setting_source("LLM_PROVIDER", "User env")
-    runtime_manager.mark_setting_source("MODEL_ID", "User env")
-
-
-def _activate_login(provider: str) -> None:
-    model = get_provider_model(provider)
-    if not model:
-        current = runtime_model()
-        try:
-            validate_model(provider, current)
-            model = current
-        except ValueError:
-            model = ui.prompt_text(f"Model ID for {provider}")
-    validate_model(provider, model)
-    _apply_provider_selection(provider, model)
+    if level is not None:
+        set_provider_thinking_level(provider, level)
 
 
 def _save_login(provider: str, credential, started: float | None = None, store=None) -> None:
     from penhin.evaluation.observer import emit
     store = store or _writable_store()
+    model = _select_provider_model(provider)
     store.modify(provider, lambda _current: credential)
-    _activate_login(provider)
+    _apply_provider_selection(provider, model)
     emit(
         "auth_login_completed", provider=provider, auth_type=credential.type,
         backend=store.backend_name, duration_ms=(time.perf_counter() - started) * 1000 if started is not None else None,
@@ -311,6 +392,7 @@ _LOGIN_PROVIDER_LABELS = {
         "anthropic": "Anthropic API key",
         "openai": "OpenAI API key",
         "gemini": "Google Gemini API key",
+        "deepseek": "DeepSeek API key",
     },
     "oauth": {
         "anthropic": "Claude Pro/Max account",

@@ -31,11 +31,12 @@ def prompt_input(prompt: str = "❯ ", completer=None) -> str:
     return get_prompt_session().prompt(
         ANSI(f"\x1b[1;36m{prompt}\x1b[0m"),
         completer=completer,
+        is_password=False,
     )
 
 
 async def prompt_text_async(message: str) -> str:
-    value = await get_prompt_session().prompt_async(f"{message}: ")
+    value = await get_prompt_session().prompt_async(f"{message}: ", is_password=False)
     return value.strip()
 
 
@@ -44,12 +45,12 @@ def prompt_secret(message: str) -> str:
 
 
 def prompt_text(message: str) -> str:
-    return get_prompt_session().prompt(f"{message}: ").strip()
+    return get_prompt_session().prompt(f"{message}: ", is_password=False).strip()
 
 
 def prompt_confirm(message: str, default: bool = False) -> bool:
     suffix = "[Y/n]" if default else "[y/N]"
-    answer = get_prompt_session().prompt(f"{message} {suffix} ").strip().lower()
+    answer = get_prompt_session().prompt(f"{message} {suffix} ", is_password=False).strip().lower()
     return answer in ({"", "y", "yes"} if default else {"y", "yes"})
 
 
@@ -58,14 +59,23 @@ def prompt_select(message: str, options: tuple[tuple[str, str], ...]) -> str:
     for index, (_value, label) in enumerate(options, 1):
         console.print(f"  {index}. {label}")
     console.print()
-    answer = get_prompt_session().prompt("Choose: ").strip()
+    answer = get_prompt_session().prompt("Choose (number or search): ", is_password=False).strip()
     try:
         index = int(answer) - 1
-    except ValueError as error:
-        raise ValueError("invalid selection") from error
-    if index < 0 or index >= len(options):
+    except ValueError:
+        query = answer.casefold()
+        exact = [value for value, label in options if query in {value.casefold(), label.casefold()}]
+        if len(exact) == 1:
+            return exact[0]
+        matches = [value for value, label in options if query and (query in value.casefold() or query in label.casefold())]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise ValueError("ambiguous selection; enter a more specific search or its number")
         raise ValueError("invalid selection")
-    return options[index][0]
+    if 0 <= index < len(options):
+        return options[index][0]
+    raise ValueError("invalid selection")
 
 
 def print_welcome(*, version: str, api: str, model: str, workspace: str) -> None:

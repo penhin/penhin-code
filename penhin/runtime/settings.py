@@ -7,7 +7,7 @@ from pathlib import Path
 from dotenv import dotenv_values, load_dotenv
 
 from penhin.auth.resolver import set_process_environment_names
-from penhin.infrastructure.config import ENV_FILE
+from penhin.infrastructure.config import ENV_FILE, get_active_provider, get_provider_model, load_config
 
 from .retry import CircuitBreaker
 
@@ -64,11 +64,19 @@ def build_compact_circuit_breaker() -> CircuitBreaker | None:
 
 
 def configured_provider() -> str:
-    return os.getenv("LLM_PROVIDER", "").strip().lower() or "anthropic"
+    return os.getenv("LLM_PROVIDER", "").strip().lower() or get_active_provider()
+
+
+def configured_model(provider: str) -> str:
+    return os.getenv("MODEL_ID", "").strip() or get_provider_model(provider)
 
 
 def setting_source(name: str) -> str:
     if not os.getenv(name):
+        if name == "LLM_PROVIDER":
+            return "User config" if "active_provider" in load_config() else "Default"
+        if name == "MODEL_ID" and get_provider_model(configured_provider()):
+            return "User config"
         return "not set"
     return _environment_sources.get(name, "Process environment")
 

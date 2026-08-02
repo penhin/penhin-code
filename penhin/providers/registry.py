@@ -44,6 +44,15 @@ def _gemini(resolved: ResolvedAuth) -> LLMProvider:
     return GeminiProvider(api_key=credential.key)
 
 
+def _deepseek(resolved: ResolvedAuth) -> LLMProvider:
+    from .deepseek import DeepSeekProvider
+
+    credential = provider_auth("deepseek").resolve(resolved.credential)
+    if not isinstance(credential, ApiKeyCredential):
+        raise TypeError("deepseek requires an API key credential")
+    return DeepSeekProvider(api_key=credential.key, base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"))
+
+
 def _openai_codex(resolved: ResolvedAuth) -> LLMProvider:
     from .openai_codex import OpenAICodexProvider
 
@@ -59,6 +68,7 @@ _BUILDERS: dict[str, ProviderBuilder] = {
     "anthropic": _anthropic,
     "openai": _openai,
     "gemini": _gemini,
+    "deepseek": _deepseek,
     "openai-codex": _openai_codex,
 }
 

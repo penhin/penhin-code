@@ -49,39 +49,6 @@ def save_config(config: dict[str, Any]) -> None:
     )
 
 
-def set_env_value(name: str, value: str) -> None:
-    update_env_values({name: value})
-
-
-def update_env_values(values: dict[str, str]) -> None:
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-
-    lines = []
-    if ENV_FILE.exists():
-        try:
-            lines = ENV_FILE.read_text(encoding="utf-8").splitlines()
-        except OSError:
-            lines = []
-
-    pending = dict(values)
-    new_lines = []
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("#") or "=" not in line:
-            new_lines.append(line)
-            continue
-
-        key = line.split("=", 1)[0].strip()
-        if key in pending:
-            new_lines.append(f"{key}={pending.pop(key)}")
-        else:
-            new_lines.append(line)
-
-    new_lines.extend(f"{name}={value}" for name, value in pending.items())
-
-    atomic_write_text(ENV_FILE, "\n".join(new_lines).rstrip() + "\n", mode=0o600)
-
-
 def get_permission_mode() -> str:
     return str(load_config().get("permission_mode", DEFAULT_CONFIG["permission_mode"]))
 
@@ -115,4 +82,28 @@ def set_provider_model(provider: str, model: str) -> None:
     if not isinstance(models, dict):
         models = {}
     config["provider_models"] = {**models, provider: model}
+    save_config(config)
+
+
+def get_provider_thinking_level(provider: str) -> str:
+    levels = load_config().get("provider_thinking_levels", {})
+    return str(levels.get(provider, "")) if isinstance(levels, dict) else ""
+
+
+def set_provider_thinking_level(provider: str, level: str) -> None:
+    config = load_config()
+    levels = config.get("provider_thinking_levels", {})
+    if not isinstance(levels, dict):
+        levels = {}
+    config["provider_thinking_levels"] = {**levels, provider: level}
+    save_config(config)
+
+
+def get_active_provider() -> str:
+    return str(load_config().get("active_provider", "anthropic"))
+
+
+def set_active_provider(provider: str) -> None:
+    config = load_config()
+    config["active_provider"] = provider
     save_config(config)

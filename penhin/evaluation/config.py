@@ -11,6 +11,7 @@ from penhin.runtime import runtime_manager
 from penhin.providers.models import validate_model
 from penhin.auth import auth_resolver
 from penhin.auth.storage import CredentialStoreUnavailable
+from penhin.infrastructure.config import get_provider_model
 
 from .budget import ModelPrice
 
@@ -67,12 +68,12 @@ class EvaluationConfig:
 def load_evaluation_config() -> EvaluationConfig:
     runtime_manager.load_environment()
     provider = runtime_manager.configured_provider()
-    model = os.getenv("MODEL_ID", "").strip()
+    model = os.getenv("MODEL_ID", "").strip() or get_provider_model(provider)
     judge_provider = os.getenv("PENHIN_EVAL_JUDGE_PROVIDER", "gemini").strip().lower()
     judge_model = os.getenv("PENHIN_EVAL_JUDGE_MODEL", "").strip()
     errors = []
     for selected_provider, selected_model, label in ((provider, model, "primary"), (judge_provider, judge_model, "judge")):
-        if selected_provider not in {"anthropic", "openai", "openai-codex", "gemini"}:
+        if selected_provider not in {"anthropic", "openai", "openai-codex", "gemini", "deepseek"}:
             errors.append(f"unsupported {label} provider: {selected_provider}")
         else:
             try:
@@ -81,7 +82,7 @@ def load_evaluation_config() -> EvaluationConfig:
             except CredentialStoreUnavailable as error:
                 errors.append(str(error))
         if not selected_model:
-            errors.append(f"{'MODEL_ID' if label == 'primary' else 'PENHIN_EVAL_JUDGE_MODEL'} is required")
+            errors.append(f"{'a selected primary model' if label == 'primary' else 'PENHIN_EVAL_JUDGE_MODEL'} is required")
     if judge_provider != "gemini":
         errors.append("baseline-v1 requires an independent Gemini judge")
     if judge_provider == provider:

@@ -12,12 +12,13 @@ from penhin.auth import OAuthCredential, ResolvedAuth, auth_resolver, provider_a
 from penhin.auth.storage import CredentialStoreUnavailable, credential_store
 from penhin.auth.providers import provider_auth
 from penhin.providers.models import validate_model
+from penhin.infrastructure.config import get_provider_thinking_level
 from penhin.providers.protocols import LLMProvider, LLMRequest, LLMResponse, StreamCallback
 
 from .factory import build_provider
 from .models import AuthenticationRequired, RuntimeStatus
 from .settings import (
-    build_circuit_breaker, build_compact_circuit_breaker, configured_provider,
+    build_circuit_breaker, build_compact_circuit_breaker, configured_model, configured_provider,
     load_environment, mark_setting_source, setting_source,
 )
 
@@ -59,6 +60,7 @@ class Runtime:
     provider: LLMProvider
     model: str
     provider_id: str = ""
+    thinking_level: str | None = None
     auth_expires_at: int | None = None
     max_tokens: int = 10000
     sub_max_turns: int = 30
@@ -105,6 +107,7 @@ class Runtime:
                     messages=messages,
                     tools=tools,
                     max_tokens=max_tokens or self.max_tokens,
+                    thinking_level=self.thinking_level,
                 )
                 from penhin.evaluation.observer import anonymous_id, emit
                 from penhin.evaluation.shared_budget import budget_from_env, estimate_tokens, price_from_env
@@ -228,13 +231,13 @@ def init_runtime(required: bool = True) -> None:
 
     provider = configured_provider()
     if provider not in provider_auth_ids():
-        message = f"Unsupported LLM_PROVIDER={provider!r}; choose anthropic, openai, openai-codex, or gemini"
+        message = f"Unsupported LLM_PROVIDER={provider!r}; choose anthropic, openai, openai-codex, gemini, or deepseek"
         if required:
             logger.error(message)
             raise SystemExit(1)
         runtime = None
         return
-    model = os.getenv("MODEL_ID", "").strip()
+    model = configured_model(provider)
     try:
         resolved = resolve_runtime_auth(provider)
     except CredentialStoreUnavailable as error:
@@ -246,7 +249,7 @@ def init_runtime(required: bool = True) -> None:
     if resolved is None or not model:
         runtime = None
         if required:
-            missing = "credentials" if resolved is None else "MODEL_ID"
+            missing = "credentials" if resolved is None else "a selected model"
             logger.error(f"Missing {missing}. Start interactive Penhin and use /login.")
             raise SystemExit(1)
         return
@@ -263,6 +266,7 @@ def init_runtime(required: bool = True) -> None:
         provider=build_provider(provider, resolved),
         model=model,
         provider_id=provider,
+        thinking_level=get_provider_thinking_level(provider) or None,
         auth_expires_at=getattr(resolved.credential, "expires_at", None),
         circuit_breaker=build_circuit_breaker(),
         compact_circuit_breaker=build_compact_circuit_breaker(),
@@ -285,6 +289,11 @@ def set_runtime_model(model: str) -> None:
         runtime.model = model
 
 
+def set_runtime_thinking_level(level: str | None) -> None:
+    if runtime is not None:
+        runtime.thinking_level = level
+
+
 def set_runtime_provider(provider: str, model: str) -> None:
     global runtime
     if provider not in provider_auth_ids():
@@ -296,6 +305,7 @@ def set_runtime_provider(provider: str, model: str) -> None:
     runtime = Runtime(
         provider=build_provider(provider, resolved), model=model,
         provider_id=provider,
+        thinking_level=get_provider_thinking_level(provider) or None,
         auth_expires_at=getattr(resolved.credential, "expires_at", None),
         circuit_breaker=build_circuit_breaker(),
         compact_circuit_breaker=build_compact_circuit_breaker(),
@@ -348,6 +358,9 @@ class RuntimeManager:
     def set_model(self, model: str) -> None:
         set_runtime_model(model)
 
+    def set_thinking_level(self, level: str | None) -> None:
+        set_runtime_thinking_level(level)
+
     def switch_provider(self, provider: str, model: str) -> None:
         set_runtime_provider(provider, model)
 
@@ -359,7 +372,7 @@ class RuntimeManager:
         return RuntimeStatus(
             available=current is not None,
             provider=configured_provider(),
-            model=current.model if current is not None else os.getenv("MODEL_ID", ""),
+            model=current.model if current is not None else configured_model(configured_provider()),
             auth_expires_at=current.auth_expires_at if current is not None else None,
         )
 
