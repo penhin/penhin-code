@@ -6,7 +6,7 @@ from penhin.runtime.retry import CircuitBreakerOpen
 from penhin.agent.projection import messages_for_api
 from penhin.agent.prompts import AUTO_COMPACT_SYSTEM
 from penhin.runtime import runtime_manager
-from penhin.agent.transcript import serialize_for_json, transcripts
+from penhin.agent.session_store import serialize_value
 
 WARNING_THRESHOLD = 80000
 COMPACT_THRESHOLD = 120000
@@ -19,7 +19,7 @@ logger = logging.getLogger("penhin.compact")
 
 
 def compact_source_text(messages: list[dict[str, Any]]) -> str:
-    text = json.dumps(serialize_for_json(messages), ensure_ascii=False)
+    text = json.dumps(serialize_value(messages), ensure_ascii=False)
     max_chars = SUMMARY_HEAD_CHARS + SUMMARY_TAIL_CHARS
     if len(text) <= max_chars:
         return text
@@ -124,10 +124,6 @@ def auto_compact_messages(
     hint: str | None = None,
     collapse_keep_recent: int | None = None,
 ) -> list[dict[str, Any]]:
-    transcript_path = transcripts.save(messages)
-
-    logger.info(f"[transcript saved: {transcript_path}]")
-
     conversation_text = compact_source_text(
         messages_for_api(messages, collapse_keep_recent=collapse_keep_recent)
     )
@@ -168,7 +164,7 @@ def auto_compact_messages(
 
     compacted = {
         "role": "user",
-        "content": f"[Conversation compressed. Transcript: {transcript_path}]\n\n{summary}",
+        "content": f"[Conversation compressed.]\n\n{summary}",
     }
     return [compacted] + safe_recent_messages(messages, keep_last)
     

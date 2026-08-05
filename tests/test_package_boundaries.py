@@ -16,7 +16,8 @@ def test_legacy_top_level_python_modules_are_removed() -> None:
 
 def test_stable_package_boundaries_exist() -> None:
     required = {
-        "cli/main.py", "cli/commands/router.py", "agent/service.py",
+        "cli/main.py", "cli/commands/router.py", "agent/service.py", "agent/session_manager.py",
+        "agent/session_store.py",
         "agent/subagents/profiles.py", "runtime/manager.py", "runtime/factory.py",
         "auth/service.py", "auth/oauth/callback.py", "providers/registry.py",
         "providers/protocols.py", "tools/execution/approval.py",
@@ -49,11 +50,11 @@ def test_low_level_packages_do_not_depend_on_cli_or_orchestration() -> None:
 
 
 def test_public_packages_export_explicit_facades() -> None:
-    from penhin.agent import AgentService
+    from penhin.agent import AgentService, SessionManager, SessionStore
     from penhin.auth import AuthService
     from penhin.cli.commands import CommandRouter
     from penhin.orchestration import OrchestrationService
     from penhin.runtime import RuntimeManager
     from penhin.tools.execution import ToolExecutor
 
-    assert all((AgentService, AuthService, CommandRouter, OrchestrationService, RuntimeManager, ToolExecutor))
+    assert all((AgentService, SessionManager, SessionStore, AuthService, CommandRouter, OrchestrationService, RuntimeManager, ToolExecutor))

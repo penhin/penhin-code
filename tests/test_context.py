@@ -33,7 +33,7 @@ def test_run_context_adds_messages() -> None:
 
 
 def test_run_context_stores_session_path() -> None:
-    session_path = Path(".transcripts/transcript_test.jsonl")
+    session_path = Path(".penhin/sessions/session_test.jsonl")
     context = RunContext(
         messages=[],
         policy=empty_policy(),

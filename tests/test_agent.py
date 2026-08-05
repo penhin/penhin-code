@@ -100,14 +100,18 @@ def test_resolve_approval_rejects_when_input_is_unavailable() -> None:
     assert rejected_approval.is_rejected("write", tool_input)
 
 
-def test_agent_loop_updates_run_context_messages() -> None:
+def test_agent_loop_updates_run_context_messages(tmp_path: Path) -> None:
     context = RunContext(
         messages=[{"role": "user", "content": "hello"}],
         policy=empty_policy(),
         approval=ApprovalFlow.require_confirmation(set()),
     )
 
-    with patch("penhin.agent.loop.runtime_manager.current", return_value=FakeRuntime()), patch("penhin.agent.loop.log_usage"):
+    with (
+        patch("penhin.agent.loop.runtime_manager.current", return_value=FakeRuntime()),
+        patch("penhin.agent.loop.log_usage"),
+        patch("penhin.agent.prompts.USER_PROMPT_PATH", tmp_path / "missing-AGENTS.md"),
+    ):
         agent.agent_loop(context)
 
     assert context.messages == [

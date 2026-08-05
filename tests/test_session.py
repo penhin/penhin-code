@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from penhin.cli import main as main_module
-from penhin.agent import transcript
+from penhin.agent import session_store
 
 
 def test_parse_session_args() -> None:
@@ -67,89 +67,60 @@ def test_workspace_summary_line() -> None:
     )
 
 
-def test_load_initial_messages_new_session_flag() -> None:
-    store = transcript.TranscriptStore(Path(tempfile.mkdtemp()))
-
-    assert store.load_session(resume=False) == ([], None)
-
-
-def test_load_initial_messages_without_history() -> None:
+def test_resume_without_history_creates_empty_session() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
-        store = transcript.TranscriptStore(Path(tmpdir))
+        store = session_store.SessionStore(Path(tmpdir))
+        manager = store.resume()
 
-        assert store.load_session(resume=True) == ([], None)
+        assert manager.build_context() == []
+        assert manager.path.exists()
 
 
-def test_load_initial_messages_resumes_latest_transcript() -> None:
+def test_resume_uses_latest_session() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
-        store = transcript.TranscriptStore(Path(tmpdir))
+        store = session_store.SessionStore(Path(tmpdir))
         messages = [{"role": "user", "content": "hello"}]
-        session_path = store.save(messages)
+        created = store.new(messages)
 
-        assert store.load_session(resume=True) == (messages, session_path)
+        resumed = store.resume()
+        assert resumed.path == created.path
+        assert resumed.build_context() == messages
 
 
-def test_load_initial_messages_resumes_specific_session() -> None:
+def test_resume_uses_specific_session() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
-        store = transcript.TranscriptStore(Path(tmpdir))
+        store = session_store.SessionStore(Path(tmpdir))
         first_messages = [{"role": "user", "content": "first"}]
         second_messages = [{"role": "user", "content": "second"}]
-        first_path = store.save(first_messages)
-        store.save(second_messages)
+        first = store.new(first_messages)
+        store.new(second_messages)
 
-        session_ref = transcript.session_id_from_path(first_path)
+        session_ref = session_store.session_id_from_path(first.path)
+        resumed = store.resume(session_ref)
 
-        assert store.load_session(resume=True, session_ref=session_ref) == (first_messages, first_path)
-
-
-def test_load_initial_session_returns_resumed_path() -> None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        store = transcript.TranscriptStore(Path(tmpdir))
-        messages = [{"role": "user", "content": "hello"}]
-        session_path = store.save(messages)
-
-        loaded_messages, loaded_path = store.load_session(resume=True)
-
-        assert loaded_messages == messages
-        assert loaded_path == session_path
-
-
-def test_save_session_messages_updates_existing_session() -> None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        store = transcript.TranscriptStore(Path(tmpdir))
-        original_messages = [{"role": "user", "content": "first"}]
-        updated_messages = [
-            {"role": "user", "content": "first"},
-            {"role": "assistant", "content": "done"},
-        ]
-        session_path = store.save(original_messages)
-
-        saved_path = store.save_session(session_path, updated_messages)
-
-        assert saved_path == session_path
-        assert store.read(session_path) == updated_messages
-        assert len(list(Path(tmpdir).glob("transcript_*.jsonl"))) == 1
+        assert resumed.path == first.path
+        assert resumed.build_context() == first_messages
 
 
 def test_print_session_list_marks_latest() -> None:
-    original_transcripts = main_module.transcripts
+    original_sessions = main_module.sessions
     output = StringIO()
 
     with tempfile.TemporaryDirectory() as tmpdir:
         try:
-            store = transcript.TranscriptStore(Path(tmpdir))
-            store.save([{"role": "user", "content": "first"}])
-            latest_path = store.save([{"role": "user", "content": "latest"}])
-            latest_id = transcript.session_id_from_path(latest_path)[:12]
-            main_module.transcripts = store
+            store = session_store.SessionStore(Path(tmpdir))
+            store.new([{"role": "user", "content": "first"}])
+            latest = store.new([{"role": "user", "content": "latest"}])
+            latest_id = session_store.session_id_from_path(latest.path)[:12]
+            main_module.sessions = store
 
             with contextlib.redirect_stdout(output):
                 main_module.print_session_list()
         finally:
-            main_module.transcripts = original_transcripts
+            main_module.sessions = original_sessions
 
     lines = output.getvalue().splitlines()
-    assert lines[0] == "mark | id | updated | msgs | request"
+    assert lines[0] == "mark | id | updated | msgs | title"
     marked_lines = [line for line in lines[1:] if line.startswith("* | ")]
     assert len(marked_lines) == 1
     assert latest_id in marked_lines[0]
@@ -157,7 +128,7 @@ def test_print_session_list_marks_latest() -> None:
 
 def test_session_inspect_counts_tool_results() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
-        store = transcript.TranscriptStore(Path(tmpdir))
+        store = session_store.SessionStore(Path(tmpdir))
         messages = [
             {"role": "user", "content": "read a file"},
             {"role": "assistant", "content": "I will read it"},
@@ -181,9 +152,9 @@ def test_session_inspect_counts_tool_results() -> None:
             {"role": "user", "content": "now summarize"},
             {"role": "assistant", "content": "done"},
         ]
-        session_path = store.save(messages)
+        manager = store.new(messages)
 
-        inspected = store.inspect(transcript.session_id_from_path(session_path))
+        inspected = store.inspect(session_store.session_id_from_path(manager.path))
 
         assert inspected.first_user == "read a file"
         assert inspected.last_user == "now summarize"
@@ -200,7 +171,7 @@ def test_session_inspect_counts_tool_results() -> None:
             "assistant | done",
         ]
 
-        limited = store.inspect(transcript.session_id_from_path(session_path), event_limit=3)
+        limited = store.inspect(session_store.session_id_from_path(manager.path), event_limit=3)
 
         assert limited.event_count == 6
         assert limited.recent_events == [

@@ -107,7 +107,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     ),
     "compact": ToolSpec(
         name="compact",
-        description="Summarize large context into compact memory representations. Also writes generated transcripts to `.transcripts/`.",
+        description="Summarize large context into compact memory representations and append a checkpoint to the active session.",
         input_schema=object_schema(),
         category=ToolCategory.agent,
         handler=None,

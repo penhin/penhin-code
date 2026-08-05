@@ -1,32 +1,25 @@
 from __future__ import annotations
 
 import json
-import logging
-import re
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from penhin.infrastructure.atomic_io import read_jsonl, write_jsonl_atomic
-from penhin.auth.secrets import safe_value
 from penhin.agent.prompts import PROJECT_INSTRUCTIONS_TAG
+from penhin.agent.session_manager import SessionManager
 
-TRANSCRIPT_DIR = Path(".transcripts")
-COMPACT_TRANSCRIPT_RE = re.compile(r"^\[Conversation compressed\. Transcript: (?P<path>[^\]]+)\]")
-
-logger = logging.getLogger("penhin.transcript")
+SESSION_DIR = Path(".penhin/sessions")
 
 
-def serialize_for_json(value: Any) -> Any:
+def serialize_value(value: Any) -> Any:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     if isinstance(value, list):
-        return [serialize_for_json(item) for item in value]
+        return [serialize_value(item) for item in value]
     if isinstance(value, dict):
-        return {key: serialize_for_json(item) for key, item in value.items()}
+        return {key: serialize_value(item) for key, item in value.items()}
     if hasattr(value, "model_dump"):
-        return serialize_for_json(value.model_dump(mode="json"))
+        return serialize_value(value.model_dump(mode="json"))
     return {
         "type": value.__class__.__name__,
         "value": str(value),
@@ -40,6 +33,7 @@ class SessionSummary:
     updated_at: float
     message_count: int
     first_user: str
+    name: str = ""
 
 
 @dataclass(frozen=True)
@@ -100,7 +94,7 @@ def first_message_summary(messages: list[dict[str, Any]], role: str) -> str:
         if role == "user" and is_synthetic_user_message(message):
             continue
         if message.get("role") == role:
-            return summarize_content(message.get("content"))    
+            return summarize_content(message.get("content"))
     return ""
 
 
@@ -190,8 +184,8 @@ def session_event_timeline(messages: list[dict[str, Any]], limit: int | None = 8
 
 
 def session_id_from_path(path: Path) -> str:
-    if path.name.startswith("transcript_"):
-        return path.stem.removeprefix("transcript_")
+    if path.name.startswith("session_"):
+        return path.stem.removeprefix("session_")
     return path.stem
 
 
@@ -199,102 +193,74 @@ def normalize_session_ref(session_ref: str) -> str:
     name = Path(session_ref).name
     if name.endswith(".jsonl"):
         name = Path(name).stem
-    if name.startswith("transcript_"):
-        name = name.removeprefix("transcript_")
+    if name.startswith("session_"):
+        name = name.removeprefix("session_")
     return name
 
 
-def compact_transcript_ref(message: dict[str, Any]) -> str | None:
-    content = message.get("content")
-    if not isinstance(content, str):
-        return None
+class SessionStore:
+    def __init__(self, session_dir: Path):
+        self.session_dir = session_dir
+        self._managers: dict[Path, SessionManager] = {}
 
-    match = COMPACT_TRANSCRIPT_RE.match(content)
-    if match is None:
-        return None
-    return match.group("path")
+    def _remember(self, manager: SessionManager) -> SessionManager:
+        self._managers[manager.path.resolve()] = manager
+        return manager
 
+    def _validate_path(self, path: Path) -> Path:
+        resolved = path.resolve()
+        base = self.session_dir.resolve()
+        if not resolved.is_relative_to(base):
+            raise ValueError(f"Session path escapes session directory: {path}")
+        if resolved.suffix != ".jsonl":
+            raise ValueError(f"Session path must be a .jsonl file: {path}")
+        return resolved
 
-def serialized_message(message: Any) -> str:
-    return json_dumps_for_compare(serialize_for_json(message))
-
-
-def json_dumps_for_compare(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True)
-
-
-def merge_message_history(base: list[Any], tail: list[Any]) -> list[Any]:
-    base_keys = [serialized_message(message) for message in base]
-    tail_keys = [serialized_message(message) for message in tail]
-    max_overlap = min(len(base_keys), len(tail_keys))
-
-    for overlap in range(max_overlap, 0, -1):
-        if base_keys[-overlap:] == tail_keys[:overlap]:
-            return base + tail[overlap:]
-
-    return base + tail
-
-
-class TranscriptStore:
-    def __init__(self, transcript_dir: Path):
-        self.transcript_dir = transcript_dir
-    
-    def save(self, messages: list[Any]) -> Path:
-        self.transcript_dir.mkdir(exist_ok=True)
-        transcript_path = self.transcript_dir / f"transcript_{time.time_ns()}.jsonl"
-        messages = self.expand_compacted_history(messages)
-        write_jsonl_atomic(
-            transcript_path,
-            safe_value([serialize_for_json(msg) for msg in messages]),
+    def new(
+        self,
+        messages: list[dict[str, Any]] | None = None,
+        *,
+        parent_session: str | None = None,
+    ) -> SessionManager:
+        return self._remember(
+            SessionManager.create(
+                self.session_dir,
+                [serialize_value(message) for message in messages or []],
+                parent_session=parent_session,
+            )
         )
-        return transcript_path
-    
-    def save_to(self, path: Path, messages: list[Any]) -> Path:
-        self.transcript_dir.mkdir(exist_ok=True)
-        messages = self.expand_compacted_history(messages)
-        write_jsonl_atomic(
-            path,
-            safe_value([serialize_for_json(msg) for msg in messages]),
-        )
-        return path
 
-    def expand_compacted_history(self, messages: list[Any]) -> list[Any]:
-        if not messages:
-            return messages
-        if not isinstance(messages[0], dict):
-            return messages
+    def open(self, path: Path) -> SessionManager:
+        resolved = self._validate_path(path)
+        manager = self._managers.get(resolved)
+        if manager is None:
+            manager = self._remember(SessionManager.open(path))
+        return manager
 
-        previous_ref = compact_transcript_ref(messages[0])
-        if previous_ref is None:
-            return messages
+    def resume(self, session_ref: Path | str | None = None) -> SessionManager:
+        path = self.latest() if session_ref is None else self.resolve(str(session_ref))
+        return self.open(path) if path is not None else self.new()
 
-        try:
-            previous_messages = self.read(Path(previous_ref))
-        except Exception:
-            return messages
-
-        return merge_message_history(previous_messages, messages[1:])
-    
-    def resolve_session_ref(self, session_ref: str) -> Path:
+    def resolve(self, session_ref: str) -> Path:
         raw_path = Path(session_ref)
         candidates = [
             raw_path,
-            self.transcript_dir / raw_path,
-            self.transcript_dir / f"transcript_{session_ref}.jsonl",
+            self.session_dir / raw_path,
+            self.session_dir / f"session_{session_ref}.jsonl",
         ]
 
         for candidate in candidates:
             if candidate.exists():
                 return candidate
 
-        prefix_match = self.resolve_session_prefix(session_ref)
+        prefix_match = self.resolve_prefix(session_ref)
         if prefix_match is not None:
             return prefix_match
 
         raise FileNotFoundError(f"Session not found: {session_ref}")
 
-    def resolve_session_prefix(self, session_ref: str) -> Path | None:
-        if not self.transcript_dir.exists():
+    def resolve_prefix(self, session_ref: str) -> Path | None:
+        if not self.session_dir.exists():
             return None
 
         normalized = normalize_session_ref(session_ref)
@@ -303,7 +269,7 @@ class TranscriptStore:
 
         matches = [
             path
-            for path in self.transcript_dir.glob("transcript_*.jsonl")
+            for path in self.session_dir.glob("session_*.jsonl")
             if session_id_from_path(path).startswith(normalized)
         ]
         if not matches:
@@ -311,32 +277,23 @@ class TranscriptStore:
 
         matches.sort(key=lambda path: (len(session_id_from_path(path)), path.stat().st_mtime), reverse=True)
         return matches[0]
-    
+
     def latest(self) -> Path | None:
-        if not self.transcript_dir.exists():
+        if not self.session_dir.exists():
             return None
 
-        paths = sorted(self.transcript_dir.glob("transcript_*.jsonl"))
-        return paths[-1] if paths else None
-    
-    def read(self, path: Path) -> list[dict[str, Any]]:
-        resolved = path.resolve()
-        base = self.transcript_dir.resolve()
-        if not resolved.is_relative_to(base):
-            raise ValueError(f"Transcript path escapes transcript directory: {path}")
-        if resolved.suffix != ".jsonl":
-            raise ValueError(f"Transcript path must be a .jsonl file: {path}")
-
-        return read_jsonl(resolved)
+        paths = list(self.session_dir.glob("session_*.jsonl"))
+        return max(paths, key=lambda path: path.stat().st_mtime_ns) if paths else None
 
     def list(self) -> list[SessionSummary]:
-        if not self.transcript_dir.exists():
+        if not self.session_dir.exists():
             return []
 
         summaries = []
-        for path in sorted(self.transcript_dir.glob("transcript_*.jsonl")):
+        for path in sorted(self.session_dir.glob("session_*.jsonl")):
             try:
-                messages = self.read(path)
+                manager = self.open(path)
+                messages = manager.build_context()
             except Exception:
                 continue
 
@@ -347,13 +304,14 @@ class TranscriptStore:
                     updated_at=path.stat().st_mtime,
                     message_count=len(messages),
                     first_user=first_message_summary(messages, "user"),
+                    name=manager.get_session_name(),
                 )
             )
         return summaries
 
     def inspect(self, session_ref: str, event_limit: int = 8) -> SessionInspect:
-        path = self.resolve_session_ref(session_ref)
-        messages = self.read(path)
+        path = self.resolve(session_ref)
+        messages = self.open(path).build_context()
         role_counts: dict[str, int] = {}
         for message in messages:
             role = str(message.get("role", "unknown"))
@@ -377,37 +335,9 @@ class TranscriptStore:
             event_count=len(events),
             recent_events=session_event_timeline(messages, limit=event_limit),
         )
-    
-    def load_session(
-        self,
-        resume: bool,
-        session_ref: Path | str | None = None,
-    ) -> tuple[list[dict], Path | None]:
-        if not resume:
-            logger.info("[session] new reason=flag")
-            return [], None
-
-        try:
-            if session_ref is None:
-                history_file = self.latest()
-                if history_file is None:
-                    logger.info("[session] new reason=no_history")
-                    return [], None
-            else:
-                history_file = self.resolve_session_ref(str(session_ref))
-
-            messages = self.read(history_file)
-            logger.info(f"[session] resumed {history_file}")
-            return messages, history_file
-        except Exception as error:
-            logger.warning(f"[session] resume failed: {error}")
-            logger.info("[session] new reason=resume_failed")
-            return [], None
-        
-    def save_session(self, session_path: Path | None, messages: list[dict]) -> Path:
-        if session_path is None:
-            return self.save(messages)
-        return self.save_to(session_path, messages)
 
 
-transcripts = TranscriptStore(TRANSCRIPT_DIR)
+sessions = SessionStore(SESSION_DIR)
+
+
+__all__ = ["SessionInspect", "SessionStore", "SessionSummary", "serialize_value", "sessions"]

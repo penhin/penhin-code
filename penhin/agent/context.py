@@ -2,13 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from penhin.agent.compaction import auto_compact_messages, log_compact_watermark, micro_compact_if_needed
 from penhin.agent.projection import mark_message_snipped
 from penhin.permissions import PermissionMode
 from penhin.result import Result
 from penhin.tools.execution import ApprovalFlow, PermissionPolicy
+
+if TYPE_CHECKING:
+    from penhin.agent.session_manager import SessionManager
 
 
 POST_DELEGATION_READ_BUDGET = 3
@@ -38,6 +41,7 @@ class RunContext:
     policy: PermissionPolicy
     approval: ApprovalFlow
     session_path: Path | None = None
+    session_manager: SessionManager | None = None
     collapse_keep_recent: int | None = None
     post_delegation_read_budget: int | None = None
     post_delegation_source: str = ""
@@ -47,10 +51,16 @@ class RunContext:
     def add_user_message(self, content: Any) -> None:
         if not is_tool_result_content(content):
             self.clear_post_delegation_guard()
-        self.messages.append({"role": "user", "content": content})
+        message = {"role": "user", "content": content}
+        self.messages.append(message)
+        if self.session_manager is not None:
+            self.session_manager.append_message(message)
 
     def add_assistant_message(self, content: Any) -> None:
-        self.messages.append({"role": "assistant", "content": content})
+        message = {"role": "assistant", "content": content}
+        self.messages.append(message)
+        if self.session_manager is not None:
+            self.session_manager.append_message(message)
 
     def add_tool_results(self, tool_results: list[dict[str, Any]]) -> None:
         self.add_user_message(tool_results)
@@ -124,6 +134,8 @@ class RunContext:
                 self.messages,
                 collapse_keep_recent=self.collapse_keep_recent,
             )
+            if self.session_manager is not None:
+                self.session_manager.append_compaction(self.messages)
             from penhin.evaluation.observer import emit
             emit("context_compacted", mode="automatic", messages_before=before, messages_after=len(self.messages))
 
@@ -134,6 +146,8 @@ class RunContext:
             hint=hint,
             collapse_keep_recent=self.collapse_keep_recent,
         )
+        if self.session_manager is not None:
+            self.session_manager.append_compaction(self.messages)
         from penhin.evaluation.observer import emit
         emit("context_compacted", mode="forced", messages_before=before, messages_after=len(self.messages), has_hint=bool(hint))
 
@@ -150,6 +164,8 @@ class RunContext:
         if snipped:
             from penhin.tools.builtin.cache import tool_result_cache
             tool_result_cache.clear()
+            if self.session_manager is not None:
+                self.session_manager.sync_messages(self.messages)
         return snipped
 
 

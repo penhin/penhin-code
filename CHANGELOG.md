@@ -6,6 +6,15 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+### Added
+
+- Added append-only JSONL session trees with stable entry IDs, parent links, in-place branching, session forks, and names.
+
+### Changed
+
+- Replaced the transcript persistence API with a single session store under `.penhin/sessions`; old message-only transcript files are no longer migrated or resumed.
+- Removed readers for obsolete persisted collapse metadata and legacy task-record shapes.
+
 ## [0.1.1] - 2026-08-02
 
 ### Added

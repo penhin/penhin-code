@@ -1,11 +1,9 @@
 import sys
-import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from penhin.agent import compaction as compact
-from penhin.agent import transcript
 from penhin.runtime.retry import CircuitBreakerOpen
 from penhin.agent.compaction import (
     auto_compact_messages,
@@ -104,24 +102,18 @@ def test_auto_compact_falls_back_when_summary_fails() -> None:
             raise RuntimeError("offline failure")
 
     original_get_runtime = compact.runtime_manager.current
-    original_transcripts = compact.transcripts
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        try:
-            compact.runtime_manager.current = lambda: FailingRuntime()
-            compact.transcripts = transcript.TranscriptStore(Path(tmpdir))
-
-            messages = [
-                {"role": "user", "content": "first"},
-                {"role": "assistant", "content": "second"},
-            ]
-            compacted = auto_compact_messages(messages, keep_last=1)
-        finally:
-            compact.runtime_manager.current = original_get_runtime
-            compact.transcripts = original_transcripts
+    try:
+        compact.runtime_manager.current = lambda: FailingRuntime()
+        messages = [
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": "second"},
+        ]
+        compacted = auto_compact_messages(messages, keep_last=1)
+    finally:
+        compact.runtime_manager.current = original_get_runtime
 
     assert compacted[0]["role"] == "user"
-    assert str(Path(tmpdir)) in compacted[0]["content"]
+    assert compacted[0]["content"].startswith("[Conversation compressed.]")
     assert "Summary failed during compaction: offline failure" in compacted[0]["content"]
     assert compacted[-1] == {"role": "assistant", "content": "second"}
     assert len(compacted) == 2
@@ -133,22 +125,16 @@ def test_auto_compact_continues_when_compact_circuit_is_open() -> None:
             raise CircuitBreakerOpen("open")
 
     original_get_runtime = compact.runtime_manager.current
-    original_transcripts = compact.transcripts
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        try:
-            compact.runtime_manager.current = lambda: CircuitOpenRuntime()
-            compact.transcripts = transcript.TranscriptStore(Path(tmpdir))
-
-            messages = [
-                {"role": "user", "content": "head"},
-                {"role": "assistant", "content": "old"},
-                {"role": "user", "content": "tail"},
-            ]
-            compacted = auto_compact_messages(messages, keep_last=1)
-        finally:
-            compact.runtime_manager.current = original_get_runtime
-            compact.transcripts = original_transcripts
+    try:
+        compact.runtime_manager.current = lambda: CircuitOpenRuntime()
+        messages = [
+            {"role": "user", "content": "head"},
+            {"role": "assistant", "content": "old"},
+            {"role": "user", "content": "tail"},
+        ]
+        compacted = auto_compact_messages(messages, keep_last=1)
+    finally:
+        compact.runtime_manager.current = original_get_runtime
 
     assert "Summary skipped during compaction" in compacted[0]["content"]
     assert "compact circuit breaker is open" in compacted[0]["content"]
@@ -166,20 +152,14 @@ def test_auto_compact_passes_hint_to_compact_runtime() -> None:
 
     recording_runtime = RecordingRuntime()
     original_get_runtime = compact.runtime_manager.current
-    original_transcripts = compact.transcripts
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        try:
-            compact.runtime_manager.current = lambda: recording_runtime
-            compact.transcripts = transcript.TranscriptStore(Path(tmpdir))
-
-            auto_compact_messages(
-                [{"role": "user", "content": "remember cache"}],
-                hint="preserve cache decisions",
-            )
-        finally:
-            compact.runtime_manager.current = original_get_runtime
-            compact.transcripts = original_transcripts
+    try:
+        compact.runtime_manager.current = lambda: recording_runtime
+        auto_compact_messages(
+            [{"role": "user", "content": "remember cache"}],
+            hint="preserve cache decisions",
+        )
+    finally:
+        compact.runtime_manager.current = original_get_runtime
 
     assert "User-provided compact hint:" in recording_runtime.kwargs["user_content"]
     assert "preserve cache decisions" in recording_runtime.kwargs["user_content"]
@@ -191,24 +171,18 @@ def test_auto_compact_keeps_safe_tail_without_old_head() -> None:
             raise RuntimeError("offline failure")
 
     original_get_runtime = compact.runtime_manager.current
-    original_transcripts = compact.transcripts
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        try:
-            compact.runtime_manager.current = lambda: FailingRuntime()
-            compact.transcripts = transcript.TranscriptStore(Path(tmpdir))
-
-            messages = [
-                {"role": "user", "content": "head-1"},
-                {"role": "assistant", "content": "head-2"},
-                {"role": "user", "content": "middle"},
-                {"role": "assistant", "content": "tail-1"},
-                {"role": "user", "content": "tail-2"},
-            ]
-            compacted = auto_compact_messages(messages, keep_last=2)
-        finally:
-            compact.runtime_manager.current = original_get_runtime
-            compact.transcripts = original_transcripts
+    try:
+        compact.runtime_manager.current = lambda: FailingRuntime()
+        messages = [
+            {"role": "user", "content": "head-1"},
+            {"role": "assistant", "content": "head-2"},
+            {"role": "user", "content": "middle"},
+            {"role": "assistant", "content": "tail-1"},
+            {"role": "user", "content": "tail-2"},
+        ]
+        compacted = auto_compact_messages(messages, keep_last=2)
+    finally:
+        compact.runtime_manager.current = original_get_runtime
 
     assert compacted[1:] == [
         {"role": "assistant", "content": "tail-1"},
@@ -226,21 +200,15 @@ def test_auto_compact_does_not_duplicate_overlapping_head_and_tail() -> None:
             raise RuntimeError("offline failure")
 
     original_get_runtime = compact.runtime_manager.current
-    original_transcripts = compact.transcripts
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        try:
-            compact.runtime_manager.current = lambda: FailingRuntime()
-            compact.transcripts = transcript.TranscriptStore(Path(tmpdir))
-
-            messages = [
-                {"role": "user", "content": "first"},
-                {"role": "assistant", "content": "second"},
-            ]
-            compacted = auto_compact_messages(messages, keep_last=2)
-        finally:
-            compact.runtime_manager.current = original_get_runtime
-            compact.transcripts = original_transcripts
+    try:
+        compact.runtime_manager.current = lambda: FailingRuntime()
+        messages = [
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": "second"},
+        ]
+        compacted = auto_compact_messages(messages, keep_last=2)
+    finally:
+        compact.runtime_manager.current = original_get_runtime
 
     assert compacted[1:] == messages
 

@@ -47,24 +47,6 @@ def is_snipped(message: dict[str, Any]) -> bool:
     return isinstance(meta, dict) and meta.get("snipped") is True
 
 
-def collapsed_content(block: dict[str, Any]) -> str | None:
-    meta = block.get(INTERNAL_META)
-    if not isinstance(meta, dict):
-        return None
-    collapse = meta.get("collapse")
-    if not isinstance(collapse, dict):
-        return None
-
-    label = collapse.get("label", "tool result")
-    reason = collapse.get("reason", "collapse")
-    original_chars = collapse.get("original_chars", 0)
-    collapse_id = collapse.get("id", "-")
-    return (
-        f"[collapsed {label}; reason={reason}; "
-        f"original_chars={original_chars}; id={collapse_id}]"
-    )
-
-
 def tool_use_names(messages: list[dict[str, Any]]) -> dict[str, str]:
     names = {}
     for message in messages:
@@ -144,8 +126,6 @@ def project_block(block: Any, replacement: str | None = None) -> Any:
         for key, value in block.items()
         if key != INTERNAL_META
     }
-    if replacement is None:
-        replacement = collapsed_content(block)
     if replacement is not None:
         projected["content"] = replacement
     return projected

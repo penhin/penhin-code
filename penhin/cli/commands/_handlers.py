@@ -22,7 +22,7 @@ from penhin.providers.models import (
 from penhin.tools.execution import runtime_permission_setup
 from penhin.tools.registry import tool_names
 from penhin.tools.builtin.workspace import workspace_info
-from penhin.agent.transcript import session_id_from_path
+from penhin.agent.session_store import session_id_from_path, sessions
 
 
 def handle_workspace_command(args: list[str], context: RunContext | None = None):
@@ -150,9 +150,14 @@ def build_status_lines(context: RunContext | None = None) -> list[str]:
         auth_status = auth_resolver().status(provider)
     except CredentialStoreUnavailable as error:
         auth_status = {"configured": False, "type": None, "source": str(error), "backend": None}
+    session_name = (
+        context.session_manager.get_session_name()
+        if context is not None and context.session_manager is not None
+        else ""
+    )
     lines = [
         f"Version: {get_version()}",
-        "Session name: /rename to add a name",
+        f"Session name: {session_name or '/rename to add a name'}",
         f"Session ID: {session_id(context)}",
         f"cwd: {workspace_info().get('cwd', '-')}",
         f"API provider: {provider_label(provider)}",
@@ -579,3 +584,75 @@ def handle_force_snip_command(args: list[str], context: RunContext | None = None
 
     snipped = context.force_snip_turns(selectors)
     ui.print_info(f"snip: marked {snipped} messages")
+
+
+def _session_manager(context: RunContext | None):
+    if context is None or context.session_manager is None:
+        ui.print_error("No active session.")
+        return None
+    return context.session_manager
+
+
+def handle_session_command(args: list[str], context: RunContext | None = None):
+    manager = _session_manager(context)
+    if manager is None:
+        return
+    ui.print_info(f"session: {manager.id}")
+    ui.print_info(f"file: {manager.path}")
+    ui.print_info(f"leaf: {manager.leaf_id or '-'}")
+    ui.print_info(f"name: {manager.get_session_name() or '-'}")
+
+
+def handle_tree_command(args: list[str], context: RunContext | None = None):
+    manager = _session_manager(context)
+    if manager is None:
+        return
+    if not args:
+        lines = manager.render_tree()
+        if not lines:
+            ui.print_info("tree: empty session")
+            return
+        for line in lines:
+            ui.print_info(line)
+        return
+    if len(args) != 1:
+        ui.print_error("Usage: /tree [entry-id]")
+        return
+    try:
+        entry_id = manager.resolve_entry_id(args[0])
+        context.messages[:] = manager.branch(entry_id)
+    except (KeyError, ValueError) as error:
+        ui.print_error(str(error))
+        return
+    ui.print_info(f"tree: moved to {entry_id}; the next message will create a branch")
+
+
+def handle_fork_command(args: list[str], context: RunContext | None = None):
+    manager = _session_manager(context)
+    if manager is None:
+        return
+    if len(args) > 1:
+        ui.print_error("Usage: /fork [entry-id]")
+        return
+    try:
+        entry_id = manager.resolve_entry_id(args[0]) if args else manager.leaf_id
+        forked = manager.fork(sessions.session_dir, entry_id)
+    except (KeyError, ValueError) as error:
+        ui.print_error(str(error))
+        return
+    context.session_manager = forked
+    context.session_path = forked.path
+    context.messages[:] = forked.build_context()
+    ui.print_info(f"fork: {forked.id}")
+
+
+def handle_rename_command(args: list[str], context: RunContext | None = None):
+    manager = _session_manager(context)
+    if manager is None:
+        return
+    name = " ".join(args).strip()
+    if not name:
+        ui.print_error("Usage: /rename <name>")
+        return
+    manager.append_session_info(name)
+    ui.print_info(f"session name: {name}")

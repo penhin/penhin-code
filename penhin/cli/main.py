@@ -15,7 +15,7 @@ from penhin.runtime import AuthenticationRequired, runtime_manager
 from penhin.tools.execution import runtime_permission_setup
 from penhin.tools.registry import tool_names
 from penhin.tools.builtin.workspace import workspace_info
-from penhin.agent.transcript import transcripts
+from penhin.agent.session_store import sessions
 from penhin.cli.ui import print_error, print_info, print_user_message, print_welcome, prompt_input
 from penhin.infrastructure.quality_gate import run_quality_gate
 
@@ -102,11 +102,13 @@ def main() -> None:
         return
     
     if args.new:
-        messages, session_path = transcripts.load_session(resume=False)
+        session_manager = sessions.new()
     elif args.resume:
-        messages, session_path = transcripts.load_session(resume=True, session_ref=args.resume)
+        session_manager = sessions.resume(args.resume)
     else:
-        messages, session_path = transcripts.load_session(resume=True)
+        session_manager = sessions.resume()
+    messages = session_manager.build_context()
+    session_path = session_manager.path
 
     command_completer = setup_command_completion()
     permission_mode = get_permission_mode()
@@ -122,6 +124,7 @@ def main() -> None:
         policy=policy,
         approval=approval,
         session_path=session_path,
+        session_manager=session_manager,
     )
     workspace = workspace_info()
     provider = runtime_manager.configured_provider()
@@ -157,7 +160,9 @@ def main() -> None:
         except AuthenticationRequired as error:
             print_error(str(error))
             continue
-        context.session_path = transcripts.save_session(context.session_path, context.messages)
+        assert context.session_manager is not None
+        context.session_manager.sync_messages(context.messages)
+        context.session_path = context.session_manager.path
 
 
 def run_cli() -> int:
@@ -170,30 +175,30 @@ def run_cli() -> int:
 
 
 def print_session_list() -> None:
-    sessions = sorted(
-        transcripts.list(),
+    session_summaries = sorted(
+        sessions.list(),
         key=lambda session: session.updated_at,
         reverse=True
     )
-    if not sessions:
+    if not session_summaries:
         print("No sessions found.")
         return
 
-    latest_path = transcripts.latest()
-    print("mark | id | updated | msgs | request")
-    for session in sessions:
+    latest_path = sessions.latest()
+    print("mark | id | updated | msgs | title")
+    for session in session_summaries:
         updated = time.strftime(
             "%Y-%m-%d %H:%M:%S",
             time.localtime(session.updated_at),
         )
-        first_user = session.first_user or "-"
+        first_user = session.name or session.first_user or "-"
         mark = "*" if latest_path is not None and session.path == latest_path else " "
         print(f"{mark} | {session.id[:12]} | {updated} | {session.message_count} | {first_user}")
 
 
 def print_session_inspect(session_ref: str, event_limit: int = 8) -> None:
     try:
-        session = transcripts.inspect(session_ref, event_limit=event_limit)
+        session = sessions.inspect(session_ref, event_limit=event_limit)
     except Exception as error:
         print(f"Session inspect failed: {error}")
         sys.exit(1)

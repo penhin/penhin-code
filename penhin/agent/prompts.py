@@ -159,7 +159,7 @@ VERIFICATION_PROBES_SECTION = (
     "- Ordering: complete-before-start, verify-before-task, exit-before-enter, stale context, and out-of-order todo updates.\n"
     "- Concurrency: simultaneous tasks, background threads, locks, atomic writes, and shared runtime state.\n"
     "- Orphan operations: background jobs without status, task records without current pointers, plans without tasks, and verification results without owners.\n"
-    "- Compatibility: existing tests, public tool schemas, local commands, transcript/session behavior, and documented README workflows.\n"
+    "- Compatibility: existing tests, public tool schemas, local commands, session behavior, and documented README workflows.\n"
     "- Observability: errors should carry useful codes/data, logs should identify the relevant tool/agent, and failures should not be swallowed."
 )
 

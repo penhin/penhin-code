@@ -34,19 +34,18 @@ class TaskStatus:
         return cls(
             id=int(data["id"]),
             subject=str(data["subject"]),
-            description=str(data.get("description", "")),
-            status=str(data.get("status", "running")),
-            plan_slug=str(data.get("plan_slug", "")),
-            verified_plan_slug=str(data.get("verified_plan_slug", "")),
-            orchestration_job_id=str(data.get("orchestration_job_id", "")),
-            note=str(data.get("note", "")),
+            description=str(data["description"]),
+            status=str(data["status"]),
+            plan_slug=str(data["plan_slug"]),
+            verified_plan_slug=str(data["verified_plan_slug"]),
+            orchestration_job_id=str(data["orchestration_job_id"]),
+            note=str(data["note"]),
             todos=[
-                {"text": str(todo["text"]), "done": bool(todo.get("done", False))}
-                for todo in data.get("todos", [])
-                if isinstance(todo, dict) and "text" in todo
+                {"text": str(todo["text"]), "done": bool(todo["done"])}
+                for todo in data["todos"]
             ],
-            created_at=int(data.get("created_at", time.time_ns())),
-            updated_at=int(data.get("updated_at", time.time_ns())),
+            created_at=int(data["created_at"]),
+            updated_at=int(data["updated_at"]),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -80,8 +79,6 @@ class TaskStatusManager:
         if not path.exists():
             raise FileNotFoundError(f"Task {task_id} not found")
         data = read_json(path)
-        if data.get("kind") == "background":
-            raise FileNotFoundError(f"Task {task_id} not found")
         return TaskStatus.from_dict(data)
 
     def _set_current_id(self, task_id: int | None) -> None:

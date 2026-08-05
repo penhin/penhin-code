@@ -20,31 +20,6 @@ def test_messages_for_api_filters_snipped_messages() -> None:
     assert snipped["content"] == "old"
 
 
-def test_messages_for_api_reads_legacy_collapsed_block_metadata() -> None:
-    block = {
-        "type": "tool_result",
-        "tool_use_id": "tool-1",
-        "content": "x" * 200,
-        "_meta": {
-            "id": "block-1",
-            "collapse": {
-                "id": "block-1",
-                "label": "tool_result read",
-                "reason": "micro_compact",
-                "original_chars": 200,
-            },
-        },
-    }
-    messages = [{"role": "user", "content": [block]}]
-
-    projected = messages_for_api(messages)
-
-    assert block["content"] == "x" * 200
-    assert "_meta" in block
-    assert "_meta" not in projected[0]["content"][0]
-    assert projected[0]["content"][0]["content"].startswith("[collapsed tool_result read;")
-
-
 def test_messages_for_api_dynamic_collapse_is_read_only() -> None:
     block = {
         "type": "tool_result",

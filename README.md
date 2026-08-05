@@ -47,6 +47,10 @@ penhin
 /model [provider/model]        选择模型；不带参数时打开列表
 /thinking [off|high|max]       调整当前模型的思考等级
 /status                        查看当前状态
+/session                       查看当前会话、文件和活动叶节点
+/tree [entry-id]               查看会话树，或从历史节点继续形成分支
+/fork [entry-id]               从当前或指定节点派生独立会话
+/rename <name>                 设置当前会话名称
 /permission <mode>             切换权限模式
 /compact                       压缩当前会话上下文
 /help                          查看全部本地命令
@@ -66,13 +70,15 @@ penhin --once "解释这个项目"
 penhin --new
 ```
 
-Penhin 默认恢复最近一次会话。子 Agent 会使用隔离的 Git worktree；如果需要它读取当前修改，请先提交这些修改。
+Penhin 默认恢复最近一次会话。会话使用 append-only JSONL 保存，每条记录通过 `id`/`parentId` 组成分支树；`/tree` 可以回到历史节点并从那里继续，旧分支不会被删除。`/fork` 会把选中的上下文路径复制为一个独立会话。
+
+子 Agent 会使用隔离的 Git worktree；如果需要它读取当前修改，请先提交这些修改。
 
 ## 权限与本地数据
 
 权限模式包括交互确认、自动审查和完全访问。建议从默认模式开始，只在可信项目中扩大权限。
 
-本地会话、任务和编排数据保存在 `.transcripts/`、`.tasks/` 和 `.penhin/`。这些目录不会作为项目源码提交。多 Agent 默认使用本地 SQLite；需要 PostgreSQL 时安装：
+本地会话、任务和编排数据保存在 `.penhin/` 和 `.tasks/`。这些目录不会作为项目源码提交。多 Agent 默认使用本地 SQLite；需要 PostgreSQL 时安装：
 
 ```bash
 python -m pip install "penhin-code[postgres]"

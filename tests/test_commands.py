@@ -12,6 +12,8 @@ from penhin.runtime.retry import CircuitBreaker
 from penhin.agent.context import RunContext
 from prompt_toolkit.document import Document
 from penhin.tools.execution import ApprovalFlow, PermissionPolicy
+from penhin.agent.session_manager import SessionManager
+from penhin.agent.session_store import SessionStore
 
 
 def empty_context() -> RunContext:
@@ -39,6 +41,8 @@ def test_handle_local_command_shows_help() -> None:
     mocked_print_info.assert_any_call("/circuit Show circuit breaker status")
     mocked_print_info.assert_any_call("/compact Compact current session, optionally with a hint")
     mocked_print_info.assert_any_call("/force-snip Mark selected history turns as snipped")
+    mocked_print_info.assert_any_call("/tree Show the session tree or branch from an entry")
+    mocked_print_info.assert_any_call("/fork Fork the session from an entry")
 
 
 def test_handle_local_command_shows_workspace() -> None:
@@ -52,7 +56,7 @@ def test_handle_local_command_shows_workspace() -> None:
 
 def test_handle_local_command_shows_status() -> None:
     context = empty_context()
-    context.session_path = Path(".transcripts/transcript_demo-session.jsonl")
+    context.session_path = Path(".penhin/sessions/session_demo-session.jsonl")
 
     class Runtime:
         model = "claude-test"
@@ -471,6 +475,45 @@ def test_handle_force_snip_marks_selected_turns() -> None:
     assert context.messages[1]["_meta"]["snipped"] is True
     assert "_meta" not in context.messages[2]
     mocked_print_info.assert_called_once_with("snip: marked 2 messages")
+
+
+def test_tree_command_moves_leaf_and_next_append_creates_branch(tmp_path: Path) -> None:
+    manager = SessionManager.create(tmp_path)
+    root = manager.append_message({"role": "user", "content": "question"})
+    original = manager.append_message({"role": "assistant", "content": "original"})
+    context = empty_context()
+    context.session_manager = manager
+    context.session_path = manager.path
+    context.messages = manager.build_context()
+
+    with patch("penhin.cli.commands._handlers.ui.print_info"):
+        assert router.handle_local_command(f"/tree {root[:6]}", context) is True
+
+    assert manager.leaf_id == root
+    assert context.messages == [{"role": "user", "content": "question"}]
+    alternate = manager.append_message({"role": "assistant", "content": "alternate"})
+    assert {entry["id"] for entry in manager.children(root)} == {original, alternate}
+
+
+def test_fork_and_rename_commands_replace_active_session(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path)
+    manager = store.new([{"role": "user", "content": "question"}])
+    context = empty_context()
+    context.session_manager = manager
+    context.session_path = manager.path
+    context.messages = manager.build_context()
+
+    with (
+        patch("penhin.cli.commands._handlers.sessions", store),
+        patch("penhin.cli.commands._handlers.ui.print_info"),
+    ):
+        assert router.handle_local_command("/fork", context) is True
+        assert router.handle_local_command("/rename alternate approach", context) is True
+
+    assert context.session_manager is not manager
+    assert context.session_manager.header["parentSession"] == str(manager.path)
+    assert context.session_manager.get_session_name() == "alternate approach"
+    assert context.messages == [{"role": "user", "content": "question"}]
 
 
 def test_setup_command_completion_returns_completer() -> None:

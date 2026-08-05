@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from penhin.tools.task_state import TaskStatus, TaskStatusManager
+from penhin.tools.task_state import TaskStatusManager
 from penhin.tools import CHILD_TOOLS, PARENT_TOOLS, TOOL_SPECS
 from penhin.tools.builtin import tasks as task_tools
 
@@ -58,29 +58,6 @@ def test_task_status_manager_flow() -> None:
         {"text": "verify", "done": False},
     ]
     assert no_current is None
-
-
-def test_old_task_without_todos_loads_with_empty_list() -> None:
-    restored = TaskStatus.from_dict({
-        "id": 1,
-        "subject": "legacy task",
-        "kind": "main",
-        "blocked_by": [2],
-        "error": "old error",
-        "result": "old result",
-    })
-
-    assert restored.todos == []
-
-
-def test_legacy_background_record_is_not_exposed(tmp_path: Path) -> None:
-    manager = TaskStatusManager(tmp_path)
-    manager._task_path(7).write_text('{"id": 7, "subject": "old", "kind": "background"}', encoding="utf-8")
-
-    result = manager("show", id=7)
-
-    assert result.ok is False
-    assert result.meta["code"] == "not_found"
 
 
 def test_task_status_write_cleans_temp_file_on_failure() -> None:
