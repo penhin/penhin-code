@@ -15,6 +15,7 @@ class LLMUsage:
     cache_read_input_tokens: int | None = None
     cache_creation_input_tokens: int | None = None
     reasoning_tokens: int | None = None
+    context_tokens: int | None = None
 
 
 @dataclass(frozen=True)

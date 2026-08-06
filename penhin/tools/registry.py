@@ -364,7 +364,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     ),
     "bash": ToolSpec(
         name="bash",
-        description="Run a shell command in the current project directory.",
+        description="Run a shell command in the current project directory. Large output keeps its tail.",
         input_schema=object_schema({"command": {"type": "string"}}, ["command"]),
         category=ToolCategory.shell,
         handler=lambda **kwargs: run_bash(kwargs["command"]),
@@ -373,18 +373,19 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     ),
     "read": ToolSpec(
         name="read",
-        description="Read a file in the current project directory.",
+        description="Read a bounded file segment. Use next_offset as offset to continue a truncated read.",
         input_schema=object_schema(
             {
                 "path": {"type": "string"},
-                "limit": {"type": "integer"},
+                "limit": {"type": "integer", "minimum": 0},
+                "offset": {"type": "integer", "minimum": 1},
                 "line_numbers": {"type": "boolean"},
             },
             ["path"],
         ),
         category=ToolCategory.readonly,
         handler=lambda **kwargs: run_read(
-            kwargs["path"], kwargs.get("limit"), kwargs.get("line_numbers", True)
+            kwargs["path"], kwargs.get("limit"), kwargs.get("line_numbers", True), kwargs.get("offset", 1)
         ),
         parallel_safe=True,
         approval=ToolApproval(),
@@ -433,7 +434,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
             {
                 "query": {"type": "string"},
                 "path": {"type": "string"},
-                "limit": {"type": "integer"},
+                "limit": {"type": "integer", "minimum": 0},
                 "timeout": {"type": "integer"},
             },
             ["query"],

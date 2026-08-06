@@ -6,6 +6,7 @@ from pathlib import Path
 from penhin.infrastructure.atomic_io import atomic_write_text
 from penhin.result import Result
 from penhin.orchestration.permissions import write_is_allowed
+from penhin.tools.output_budget import MAX_TOOL_OUTPUT_LINES, bound_text
 
 from .cache import file_signature, file_validator, tool_result_cache, tree_signature, tree_validator
 from .workspace import IGNORED_PATH_PARTS, WORKDIR, is_ignored_path, iter_workspace_files
@@ -38,26 +39,38 @@ def ignored_path_part(path: Path) -> str | None:
     return None
 
 
-def run_read(path: str, limit: int = None, line_numbers: bool = True) -> Result:
+def run_read(path: str, limit: int = None, line_numbers: bool = True, offset: int = 1) -> Result:
     try:
+        if offset < 1:
+            return Result.failure("Error: offset must be at least 1", code="invalid_offset")
+        if limit is not None and limit < 0:
+            return Result.failure("Error: limit cannot be negative", code="invalid_limit")
         file_path = safe_path(path)
-        key = ("read", str(file_path), limit, line_numbers)
+        key = ("read", str(file_path), limit, line_numbers, offset)
         cached = tool_result_cache.get(key)
         if cached is not None:
             return cached
 
         signature = file_signature(file_path)
-        text = file_path.read_text(encoding="utf-8")
-        lines = text.splitlines()
-        if limit and len(lines) > limit:
-            lines = lines[:limit] + [f"... ({len(lines) - limit} more lines)"]
+        requested_lines = MAX_TOOL_OUTPUT_LINES if limit is None else min(max(limit, 0), MAX_TOOL_OUTPUT_LINES)
+        lines: list[str] = []
+        total_lines = 0
+        with file_path.open("r", encoding="utf-8") as handle:
+            for total_lines, line in enumerate(handle, start=1):
+                if total_lines < offset or len(lines) >= requested_lines:
+                    continue
+                lines.append(line.rstrip("\r\n"))
         if line_numbers:
-            lines = [f"{i}: {line}" for i, line in enumerate(lines, start=1)]
-        output = "\n".join(lines)[:50000]
+            lines = [f"{i}: {line}" for i, line in enumerate(lines, start=offset)]
+        bounded = bound_text("\n".join(lines))
+        returned_lines = len(bounded.text.splitlines())
+        next_offset = offset + returned_lines if offset - 1 + returned_lines < total_lines else None
         result = Result.success(
-            output,
-            data={"path": path, "lines": lines, "line_numbers": line_numbers},
-            truncated=len(output) >= 50000,
+            bounded.text,
+            data={"path": path, "offset": offset, "next_offset": next_offset},
+            truncated=bounded.truncated or next_offset is not None,
+            original_bytes=file_path.stat().st_size,
+            original_lines=total_lines,
         )
         return tool_result_cache.set(
             key,
@@ -158,23 +171,35 @@ def run_edit(path: str, old: str, new: str) -> Result:
         return Result.failure(f"Error: {error}", code="edit_error")
 
 
-def _search_file(query: str, file_path: Path, workdir: Path) -> list[str]:
+def _search_file(query: str, file_path: Path, workdir: Path, limit: int) -> list[str]:
     """Search a single file. Extracted for ThreadPoolExecutor."""
+    if limit <= 0:
+        return []
     try:
-        text = file_path.read_text(encoding="utf-8")
+        handle = file_path.open("r", encoding="utf-8")
     except (UnicodeDecodeError, OSError):
         return []
 
     rel_path = file_path.relative_to(workdir)
     matches = []
-    for line_number, line in enumerate(text.splitlines(), start=1):
-        if query in line:
-            matches.append(f"{rel_path}:{line_number}:{line}")
+    try:
+        for line_number, line in enumerate(handle, start=1):
+            if query in line:
+                line_text = line.rstrip("\r\n")
+                matches.append(f"{rel_path}:{line_number}:{line_text}")
+                if len(matches) >= limit:
+                    break
+    except UnicodeDecodeError:
+        return []
+    finally:
+        handle.close()
     return matches
 
 
 def run_search(query: str, path: str = ".", limit: int = None, timeout: int = 30) -> Result:
     try:
+        if limit is not None and limit < 0:
+            return Result.failure("Error: limit cannot be negative", code="invalid_limit")
         file_path = safe_path(path)
         key = ("search", str(file_path), query, limit, timeout)
         cached = tool_result_cache.get(key)
@@ -184,7 +209,7 @@ def run_search(query: str, path: str = ".", limit: int = None, timeout: int = 30
         all_files = list(iter_workspace_files(file_path))
         if not all_files:
             return Result.success(
-                "", data={"query": query, "path": path, "matches": [], "limit": limit}, count=0
+                "", data={"query": query, "path": path, "limit": limit}, count=0
             )
 
         def signature_factory():
@@ -192,24 +217,31 @@ def run_search(query: str, path: str = ".", limit: int = None, timeout: int = 30
 
         signature = tree_signature(all_files, WORKDIR)
         results: list[str] = []
+        result_limit = min(limit, MAX_TOOL_OUTPUT_LINES) if limit is not None else MAX_TOOL_OUTPUT_LINES
         with concurrent.futures.ThreadPoolExecutor(
             max_workers=min(os.cpu_count() or 1, 8)
         ) as executor:
-            futures = {executor.submit(_search_file, query, f, WORKDIR): f for f in all_files}
+            futures = {executor.submit(_search_file, query, f, WORKDIR, result_limit): f for f in all_files}
             try:
                 for future in concurrent.futures.as_completed(futures, timeout=timeout):
                     matches = future.result()
                     results.extend(matches)
-                    if limit and len(results) >= limit:
+                    if len(results) >= result_limit:
                         break
             except concurrent.futures.TimeoutError:
                 pass  # return partial results
 
-        results = results[:limit] if limit else results
+        results = results[:result_limit]
+        bounded = bound_text("\n".join(results))
+        returned_count = len(bounded.text.splitlines())
+        limit_reached = result_limit > 0 and len(results) >= result_limit
         result = Result.success(
-            "\n".join(results),
-            data={"query": query, "path": path, "matches": results, "limit": limit},
-            count=len(results),
+            bounded.text,
+            data={"query": query, "path": path, "limit": limit, "narrow_query_to_continue": limit_reached},
+            count=returned_count,
+            collected_matches=len(results),
+            truncated=bounded.truncated or limit_reached,
+            limit_reached=limit_reached,
         )
         return tool_result_cache.set(
             key,

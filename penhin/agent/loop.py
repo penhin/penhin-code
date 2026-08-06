@@ -7,6 +7,7 @@ from penhin.cli import ui
 from penhin.agent.state import AgentDeps, AgentState, is_terminal, step_agent
 from penhin.approval_rules import suggest_bash_prefix
 from penhin.runtime.retry import CircuitBreakerOpen
+from penhin.agent.compaction import CompactionError
 from penhin.agent.context import RunContext
 from penhin.agent.messages import ToolResults, build_tool_execution_context, execute_tool_blocks
 from penhin.agent.projection import messages_for_api
@@ -115,15 +116,17 @@ def resolve_approval(
     return run_with_one_time_rejection(tool_name, tool_input, policy, approval)
 
 
-def compact_context_for_llm(context: RunContext) -> None:
+def compact_context_for_llm(context: RunContext, runtime) -> None:
     force_compact_hint = context.consume_force_compact_hint()
     if force_compact_hint is not None:
-        context.force_auto_compact(hint=force_compact_hint)
-        context.collapse_keep_recent = None
+        try:
+            context.force_auto_compact(hint=force_compact_hint)
+        except CompactionError as error:
+            context.request_force_compact(force_compact_hint)
+            logger.warning(f"[compact] {error}")
         return
 
-    context.micro_compact()
-    context.auto_compact_if_needed()
+    context.auto_compact_if_needed(runtime.context_window, runtime.compaction_reserve_tokens)
 
 
 def call_llm(context: RunContext, runtime):
@@ -141,10 +144,7 @@ def call_llm(context: RunContext, runtime):
     try:
         return runtime.call_with_retry(
             system=build_main_system(),
-            messages=messages_for_api(
-                context.messages,
-                collapse_keep_recent=context.collapse_keep_recent,
-            ),
+            messages=messages_for_api(context.messages),
             tools=PARENT_TOOLS,
             max_tokens=runtime.max_tokens,
             stream_callback=on_stream_text,
@@ -154,7 +154,7 @@ def call_llm(context: RunContext, runtime):
             ui.finish_stream(stream)
 
 def record_llm_response(context: RunContext, response) -> None:
-    context.add_assistant_message(response.content)
+    context.add_assistant_message(response.content, response.usage)
     log_usage("main", response)
 
 
@@ -190,7 +190,7 @@ def handle_circuit_open(context: RunContext, error: CircuitBreakerOpen) -> None:
 
 def build_agent_deps(runtime) -> AgentDeps:
     return AgentDeps(
-        compact_context=compact_context_for_llm,
+        compact_context=lambda context: compact_context_for_llm(context, runtime),
         call_llm=lambda context: call_llm(context, runtime),
         record_llm_response=record_llm_response,
         should_continue_with_tools=should_continue_with_tools,

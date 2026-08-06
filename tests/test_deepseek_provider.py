@@ -83,6 +83,7 @@ def test_deepseek_normalizes_tools_and_usage() -> None:
     assert normalized.usage.input_tokens == 10
     assert normalized.usage.output_tokens == 4
     assert normalized.usage.cache_read_input_tokens == 3
+    assert normalized.usage.context_tokens == 14
 
 
 def test_deepseek_stream_accumulates_text_tool_deltas_and_usage() -> None:

@@ -136,13 +136,16 @@ def response_from_parts(text: str, calls: list[dict[str, str]], usage: Any, fini
             arguments = {}
         content.append({"type": "tool_use", "id": call["id"], "name": call["name"], "input": arguments})
     cached = getattr(usage, "prompt_cache_hit_tokens", None)
+    input_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+    output_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
     return LLMResponse(
         content=content,
         stop_reason="tool_use" if calls else (finish_reason or "end_turn"),
         usage=LLMUsage(
-            input_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
-            output_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
             cache_read_input_tokens=int(cached) if cached is not None else None,
+            context_tokens=input_tokens + output_tokens,
         ),
     )
 

@@ -53,6 +53,7 @@ def test_normalize_response_handles_text_tools_and_usage() -> None:
     assert normalized.stop_reason == "tool_use"
     assert normalized.usage.input_tokens == 10
     assert normalized.usage.output_tokens == 4
+    assert normalized.usage.context_tokens == 14
 
 
 def test_stream_message_emits_text_and_tool_calls() -> None:
@@ -69,4 +70,3 @@ def test_stream_message_emits_text_and_tool_calls() -> None:
     assert chunks == ["hello"]
     assert response.content[0] == {"type": "text", "text": "hello"}
     assert response.content[1]["name"] == "read"
-

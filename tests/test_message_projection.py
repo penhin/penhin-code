@@ -20,22 +20,22 @@ def test_messages_for_api_filters_snipped_messages() -> None:
     assert snipped["content"] == "old"
 
 
-def test_messages_for_api_dynamic_collapse_is_read_only() -> None:
+def test_messages_for_api_is_stable_and_strips_internal_metadata() -> None:
     block = {
         "type": "tool_result",
         "tool_use_id": "tool-1",
         "content": "x" * 200,
+        "_meta": {"id": "internal"},
     }
     messages = [
         {"role": "assistant", "content": [ToolUseBlock("tool-1", "search")]},
         {"role": "user", "content": [block]},
     ]
 
-    projected = messages_for_api(messages, collapse_keep_recent=0)
+    projected = messages_for_api(messages)
 
-    assert block == {
-        "type": "tool_result",
-        "tool_use_id": "tool-1",
-        "content": "x" * 200,
+    assert block["_meta"] == {"id": "internal"}
+    assert projected == messages_for_api(messages)
+    assert projected[1]["content"][0] == {
+        "type": "tool_result", "tool_use_id": "tool-1", "content": "x" * 200,
     }
-    assert projected[1]["content"][0]["content"].startswith("[collapsed tool_result search;")

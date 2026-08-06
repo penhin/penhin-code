@@ -87,14 +87,17 @@ class OpenAICodexProvider:
             content.append({"type": "tool_use", "id": call["id"], "name": call["name"], "input": arguments})
         input_details = usage.get("input_tokens_details") or {}
         output_details = usage.get("output_tokens_details") or {}
+        input_tokens = int(usage.get("input_tokens") or 0)
+        output_tokens = int(usage.get("output_tokens") or 0)
         return LLMResponse(
             content=content,
             stop_reason="tool_use" if calls else "end_turn",
             usage=LLMUsage(
-                input_tokens=int(usage.get("input_tokens") or 0),
-                output_tokens=int(usage.get("output_tokens") or 0),
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
                 cache_read_input_tokens=_optional_int(input_details.get("cached_tokens")),
                 reasoning_tokens=_optional_int(output_details.get("reasoning_tokens")),
+                context_tokens=int(usage.get("total_tokens") or 0) or input_tokens + output_tokens,
             ),
         )
 

@@ -1,9 +1,10 @@
 import pytest
 
 from penhin.auth import ApiKeyCredential, ResolvedAuth
-from penhin.providers.models import model_options, parse_model_reference, validate_model
+from penhin.providers.models import model_context_window, model_options, parse_model_reference, validate_model
 from penhin.runtime import manager as runtime
 from penhin.runtime.factory import build_provider
+from penhin.runtime.settings import configured_compaction_reserve_tokens, configured_context_window
 
 
 @pytest.mark.parametrize(("provider", "model"), [
@@ -39,6 +40,22 @@ def test_model_catalog_contains_only_compatible_unique_models(monkeypatch, provi
     assert len({item.id for item in options}) == len(options)
     for item in options:
         validate_model(provider, item.id)
+
+
+def test_context_windows_have_provider_specific_fallbacks() -> None:
+    assert model_context_window("anthropic", "custom") == 200_000
+    assert model_context_window("gemini", "custom") == 1_048_576
+    assert model_context_window("deepseek", "custom") == 128_000
+
+
+def test_context_window_and_reserve_can_be_overridden(monkeypatch) -> None:
+    monkeypatch.setenv("PENHIN_CONTEXT_WINDOW", "64000")
+    monkeypatch.setenv("PENHIN_COMPACTION_RESERVE_TOKENS", "8000")
+
+    window = configured_context_window("openai", "custom")
+
+    assert window == 64_000
+    assert configured_compaction_reserve_tokens(window) == 8_000
 
 
 def test_parse_pi_style_model_reference_with_thinking_level() -> None:

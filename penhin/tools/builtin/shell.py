@@ -5,6 +5,7 @@ from pathlib import Path
 
 from penhin.result import Result
 from penhin.orchestration.permissions import readonly_command_is_allowed, write_is_allowed
+from penhin.tools.output_budget import MAX_TOOL_OUTPUT_BYTES, bound_text
 
 from .workspace import IGNORED_PATH_PARTS, WORKDIR
 
@@ -111,14 +112,24 @@ def run_bash(command: str) -> Result:
     from penhin.auth.secrets import redact_text
     stdout = redact_text(result.stdout)
     stderr = redact_text(result.stderr)
+    if stdout and stderr:
+        stdout_budget = stderr_budget = MAX_TOOL_OUTPUT_BYTES // 2
+    else:
+        stdout_budget = stderr_budget = MAX_TOOL_OUTPUT_BYTES
+    bounded_stdout = bound_text(stdout, max_bytes=stdout_budget, keep="tail")
+    bounded_stderr = bound_text(stderr, max_bytes=stderr_budget, keep="tail")
     return Result(
         ok=result.returncode == 0,
-        message=stdout,
-        error=stderr,
+        message=bounded_stdout.text,
+        error=bounded_stderr.text,
         data={
             "command": redact_text(command),
             "returncode": result.returncode,
-            "stdout": stdout,
-            "stderr": stderr,
+        },
+        meta={
+            "truncated": bounded_stdout.truncated or bounded_stderr.truncated,
+            "stdout_bytes": bounded_stdout.original_bytes,
+            "stderr_bytes": bounded_stderr.original_bytes,
+            "tail_preserved": True,
         },
     )

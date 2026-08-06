@@ -108,6 +108,36 @@ def test_shell_redacts_registered_secret_from_all_result_fields() -> None:
     assert result.data["command"] == "echo <redacted>"
 
 
+def test_read_output_is_bounded_and_can_continue_by_offset() -> None:
+    path = Path(".large-output-budget-test.txt")
+    try:
+        path.write_text("\n".join(f"line-{index}" for index in range(2500)), encoding="utf-8")
+        first = run_read(str(path), line_numbers=False)
+
+        assert first.meta["truncated"] is True
+        assert len(first.message.splitlines()) == 2000
+        assert first.data["next_offset"] == 2001
+        second = run_read(str(path), line_numbers=False, offset=first.data["next_offset"])
+        assert second.message.startswith("line-2000")
+        assert second.data["next_offset"] is None
+    finally:
+        tool_result_cache.clear()
+        path.unlink(missing_ok=True)
+
+
+def test_bash_preserves_tail_without_duplicating_output_in_data() -> None:
+    completed = subprocess.CompletedProcess("command", 0, "x\n" * 30000, "")
+    with patch("penhin.tools.builtin.shell.write_is_allowed", return_value=True), patch(
+        "penhin.tools.builtin.shell.subprocess.run", return_value=completed
+    ):
+        result = run_bash("command")
+
+    assert result.meta["truncated"] is True
+    assert result.meta["tail_preserved"] is True
+    assert "stdout" not in result.data
+    assert len(result.message.encode("utf-8")) <= 50_000
+
+
 def test_list_ignored_skills_path_mentions_loader() -> None:
     result = run_list("skills")
 

@@ -64,14 +64,19 @@ def request_kwargs(request: LLMRequest) -> dict[str, Any]:
 
 def normalize_response(response) -> LLMResponse:
     usage = getattr(response, "usage", None)
+    input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+    output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+    cache_read = _optional_int(usage, "cache_read_input_tokens")
+    cache_creation = _optional_int(usage, "cache_creation_input_tokens")
     return LLMResponse(
         content=[normalize_content_block(block) for block in getattr(response, "content", [])],
         stop_reason=str(getattr(response, "stop_reason", "") or ""),
         usage=LLMUsage(
-            input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
-            output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
-            cache_read_input_tokens=_optional_int(usage, "cache_read_input_tokens"),
-            cache_creation_input_tokens=_optional_int(usage, "cache_creation_input_tokens"),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_input_tokens=cache_read,
+            cache_creation_input_tokens=cache_creation,
+            context_tokens=input_tokens + output_tokens + (cache_read or 0) + (cache_creation or 0),
         ),
     )
 

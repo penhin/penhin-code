@@ -48,6 +48,7 @@ def test_codex_sse_normalizes_text_tool_calls_and_usage() -> None:
     ]
     assert result.usage.input_tokens == 10
     assert result.usage.cache_read_input_tokens == 2
+    assert result.usage.context_tokens == 14
 
 
 def test_codex_http_error_does_not_include_body() -> None:

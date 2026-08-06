@@ -8,6 +8,7 @@ from dotenv import dotenv_values, load_dotenv
 
 from penhin.auth.resolver import set_process_environment_names
 from penhin.infrastructure.config import ENV_FILE, get_active_provider, get_provider_model, load_config
+from penhin.providers.models import model_context_window
 
 from .retry import CircuitBreaker
 
@@ -69,6 +70,21 @@ def configured_provider() -> str:
 
 def configured_model(provider: str) -> str:
     return os.getenv("MODEL_ID", "").strip() or get_provider_model(provider)
+
+
+def configured_context_window(provider: str, model: str) -> int:
+    value = _env_int("PENHIN_CONTEXT_WINDOW", model_context_window(provider, model))
+    if value <= 0:
+        raise ValueError("PENHIN_CONTEXT_WINDOW must be positive")
+    return value
+
+
+def configured_compaction_reserve_tokens(context_window: int) -> int:
+    default = min(16_384, max(1, context_window // 8))
+    value = _env_int("PENHIN_COMPACTION_RESERVE_TOKENS", default)
+    if value <= 0 or value >= context_window:
+        raise ValueError("PENHIN_COMPACTION_RESERVE_TOKENS must be positive and smaller than the context window")
+    return value
 
 
 def setting_source(name: str) -> str:

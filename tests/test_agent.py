@@ -8,6 +8,8 @@ from penhin.agent import loop as agent
 from penhin.agent.state import AgentDeps, AgentPhase, AgentState, TerminalReason, step_agent
 from penhin.runtime.retry import CircuitBreakerOpen
 from penhin.agent.context import RunContext
+from penhin.agent.session_manager import SessionManager
+from penhin.providers.protocols import LLMUsage
 from penhin.result import Result
 from penhin.tools.execution import ApprovalFlow, PermissionPolicy, ToolRun
 
@@ -17,10 +19,10 @@ def empty_policy() -> PermissionPolicy:
 
 
 class FakeResponse:
-    def __init__(self, content, stop_reason="end_turn"):
+    def __init__(self, content, stop_reason="end_turn", usage=None):
         self.content = content
         self.stop_reason = stop_reason
-        self.usage = None
+        self.usage = usage
 
 
 class FakeToolBlock:
@@ -34,6 +36,8 @@ class FakeToolBlock:
 
 class FakeRuntime:
     max_tokens = 100
+    context_window = 1000
+    compaction_reserve_tokens = 200
 
     def call_with_retry(self, **kwargs):
         return FakeResponse([{"type": "text", "text": "done"}])
@@ -41,6 +45,8 @@ class FakeRuntime:
 
 class RecordingRuntime:
     max_tokens = 123
+    context_window = 1000
+    compaction_reserve_tokens = 200
 
     def __init__(self):
         self.kwargs = None
@@ -52,6 +58,8 @@ class RecordingRuntime:
 
 class CircuitOpenRuntime:
     max_tokens = 100
+    context_window = 1000
+    compaction_reserve_tokens = 200
 
     def call_with_retry(self, **kwargs):
         raise CircuitBreakerOpen("open")
@@ -134,7 +142,9 @@ def test_agent_loop_prepares_context_before_llm_call() -> None:
     ):
         agent.agent_loop(context)
 
-    mocked_compact.assert_called_once_with(context)
+        mocked_compact.assert_called_once()
+        assert mocked_compact.call_args.args[0] is context
+        assert isinstance(mocked_compact.call_args.args[1], FakeRuntime)
 
 
 def test_agent_loop_records_message_when_circuit_is_open() -> None:
@@ -203,6 +213,43 @@ def test_record_llm_response_updates_context_and_logs_usage() -> None:
         {"role": "assistant", "content": [{"type": "text", "text": "done"}]},
     ]
     mocked_log_usage.assert_called_once_with("main", response)
+
+
+def test_record_llm_response_persists_normalized_context_usage() -> None:
+    context = RunContext(
+        messages=[{"role": "user", "content": "hello"}],
+        policy=empty_policy(),
+        approval=ApprovalFlow.require_confirmation(set()),
+    )
+    response = FakeResponse(
+        [{"type": "text", "text": "done"}],
+        usage=LLMUsage(input_tokens=10, output_tokens=4, context_tokens=14),
+    )
+
+    with patch("penhin.agent.loop.log_usage"):
+        agent.record_llm_response(context, response)
+
+    assert context.messages[-1]["_meta"]["usage"]["context_tokens"] == 14
+
+
+def test_normalized_context_usage_survives_session_reopen(tmp_path: Path) -> None:
+    manager = SessionManager.create(tmp_path, [{"role": "user", "content": "hello"}])
+    context = RunContext(
+        messages=manager.build_context(),
+        policy=empty_policy(),
+        approval=ApprovalFlow.require_confirmation(set()),
+        session_manager=manager,
+    )
+    response = FakeResponse(
+        [{"type": "text", "text": "done"}],
+        usage=LLMUsage(input_tokens=10, output_tokens=4, context_tokens=14),
+    )
+
+    with patch("penhin.agent.loop.log_usage"):
+        agent.record_llm_response(context, response)
+
+    reopened = SessionManager.open(manager.path)
+    assert reopened.build_context()[-1]["_meta"]["usage"]["context_tokens"] == 14
 
 
 def test_should_continue_with_tools() -> None:
@@ -338,12 +385,25 @@ def test_compact_context_for_llm_consumes_pending_force_compact() -> None:
 
     with (
         patch.object(context, "force_auto_compact") as mocked_force_compact,
-        patch.object(context, "micro_compact") as mocked_micro_compact,
         patch.object(context, "auto_compact_if_needed") as mocked_auto_compact,
     ):
-        agent.compact_context_for_llm(context)
+        agent.compact_context_for_llm(context, FakeRuntime())
 
     mocked_force_compact.assert_called_once_with(hint="keep current bug report")
-    mocked_micro_compact.assert_not_called()
     mocked_auto_compact.assert_not_called()
     assert context.pending_force_compact_hint is None
+
+
+def test_compact_context_for_llm_restores_hint_when_compaction_fails() -> None:
+    context = RunContext(
+        messages=[{"role": "user", "content": "keep me"}],
+        policy=empty_policy(),
+        approval=ApprovalFlow.require_confirmation(set()),
+    )
+    context.request_force_compact("keep current bug report")
+
+    with patch.object(context, "force_auto_compact", side_effect=agent.CompactionError("offline")):
+        agent.compact_context_for_llm(context, FakeRuntime())
+
+    assert context.messages == [{"role": "user", "content": "keep me"}]
+    assert context.pending_force_compact_hint == "keep current bug report"

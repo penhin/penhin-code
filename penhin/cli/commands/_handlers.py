@@ -555,7 +555,12 @@ def handle_compact_command(args: list[str], context: RunContext | None = None):
         return
 
     hint = " ".join(args).strip()
-    context.force_auto_compact(hint=hint or None)
+    from penhin.agent.compaction import CompactionError
+    try:
+        context.force_auto_compact(hint=hint or None)
+    except CompactionError as error:
+        ui.print_error(str(error))
+        return
     if hint:
         ui.print_info("compact: done with hint")
     else:

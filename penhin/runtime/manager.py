@@ -19,6 +19,7 @@ from .factory import build_provider
 from .models import AuthenticationRequired, RuntimeStatus
 from .settings import (
     build_circuit_breaker, build_compact_circuit_breaker, configured_model, configured_provider,
+    configured_compaction_reserve_tokens, configured_context_window,
     load_environment, mark_setting_source, setting_source,
 )
 
@@ -63,6 +64,8 @@ class Runtime:
     thinking_level: str | None = None
     auth_expires_at: int | None = None
     max_tokens: int = 10000
+    context_window: int = 128_000
+    compaction_reserve_tokens: int = 16_384
     sub_max_turns: int = 30
     sub_max_tokens: int = 2000
     retry_delays: tuple[int, ...] = (1, 2, 4)
@@ -262,6 +265,7 @@ def init_runtime(required: bool = True) -> None:
             raise SystemExit(1)
         return
     
+    context_window = configured_context_window(provider, model)
     runtime = Runtime(
         provider=build_provider(provider, resolved),
         model=model,
@@ -270,6 +274,8 @@ def init_runtime(required: bool = True) -> None:
         auth_expires_at=getattr(resolved.credential, "expires_at", None),
         circuit_breaker=build_circuit_breaker(),
         compact_circuit_breaker=build_compact_circuit_breaker(),
+        context_window=context_window,
+        compaction_reserve_tokens=configured_compaction_reserve_tokens(context_window),
     )
 
 
@@ -284,9 +290,14 @@ def runtime_available() -> bool:
 
 
 def set_runtime_model(model: str) -> None:
-    validate_model(configured_provider(), model)
+    provider = runtime.provider_id if runtime is not None and runtime.provider_id else configured_provider()
+    validate_model(provider, model)
     if runtime is not None:
+        context_window = configured_context_window(provider, model)
+        reserve_tokens = configured_compaction_reserve_tokens(context_window)
         runtime.model = model
+        runtime.context_window = context_window
+        runtime.compaction_reserve_tokens = reserve_tokens
 
 
 def set_runtime_thinking_level(level: str | None) -> None:
@@ -302,6 +313,7 @@ def set_runtime_provider(provider: str, model: str) -> None:
     resolved = resolve_runtime_auth(provider)
     if resolved is None:
         raise AuthenticationRequired(f"No credentials for {provider}. Use /login {provider} first.")
+    context_window = configured_context_window(provider, model)
     runtime = Runtime(
         provider=build_provider(provider, resolved), model=model,
         provider_id=provider,
@@ -309,6 +321,8 @@ def set_runtime_provider(provider: str, model: str) -> None:
         auth_expires_at=getattr(resolved.credential, "expires_at", None),
         circuit_breaker=build_circuit_breaker(),
         compact_circuit_breaker=build_compact_circuit_breaker(),
+        context_window=context_window,
+        compaction_reserve_tokens=configured_compaction_reserve_tokens(context_window),
     )
 
 

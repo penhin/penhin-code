@@ -2,15 +2,12 @@ import json
 import logging
 from typing import Any
 
-from penhin.runtime.retry import CircuitBreakerOpen
 from penhin.agent.projection import messages_for_api
 from penhin.agent.prompts import AUTO_COMPACT_SYSTEM
+from penhin.agent.token_accounting import estimate_context_tokens
 from penhin.runtime import runtime_manager
 from penhin.agent.session_store import serialize_value
 
-WARNING_THRESHOLD = 80000
-COMPACT_THRESHOLD = 120000
-BLOCKING_THRESHOLD = 160000
 SUMMARY_HEAD_CHARS = 40000
 SUMMARY_TAIL_CHARS = 40000
 KEEP_LAST_MESSAGES = 8
@@ -30,70 +27,52 @@ def compact_source_text(messages: list[dict[str, Any]]) -> str:
     )
 
 
-def estimate_tokens(messages: list[Any]) -> int:
-    return len(str(messages)) // 4
+class CompactionError(RuntimeError):
+    pass
 
 
-def estimate_api_tokens(
-    messages: list[dict[str, Any]],
-    collapse_keep_recent: int | None = None,
-) -> int:
-    return estimate_tokens(messages_for_api(messages, collapse_keep_recent=collapse_keep_recent))
-
-
-def micro_compact_keep_recent(messages: list[dict[str, Any]], limit: int = COMPACT_THRESHOLD) -> int | None:
-    if limit <= 0:
-        return None
-
-    tokens = estimate_tokens(messages)
-    usage_ratio = tokens / limit
-
-    if usage_ratio < 0.2:
-        return None
-    if usage_ratio < 0.6:
-        return 5
-    if usage_ratio < 0.8:
-        return 3
-    return 1
-
-
-def micro_compact_if_needed(messages: list[dict[str, Any]], limit: int = COMPACT_THRESHOLD) -> int | None:
-    return micro_compact_keep_recent(messages, limit)
+def estimate_api_tokens(messages: list[dict[str, Any]]) -> int:
+    return estimate_context_tokens(messages).tokens
 
 
 def compact_watermark(
     messages: list[dict[str, Any]],
-    collapse_keep_recent: int | None = None,
+    context_window: int,
+    reserve_tokens: int,
 ) -> str:
-    tokens = estimate_api_tokens(messages, collapse_keep_recent=collapse_keep_recent)
-    if tokens >= BLOCKING_THRESHOLD:
+    tokens = estimate_api_tokens(messages)
+    compact_threshold = context_window - reserve_tokens
+    if tokens >= context_window:
         return "blocking"
-    if tokens >= COMPACT_THRESHOLD:
+    if tokens >= compact_threshold:
         return "compact"
-    if tokens >= WARNING_THRESHOLD:
+    if tokens >= int(compact_threshold * 0.75):
         return "warning"
     return "normal"
 
 
 def log_compact_watermark(
     messages: list[dict[str, Any]],
-    collapse_keep_recent: int | None = None,
+    context_window: int,
+    reserve_tokens: int,
 ) -> str:
-    watermark = compact_watermark(messages, collapse_keep_recent=collapse_keep_recent)
+    tokens = estimate_api_tokens(messages)
+    compact_threshold = context_window - reserve_tokens
+    watermark = compact_watermark(messages, context_window, reserve_tokens)
     if watermark == "warning":
         logger.warning(
             f"[compact] context above warning threshold "
-            f"({estimate_api_tokens(messages, collapse_keep_recent)}/{WARNING_THRESHOLD})"
+            f"({tokens}/{compact_threshold})"
         )
     elif watermark == "compact":
         logger.warning(
             f"[compact] context above compact threshold "
-            f"({estimate_api_tokens(messages, collapse_keep_recent)}/{COMPACT_THRESHOLD}); auto compacting"
+            f"({tokens}/{compact_threshold}); auto compacting"
         )
     elif watermark == "blocking":
         logger.warning(
             f"[compact] context above blocking threshold "
-            f"({estimate_api_tokens(messages, collapse_keep_recent)}/{BLOCKING_THRESHOLD}); compact required"
+            f"({tokens}/{context_window}); compact required"
         )
     return watermark
 
@@ -122,10 +101,9 @@ def auto_compact_messages(
     messages: list[dict[str, Any]],
     keep_last: int = KEEP_LAST_MESSAGES,
     hint: str | None = None,
-    collapse_keep_recent: int | None = None,
 ) -> list[dict[str, Any]]:
     conversation_text = compact_source_text(
-        messages_for_api(messages, collapse_keep_recent=collapse_keep_recent)
+        messages_for_api(messages)
     )
     hint_section = ""
     if hint:
@@ -154,13 +132,11 @@ def auto_compact_messages(
             ),
             max_tokens=2000,
         )
-    except CircuitBreakerOpen as error:
-        summary = f"Summary skipped during compaction: compact circuit breaker is open ({error})"
     except Exception as error:
-        summary = f"Summary failed during compaction: {error}"
+        raise CompactionError(f"Compaction summary failed: {error}") from error
 
     if not summary:
-        summary = "No summary generated."
+        raise CompactionError("Compaction summary was empty")
 
     compacted = {
         "role": "user",

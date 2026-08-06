@@ -82,9 +82,13 @@ def response_from_parts(text: str, calls: list[dict[str, Any]], usage: Any) -> L
     content.extend({"type": "tool_use", "id": f"gemini-{uuid4().hex}", "name": call["name"], "input": call["args"]} for call in calls)
     cached = getattr(usage, "cached_content_token_count", None)
     reasoning = getattr(usage, "thoughts_token_count", None)
+    input_tokens = int(getattr(usage, "prompt_token_count", 0) or 0)
+    output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0)
+    total_tokens = int(getattr(usage, "total_token_count", 0) or 0)
     return LLMResponse(content=content, stop_reason="tool_use" if calls else "end_turn", usage=LLMUsage(
-        input_tokens=int(getattr(usage, "prompt_token_count", 0) or 0),
-        output_tokens=int(getattr(usage, "candidates_token_count", 0) or 0),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
         cache_read_input_tokens=int(cached) if cached is not None else None,
         reasoning_tokens=int(reasoning) if reasoning is not None else None,
+        context_tokens=total_tokens or input_tokens + output_tokens + (int(reasoning) if reasoning is not None else 0),
     ))

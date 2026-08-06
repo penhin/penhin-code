@@ -1,22 +1,24 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from penhin.agent import compaction as compact
-from penhin.runtime.retry import CircuitBreakerOpen
 from penhin.agent.compaction import (
+    CompactionError,
     auto_compact_messages,
     compact_watermark,
     compact_source_text,
     log_compact_watermark,
-    micro_compact_if_needed,
     recent_message_start,
     safe_recent_messages,
 )
-
-from tests.helpers import ToolUseBlock
+from penhin.agent.context import RunContext
 from penhin.agent.projection import messages_for_api
+from penhin.tools.execution import ApprovalFlow, PermissionPolicy
+from tests.helpers import ToolUseBlock
 
 
 def test_auto_compact_helpers() -> None:
@@ -33,46 +35,16 @@ def test_auto_compact_helpers() -> None:
 
 
 def test_compact_watermark_levels() -> None:
-    assert compact_watermark([{"role": "user", "content": "x" * 100}]) == "normal"
-    assert compact_watermark([{"role": "user", "content": "x" * compact.WARNING_THRESHOLD * 4}]) == "warning"
-    assert compact_watermark([{"role": "user", "content": "x" * compact.COMPACT_THRESHOLD * 4}]) == "compact"
-    assert compact_watermark([{"role": "user", "content": "x" * compact.BLOCKING_THRESHOLD * 4}]) == "blocking"
+    assert compact_watermark([{"role": "user", "content": "x" * 100}], 1000, 200) == "normal"
+    assert compact_watermark([{"role": "user", "content": "x" * 2500}], 1000, 200) == "warning"
+    assert compact_watermark([{"role": "user", "content": "x" * 3300}], 1000, 200) == "compact"
+    assert compact_watermark([{"role": "user", "content": "x" * 4100}], 1000, 200) == "blocking"
 
 
 def test_log_compact_watermark_returns_level() -> None:
-    messages = [{"role": "user", "content": "x" * compact.WARNING_THRESHOLD * 4}]
+    messages = [{"role": "user", "content": "x" * 2500}]
 
-    assert log_compact_watermark(messages) == "warning"
-
-
-def test_micro_compact_if_needed_uses_limit() -> None:
-    old_output = "x" * 400
-    recent_output = "z" * 400
-    messages = [
-        {
-            "role": "assistant",
-            "content": [
-                ToolUseBlock("tool-1", "bash"),
-                ToolUseBlock("tool-2", "search"),
-            ],
-        },
-        {
-            "role": "user",
-            "content": [
-                {"type": "tool_result", "tool_use_id": "tool-1", "content": old_output},
-                {"type": "tool_result", "tool_use_id": "tool-2", "content": recent_output},
-            ],
-        },
-    ]
-
-    micro_compact_if_needed(messages, limit=100000)
-    assert messages[1]["content"][0]["content"] == old_output
-
-    micro_compact_if_needed(messages, limit=100)
-    assert messages[1]["content"][0]["content"] == old_output
-    projected = messages_for_api(messages, collapse_keep_recent=1)
-    assert projected[1]["content"][0]["content"].startswith("[collapsed tool_result bash;")
-    assert messages[1]["content"][1]["content"] == recent_output
+    assert log_compact_watermark(messages, 1000, 200) == "warning"
 
 
 def test_compact_source_text_keeps_head_and_tail() -> None:
@@ -96,7 +68,7 @@ def test_compact_source_text_keeps_head_and_tail() -> None:
     assert "-TAIL" in text
 
 
-def test_auto_compact_falls_back_when_summary_fails() -> None:
+def test_auto_compact_raises_when_summary_fails() -> None:
     class FailingRuntime:
         def call_compact_once(self, **kwargs):
             raise RuntimeError("offline failure")
@@ -108,21 +80,21 @@ def test_auto_compact_falls_back_when_summary_fails() -> None:
             {"role": "user", "content": "first"},
             {"role": "assistant", "content": "second"},
         ]
-        compacted = auto_compact_messages(messages, keep_last=1)
+        with pytest.raises(CompactionError, match="offline failure"):
+            auto_compact_messages(messages, keep_last=1)
     finally:
         compact.runtime_manager.current = original_get_runtime
 
-    assert compacted[0]["role"] == "user"
-    assert compacted[0]["content"].startswith("[Conversation compressed.]")
-    assert "Summary failed during compaction: offline failure" in compacted[0]["content"]
-    assert compacted[-1] == {"role": "assistant", "content": "second"}
-    assert len(compacted) == 2
+    assert messages == [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "second"},
+    ]
 
 
-def test_auto_compact_continues_when_compact_circuit_is_open() -> None:
+def test_auto_compact_raises_when_compact_circuit_is_open() -> None:
     class CircuitOpenRuntime:
         def call_compact_once(self, **kwargs):
-            raise CircuitBreakerOpen("open")
+            raise RuntimeError("circuit open")
 
     original_get_runtime = compact.runtime_manager.current
     try:
@@ -132,14 +104,35 @@ def test_auto_compact_continues_when_compact_circuit_is_open() -> None:
             {"role": "assistant", "content": "old"},
             {"role": "user", "content": "tail"},
         ]
-        compacted = auto_compact_messages(messages, keep_last=1)
+        with pytest.raises(CompactionError, match="circuit open"):
+            auto_compact_messages(messages, keep_last=1)
     finally:
         compact.runtime_manager.current = original_get_runtime
 
-    assert "Summary skipped during compaction" in compacted[0]["content"]
-    assert "compact circuit breaker is open" in compacted[0]["content"]
-    assert messages_for_api(compacted)[-1] == {"role": "user", "content": "tail"}
-    assert len(compacted) == 2
+    assert messages[-1] == {"role": "user", "content": "tail"}
+
+
+def test_auto_compact_failure_does_not_append_session_event(monkeypatch) -> None:
+    class RecordingSession:
+        calls = 0
+
+        def append_compaction(self, messages):
+            self.calls += 1
+
+    def fail_compaction(_messages):
+        raise CompactionError("offline")
+
+    run_context = RunContext(
+        messages=[{"role": "user", "content": "x" * 5000}],
+        policy=PermissionPolicy(allow=set(), deny=set()),
+        approval=ApprovalFlow.require_confirmation(set()),
+        session_manager=RecordingSession(),
+    )
+    monkeypatch.setattr("penhin.agent.context.auto_compact_messages", fail_compaction)
+
+    assert run_context.auto_compact_if_needed(1000, 200) is False
+    assert run_context.messages == [{"role": "user", "content": "x" * 5000}]
+    assert run_context.session_manager.calls == 0
 
 
 def test_auto_compact_passes_hint_to_compact_runtime() -> None:
@@ -166,13 +159,13 @@ def test_auto_compact_passes_hint_to_compact_runtime() -> None:
 
 
 def test_auto_compact_keeps_safe_tail_without_old_head() -> None:
-    class FailingRuntime:
+    class SummaryRuntime:
         def call_compact_once(self, **kwargs):
-            raise RuntimeError("offline failure")
+            return "summary"
 
     original_get_runtime = compact.runtime_manager.current
     try:
-        compact.runtime_manager.current = lambda: FailingRuntime()
+        compact.runtime_manager.current = lambda: SummaryRuntime()
         messages = [
             {"role": "user", "content": "head-1"},
             {"role": "assistant", "content": "head-2"},
@@ -195,13 +188,13 @@ def test_auto_compact_keeps_safe_tail_without_old_head() -> None:
 
 
 def test_auto_compact_does_not_duplicate_overlapping_head_and_tail() -> None:
-    class FailingRuntime:
+    class SummaryRuntime:
         def call_compact_once(self, **kwargs):
-            raise RuntimeError("offline failure")
+            return "summary"
 
     original_get_runtime = compact.runtime_manager.current
     try:
-        compact.runtime_manager.current = lambda: FailingRuntime()
+        compact.runtime_manager.current = lambda: SummaryRuntime()
         messages = [
             {"role": "user", "content": "first"},
             {"role": "assistant", "content": "second"},

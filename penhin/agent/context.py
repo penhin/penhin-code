@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from penhin.agent.compaction import auto_compact_messages, log_compact_watermark, micro_compact_if_needed
+from penhin.agent.compaction import CompactionError, auto_compact_messages, log_compact_watermark
 from penhin.agent.projection import mark_message_snipped
 from penhin.permissions import PermissionMode
 from penhin.result import Result
@@ -42,7 +42,6 @@ class RunContext:
     approval: ApprovalFlow
     session_path: Path | None = None
     session_manager: SessionManager | None = None
-    collapse_keep_recent: int | None = None
     post_delegation_read_budget: int | None = None
     post_delegation_source: str = ""
     pending_force_compact_hint: str | None = None
@@ -56,8 +55,18 @@ class RunContext:
         if self.session_manager is not None:
             self.session_manager.append_message(message)
 
-    def add_assistant_message(self, content: Any) -> None:
+    def add_assistant_message(self, content: Any, usage: Any = None) -> None:
         message = {"role": "assistant", "content": content}
+        context_tokens = getattr(usage, "context_tokens", None)
+        if isinstance(context_tokens, int) and context_tokens > 0:
+            message["_meta"] = {"usage": {
+                "input_tokens": int(getattr(usage, "input_tokens", 0) or 0),
+                "output_tokens": int(getattr(usage, "output_tokens", 0) or 0),
+                "cache_read_input_tokens": getattr(usage, "cache_read_input_tokens", None),
+                "cache_creation_input_tokens": getattr(usage, "cache_creation_input_tokens", None),
+                "reasoning_tokens": getattr(usage, "reasoning_tokens", None),
+                "context_tokens": context_tokens,
+            }}
         self.messages.append(message)
         if self.session_manager is not None:
             self.session_manager.append_message(message)
@@ -119,33 +128,30 @@ class RunContext:
         self.pending_force_compact_hint = None
         return hint or None
 
-    def micro_compact(self) -> None:
-        from penhin.agent.compaction import COMPACT_THRESHOLD
-        previous = self.collapse_keep_recent
-        self.collapse_keep_recent = micro_compact_if_needed(self.messages, limit=COMPACT_THRESHOLD)
-        if self.collapse_keep_recent is not None and self.collapse_keep_recent != previous:
-            from penhin.evaluation.observer import emit
-            emit("context_compacted", mode="micro", keep_recent=self.collapse_keep_recent)
-
-    def auto_compact_if_needed(self) -> None:
-        if log_compact_watermark(self.messages, self.collapse_keep_recent) in {"compact", "blocking"}:
+    def auto_compact_if_needed(self, context_window: int, reserve_tokens: int) -> bool:
+        if log_compact_watermark(self.messages, context_window, reserve_tokens) in {"compact", "blocking"}:
             before = len(self.messages)
-            self.messages[:] = auto_compact_messages(
-                self.messages,
-                collapse_keep_recent=self.collapse_keep_recent,
-            )
+            try:
+                compacted = auto_compact_messages(self.messages)
+            except CompactionError as error:
+                from penhin.evaluation.observer import emit
+                emit("context_compaction_failed", mode="automatic", error_type=type(error.__cause__).__name__ if error.__cause__ else type(error).__name__)
+                return False
+            self.messages[:] = compacted
             if self.session_manager is not None:
                 self.session_manager.append_compaction(self.messages)
             from penhin.evaluation.observer import emit
             emit("context_compacted", mode="automatic", messages_before=before, messages_after=len(self.messages))
+            return True
+        return False
 
     def force_auto_compact(self, hint: str | None = None) -> None:
         before = len(self.messages)
-        self.messages[:] = auto_compact_messages(
+        compacted = auto_compact_messages(
             self.messages,
             hint=hint,
-            collapse_keep_recent=self.collapse_keep_recent,
         )
+        self.messages[:] = compacted
         if self.session_manager is not None:
             self.session_manager.append_compaction(self.messages)
         from penhin.evaluation.observer import emit

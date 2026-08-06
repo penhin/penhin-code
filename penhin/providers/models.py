@@ -18,6 +18,16 @@ class ModelOption:
     id: str
     name: str
     thinking_levels: tuple[str, ...] = ()
+    context_window: int | None = None
+
+
+PROVIDER_CONTEXT_WINDOW_FALLBACKS = {
+    "anthropic": 200_000,
+    "openai": 400_000,
+    "openai-codex": 400_000,
+    "gemini": 1_048_576,
+    "deepseek": 128_000,
+}
 
 
 # Curated from the same provider catalogs used by Pi. Keep this deliberately
@@ -73,6 +83,13 @@ def model_options(provider: str) -> tuple[ModelOption, ...]:
 
 def model_option(provider: str, model: str) -> ModelOption | None:
     return next((item for item in model_options(provider) if item.id == model), None)
+
+
+def model_context_window(provider: str, model: str) -> int:
+    option = model_option(provider, model)
+    if option is not None and option.context_window is not None:
+        return option.context_window
+    return PROVIDER_CONTEXT_WINDOW_FALLBACKS[provider]
 
 
 def model_thinking_levels(provider: str, model: str) -> tuple[str, ...]:
