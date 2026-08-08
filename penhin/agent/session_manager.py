@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import threading
@@ -15,6 +16,10 @@ from penhin.infrastructure.atomic_io import read_jsonl, write_jsonl_atomic
 
 SESSION_VERSION = 1
 SESSION_TYPE = "session"
+SNAPSHOT_TEXT_FIELDS = {"goal", "next_step"}
+SNAPSHOT_LIST_FIELDS = {
+    "completed", "key_context", "constraints", "open_work", "tool_result_refs",
+}
 
 
 class SessionFormatError(ValueError):
@@ -43,6 +48,26 @@ def _persistent_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]
             and message["content"].strip().startswith("<project_instructions>")
         )
     ]
+
+
+def _valid_snapshot_payload(summary: Any, snapshot: Any) -> bool:
+    if not isinstance(summary, str) or not isinstance(snapshot, dict):
+        return False
+    if set(snapshot) != SNAPSHOT_TEXT_FIELDS | SNAPSHOT_LIST_FIELDS:
+        return False
+    if not all(isinstance(snapshot[field], str) and snapshot[field].strip() for field in SNAPSHOT_TEXT_FIELDS):
+        return False
+    if not all(
+        isinstance(snapshot[field], list)
+        and all(isinstance(item, str) and item.strip() for item in snapshot[field])
+        for field in SNAPSHOT_LIST_FIELDS
+    ):
+        return False
+    try:
+        parsed_summary = json.loads(summary)
+    except json.JSONDecodeError:
+        return False
+    return parsed_summary == snapshot
 
 
 class SessionManager:
@@ -155,8 +180,53 @@ class SessionManager:
         for message in _persistent_messages(messages):
             self.append_message(message)
 
-    def append_compaction(self, messages: list[dict[str, Any]], reason: str = "compact") -> str:
-        return str(self.append_entry("compaction", messages=_persistent_messages(messages), reason=reason)["id"])
+    def append_compaction(self, artifact: dict[str, Any]) -> str:
+        artifact = copy.deepcopy(artifact)
+        if artifact.get("version") not in {1, 2}:
+            raise ValueError("Unsupported compaction artifact version")
+        if not isinstance(artifact.get("summary"), str) or not artifact["summary"].strip():
+            raise ValueError("Compaction artifact requires a summary")
+        retained = artifact.get("retainedMessages")
+        if not isinstance(retained, list) or not all(isinstance(message, dict) for message in retained):
+            raise ValueError("Compaction artifact retainedMessages must be a message list")
+        if artifact.get("version") == 2 and not _valid_snapshot_payload(
+            artifact.get("summary"), artifact.get("snapshot")
+        ):
+            raise ValueError("Version-2 compaction artifact requires a valid structured snapshot")
+
+        _messages, source_ids = self._build_context_state()
+        source_count = int(artifact.get("sourceMessageCount", -1))
+        covered_count = int(artifact.get("coveredMessageCount", 0) or 0)
+        if source_count != len(source_ids):
+            raise ValueError("Compaction artifact sourceMessageCount does not match the active branch")
+        if covered_count <= 0 or covered_count > source_count:
+            raise ValueError("Compaction artifact coveredMessageCount is outside the active branch")
+        if len(retained) != source_count - covered_count:
+            raise ValueError("Compaction artifact retainedMessages does not match its coverage")
+        artifact["sourceLeafId"] = self.leaf_id
+        artifact["coveredThroughEntryId"] = (
+            source_ids[covered_count - 1]
+            if 0 < covered_count <= len(source_ids)
+            else None
+        )
+        artifact["retainedSourceEntryIds"] = source_ids[covered_count:]
+        references = artifact.get("toolResultRefs")
+        if references is not None:
+            if not isinstance(references, list) or not all(isinstance(reference, dict) for reference in references):
+                raise ValueError("Compaction artifact toolResultRefs must be an object list")
+            for reference in references:
+                message_index = reference.get("messageIndex")
+                if not isinstance(message_index, int) or not 0 <= message_index < covered_count:
+                    raise ValueError("Compaction tool result reference is outside the covered prefix")
+                reference["sourceEntryId"] = source_ids[message_index]
+        return str(self.append_entry("compaction", artifact=artifact)["id"])
+
+    def append_context_rewrite(self, messages: list[dict[str, Any]], reason: str) -> str:
+        return str(self.append_entry(
+            "context_rewrite",
+            messages=_persistent_messages(messages),
+            reason=reason,
+        )["id"])
 
     def append_session_info(self, name: str) -> str:
         return str(self.append_entry("session_info", name=name)["id"])
@@ -199,18 +269,146 @@ class SessionManager:
         branch.reverse()
         return branch
 
-    def build_context(self, leaf_id: str | None = None) -> list[dict[str, Any]]:
+    def _build_context_state(
+        self,
+        leaf_id: str | None = None,
+    ) -> tuple[list[dict[str, Any]], list[str]]:
         messages: list[dict[str, Any]] = []
+        source_ids: list[str] = []
         for entry in self.branch_entries(leaf_id):
             if entry["type"] == "message":
                 message = entry.get("message")
                 if isinstance(message, dict):
                     messages.append(copy.deepcopy(message))
+                    source_ids.append(str(entry["id"]))
             elif entry["type"] == "compaction":
-                compacted = entry.get("messages")
-                if isinstance(compacted, list):
-                    messages = [copy.deepcopy(message) for message in compacted if isinstance(message, dict)]
+                artifact = entry.get("artifact")
+                if self._valid_compaction_artifact(artifact, entry, messages, source_ids):
+                    retained = artifact.get("retainedMessages")
+                    messages = [{
+                        "role": "user",
+                        "content": f"[Conversation compressed.]\n\n{artifact['summary']}",
+                    }] + [copy.deepcopy(message) for message in retained if isinstance(message, dict)]
+                    retained_sources = artifact.get("retainedSourceEntryIds")
+                    if not isinstance(retained_sources, list) or len(retained_sources) != len(messages) - 1:
+                        retained_sources = [str(entry["id"])] * (len(messages) - 1)
+                    source_ids = [str(entry["id"])] + [str(item) for item in retained_sources]
+                else:
+                    # Version-1 sessions used compaction entries as full context snapshots.
+                    compacted = entry.get("messages")
+                    if isinstance(compacted, list):
+                        messages = [copy.deepcopy(message) for message in compacted if isinstance(message, dict)]
+                        source_ids = [str(entry["id"])] * len(messages)
+            elif entry["type"] == "context_rewrite":
+                rewritten = entry.get("messages")
+                if isinstance(rewritten, list):
+                    messages = [copy.deepcopy(message) for message in rewritten if isinstance(message, dict)]
+                    source_ids = [str(entry["id"])] * len(messages)
+        return messages, source_ids
+
+    @staticmethod
+    def _valid_compaction_artifact(
+        artifact: Any,
+        entry: dict[str, Any],
+        messages: list[dict[str, Any]],
+        source_ids: list[str],
+    ) -> bool:
+        if not isinstance(artifact, dict) or artifact.get("version") not in {1, 2}:
+            return False
+        if not isinstance(artifact.get("summary"), str) or not artifact["summary"].strip():
+            return False
+        retained = artifact.get("retainedMessages")
+        if not isinstance(retained, list) or not all(isinstance(message, dict) for message in retained):
+            return False
+        if artifact.get("version") == 2 and not _valid_snapshot_payload(
+            artifact.get("summary"), artifact.get("snapshot")
+        ):
+            return False
+        source_count = artifact.get("sourceMessageCount")
+        covered_count = artifact.get("coveredMessageCount")
+        if source_count != len(messages) or not isinstance(covered_count, int):
+            return False
+        if covered_count <= 0 or covered_count > source_count:
+            return False
+        if len(retained) != source_count - covered_count:
+            return False
+        source_leaf = artifact.get("sourceLeafId")
+        if source_leaf is not None and source_leaf != entry.get("parentId"):
+            return False
+        covered_through = artifact.get("coveredThroughEntryId")
+        if covered_through is not None and covered_through != source_ids[covered_count - 1]:
+            return False
+        retained_sources = artifact.get("retainedSourceEntryIds")
+        if retained_sources is not None and retained_sources != source_ids[covered_count:]:
+            return False
+        if artifact.get("version") == 2:
+            references = artifact.get("toolResultRefs")
+            if not isinstance(references, list):
+                return False
+            for reference in references:
+                if not isinstance(reference, dict):
+                    return False
+                message_index = reference.get("messageIndex")
+                if not isinstance(message_index, int) or not 0 <= message_index < covered_count:
+                    return False
+                if reference.get("sourceEntryId") != source_ids[message_index]:
+                    return False
+        return True
+
+    def build_context(self, leaf_id: str | None = None) -> list[dict[str, Any]]:
+        messages, _source_ids = self._build_context_state(leaf_id)
         return messages
+
+    def recover_tool_result(
+        self,
+        checkpoint_id: str,
+        reference_id: str,
+    ) -> dict[str, Any] | None:
+        checkpoint = self.get_entry(self.resolve_entry_id(checkpoint_id))
+        if checkpoint is None or checkpoint.get("type") != "compaction":
+            return None
+        artifact = checkpoint.get("artifact")
+        references = artifact.get("toolResultRefs") if isinstance(artifact, dict) else None
+        reference = next(
+            (
+                item for item in references or []
+                if isinstance(item, dict) and item.get("id") == reference_id
+            ),
+            None,
+        )
+        if reference is None:
+            return None
+        expected_hash = reference.get("contentHash")
+        expected_tool_use_id = reference.get("toolUseId")
+        for entry in reversed(self.branch_entries(str(checkpoint["id"]))):
+            for message in self._entry_context_messages(entry):
+                content = message.get("content")
+                if not isinstance(content, list):
+                    continue
+                for block in content:
+                    if not isinstance(block, dict) or block.get("type") != "tool_result":
+                        continue
+                    raw_content = block.get("content")
+                    if not isinstance(raw_content, str):
+                        continue
+                    digest = hashlib.sha256(raw_content.encode("utf-8")).hexdigest()
+                    if block.get("tool_use_id") == expected_tool_use_id and digest == expected_hash:
+                        return copy.deepcopy(block)
+        return None
+
+    @staticmethod
+    def _entry_context_messages(entry: dict[str, Any]) -> list[dict[str, Any]]:
+        if entry.get("type") == "message" and isinstance(entry.get("message"), dict):
+            return [entry["message"]]
+        if entry.get("type") == "context_rewrite" and isinstance(entry.get("messages"), list):
+            return [message for message in entry["messages"] if isinstance(message, dict)]
+        if entry.get("type") == "compaction":
+            artifact = entry.get("artifact")
+            if isinstance(artifact, dict) and isinstance(artifact.get("retainedMessages"), list):
+                return [message for message in artifact["retainedMessages"] if isinstance(message, dict)]
+            if isinstance(entry.get("messages"), list):
+                return [message for message in entry["messages"] if isinstance(message, dict)]
+        return []
 
     def sync_messages(self, messages: list[dict[str, Any]]) -> None:
         messages = _persistent_messages(messages)
@@ -222,7 +420,7 @@ class SessionManager:
         if desired_keys[:len(current_keys)] == current_keys:
             self.append_messages(messages[len(current):])
             return
-        self.append_compaction(messages, reason="context_rewrite")
+        self.append_context_rewrite(messages, reason="context_rewrite")
 
     def get_session_name(self) -> str:
         name = ""
@@ -276,7 +474,11 @@ class SessionManager:
             text = " ".join(text.split())
             return f"{role}: {text[:limit]}"
         if entry_type == "compaction":
-            return f"compaction ({entry.get('reason', 'compact')})"
+            artifact = entry.get("artifact")
+            reason = artifact.get("reason", "compact") if isinstance(artifact, dict) else entry.get("reason", "compact")
+            return f"compaction ({reason})"
+        if entry_type == "context_rewrite":
+            return f"context rewrite ({entry.get('reason', 'rewrite')})"
         if entry_type == "session_info":
             return f"name: {entry.get('name', '')}"
         return entry_type

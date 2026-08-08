@@ -1,14 +1,25 @@
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from penhin.agent.compaction import CompactionError, auto_compact_messages, log_compact_watermark
+from penhin.agent.compaction import (
+    CompactionCommitter,
+    CompactionError,
+    CompactionPolicy,
+    log_compact_decision,
+    prepare_compaction,
+)
 from penhin.agent.projection import mark_message_snipped
 from penhin.permissions import PermissionMode
 from penhin.result import Result
 from penhin.tools.execution import ApprovalFlow, PermissionPolicy
+
+
+logger = logging.getLogger("penhin.compact")
 
 if TYPE_CHECKING:
     from penhin.agent.session_manager import SessionManager
@@ -129,33 +140,97 @@ class RunContext:
         return hint or None
 
     def auto_compact_if_needed(self, context_window: int, reserve_tokens: int) -> bool:
-        if log_compact_watermark(self.messages, context_window, reserve_tokens) in {"compact", "blocking"}:
-            before = len(self.messages)
-            try:
-                compacted = auto_compact_messages(self.messages)
-            except CompactionError as error:
-                from penhin.evaluation.observer import emit
-                emit("context_compaction_failed", mode="automatic", error_type=type(error.__cause__).__name__ if error.__cause__ else type(error).__name__)
-                return False
-            self.messages[:] = compacted
-            if self.session_manager is not None:
-                self.session_manager.append_compaction(self.messages)
+        started = time.perf_counter()
+        decision = CompactionPolicy(context_window, reserve_tokens).evaluate(self.messages)
+        log_compact_decision(decision)
+        if not decision.should_compact:
+            return False
+        before = len(self.messages)
+        try:
+            prepared = prepare_compaction(self.messages, decision)
+            CompactionCommitter.commit(self.messages, prepared, self.session_manager)
+        except CompactionError as error:
             from penhin.evaluation.observer import emit
-            emit("context_compacted", mode="automatic", messages_before=before, messages_after=len(self.messages))
-            return True
-        return False
+            emit(
+                "context_compaction_failed",
+                mode="automatic",
+                error_type=type(error.__cause__).__name__ if error.__cause__ else type(error).__name__,
+                duration_ms=(time.perf_counter() - started) * 1_000,
+            )
+            return False
+        from penhin.evaluation.observer import emit
+        emit(
+            "context_compacted",
+            mode="automatic",
+            messages_before=before,
+            messages_after=len(self.messages),
+            covered_messages=prepared.artifact.covered_message_count,
+            context_tokens=prepared.artifact.context_tokens,
+            source_tokens=prepared.artifact.source_tokens,
+            result_tokens=prepared.artifact.result_tokens,
+            passes=prepared.artifact.passes,
+            summary_calls=prepared.artifact.summary_calls,
+            limit_reached=prepared.artifact.limit_reached,
+            duration_ms=prepared.artifact.duration_ms,
+            compression_ratio=(
+                prepared.artifact.result_tokens / prepared.artifact.source_tokens
+                if prepared.artifact.source_tokens
+                else 0.0
+            ),
+        )
+        if prepared.artifact.limit_reached:
+            logger.warning(
+                "[compact] pass limit reached; checkpoint remains above the target watermark"
+            )
+        return True
 
     def force_auto_compact(self, hint: str | None = None) -> None:
+        started = time.perf_counter()
         before = len(self.messages)
-        compacted = auto_compact_messages(
+        from penhin.runtime import runtime_manager
+        runtime = runtime_manager.current()
+        decision = CompactionPolicy(
+            runtime.context_window,
+            runtime.compaction_reserve_tokens,
+        ).evaluate(
             self.messages,
-            hint=hint,
+            force=True,
+            reason="forced",
         )
-        self.messages[:] = compacted
-        if self.session_manager is not None:
-            self.session_manager.append_compaction(self.messages)
+        try:
+            prepared = prepare_compaction(self.messages, decision, hint=hint, runtime=runtime)
+            CompactionCommitter.commit(self.messages, prepared, self.session_manager)
+        except CompactionError as error:
+            from penhin.evaluation.observer import emit
+            emit(
+                "context_compaction_failed",
+                mode="forced",
+                error_type=type(error.__cause__).__name__ if error.__cause__ else type(error).__name__,
+                duration_ms=(time.perf_counter() - started) * 1_000,
+                has_hint=bool(hint),
+            )
+            raise
         from penhin.evaluation.observer import emit
-        emit("context_compacted", mode="forced", messages_before=before, messages_after=len(self.messages), has_hint=bool(hint))
+        emit(
+            "context_compacted",
+            mode="forced",
+            messages_before=before,
+            messages_after=len(self.messages),
+            has_hint=bool(hint),
+            covered_messages=prepared.artifact.covered_message_count,
+            context_tokens=prepared.artifact.context_tokens,
+            source_tokens=prepared.artifact.source_tokens,
+            result_tokens=prepared.artifact.result_tokens,
+            passes=prepared.artifact.passes,
+            summary_calls=prepared.artifact.summary_calls,
+            limit_reached=prepared.artifact.limit_reached,
+            duration_ms=prepared.artifact.duration_ms,
+            compression_ratio=(
+                prepared.artifact.result_tokens / prepared.artifact.source_tokens
+                if prepared.artifact.source_tokens
+                else 0.0
+            ),
+        )
 
     def force_snip_turns(self, selectors: list[int | tuple[int, int]]) -> int:
         ranges = conversation_turn_ranges(self.messages)
