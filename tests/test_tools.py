@@ -30,22 +30,23 @@ def test_agent_job_start_returns_persistent_uuid_and_preserves_root() -> None:
         subject="verify release",
         instruction="verify release",
     )
-    with patch("penhin.tools.builtin.orchestration.enqueue_subagent_job", return_value=job) as enqueue:
+    with patch("penhin.tools.builtin.orchestration.orchestration_service_from_env") as factory:
+        factory.return_value.start_job.return_value = job
         result = run_agent_job_start("verify release", "verification", "root-uuid")
 
     assert result.ok is True
     assert result.data["id"] == "job-uuid"
     assert result.data["root_task_id"] == "root-uuid"
-    enqueue.assert_called_once_with("verify release", agent_type="verification", root_task_id="root-uuid")
+    factory.return_value.start_job.assert_called_once_with("verify release", agent_type="verification", root_task_id="root-uuid")
 
 
 def test_agent_job_start_validates_role_before_scheduling() -> None:
-    with patch("penhin.tools.builtin.orchestration.enqueue_subagent_job") as enqueue:
+    with patch("penhin.tools.builtin.orchestration.orchestration_service_from_env") as factory:
         result = run_agent_job_start("inspect", "review")
 
     assert result.ok is False
     assert result.meta["code"] == "unknown_agent_type"
-    enqueue.assert_not_called()
+    factory.assert_not_called()
 
 
 def test_agent_job_query_wait_and_cancel_use_persistent_state() -> None:
@@ -59,12 +60,13 @@ def test_agent_job_query_wait_and_cancel_use_persistent_state() -> None:
         "list_jobs": lambda self, root, status: [job],
     })()
     scheduler = type("Scheduler", (), {"request_cancel": lambda self, _id: job})()
-    wait_result = Result.success("done", data={"job": job.to_dict(), "artifact": artifact})
+    wait_result = Result.success("done", data=[{"job": job.to_dict(), "artifact": artifact}])
     with (
         patch("penhin.tools.builtin.orchestration._repository_or_failure", return_value=(repository, None)),
-        patch("penhin.tools.builtin.orchestration.scheduler_from_env", return_value=scheduler),
-        patch("penhin.tools.builtin.orchestration.wait_for_job", return_value=wait_result),
+        patch("penhin.tools.builtin.orchestration.orchestration_service_from_env") as factory,
     ):
+        factory.return_value.scheduler = scheduler
+        factory.return_value.await_graph.return_value = wait_result
         shown = run_agent_job_show(job.id)
         listed = run_agent_job_list("root-uuid", "queued")
         waited = run_agent_job_wait(job.id, 5)

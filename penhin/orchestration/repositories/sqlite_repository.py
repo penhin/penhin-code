@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import os
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -82,7 +83,10 @@ def sqlite_path_from_url(database_url: str) -> Path:
     parsed = urlparse(database_url)
     if parsed.scheme != "sqlite" or parsed.netloc not in {"", "localhost"} or not parsed.path:
         raise ValueError("SQLite database URL must be an absolute sqlite:/// path")
-    return Path(unquote(parsed.path)).resolve()
+    path = unquote(parsed.path)
+    if os.name == "nt" and len(path) >= 3 and path[0] == "/" and path[2] == ":":
+        path = path[1:]
+    return Path(path).resolve()
 
 
 class SqliteOrchestrationRepository:

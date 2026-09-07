@@ -2,7 +2,7 @@
 
 from .models import AgentJob, AgentRole, Artifact, IntegrationItem, IntegrationItemStatus, IntegrationRun, IntegrationRunStatus, JobAttempt, JobEvent, JobStatus
 from .repositories import OrchestrationRepository, SqliteOrchestrationRepository
-from .service import OrchestrationService, orchestration_service
+from .service import OrchestrationService, orchestration_service_from_env
 
 __all__ = [
     "AgentJob",
@@ -18,5 +18,5 @@ __all__ = [
     "OrchestrationRepository",
     "OrchestrationService",
     "SqliteOrchestrationRepository",
-    "orchestration_service",
+    "orchestration_service_from_env",
 ]

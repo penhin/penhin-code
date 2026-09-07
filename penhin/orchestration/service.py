@@ -3,6 +3,8 @@ from __future__ import annotations
 import atexit
 import json
 import time
+from collections.abc import Callable
+from typing import Any
 from uuid import uuid4
 
 from penhin.evaluation.observer import anonymous_id, emit
@@ -17,7 +19,7 @@ from .settings import agent_poll_interval_seconds, sync_agent_timeout_seconds
 from .worktrees import provision_worktree
 
 
-def repository_from_env() -> OrchestrationRepository:
+def _repository_from_env() -> OrchestrationRepository:
     database_url = database_url_from_env()
     repository = repository_from_database_url(database_url)
     repository.initialize()
@@ -37,6 +39,7 @@ def agent_types() -> tuple[str, ...]:
 
 
 _scheduler: PersistentScheduler | None = None
+_service: "OrchestrationService | None" = None
 
 
 def _shutdown_scheduler_at_exit() -> None:
@@ -44,35 +47,25 @@ def _shutdown_scheduler_at_exit() -> None:
         _scheduler.shutdown(wait=False)
 
 
-def scheduler_from_env() -> PersistentScheduler:
-    global _scheduler
+def orchestration_service_from_env() -> "OrchestrationService":
+    global _scheduler, _service
+    if _service is not None:
+        return _service
     if _scheduler is not None:
-        return _scheduler
-    repository = repository_from_env()
+        return OrchestrationService(_scheduler.repository, _scheduler)
+    repository = _repository_from_env()
     _scheduler = PersistentScheduler(repository)
     _scheduler.start()
     atexit.register(_shutdown_scheduler_at_exit)
-    return _scheduler
-
-
-def enqueue_subagent_job(
-    task: str,
-    agent_type: str = "general",
-    root_task_id: str | None = None,
-    dispatch: bool = True,
-) -> AgentJob:
-    scheduler = scheduler_from_env()
-    job = create_isolated_agent_job(scheduler.repository, task, agent_type, root_task_id)
-    if dispatch:
-        scheduler.dispatch()
-    return job
+    _service = OrchestrationService(repository, _scheduler)
+    return _service
 
 
 def workspace_mode_for_agent(agent_type: str) -> str:
     return "isolated_write" if agent_type == "general" else "readonly"
 
 
-def create_isolated_agent_job(
+def _create_isolated_agent_job(
     repository: OrchestrationRepository,
     task: str,
     agent_type: str,
@@ -80,10 +73,11 @@ def create_isolated_agent_job(
     depends_on: list[str] | None = None,
     priority: int = 0,
     timeout_seconds: int | None = None,
+    worktree_factory: Callable[[str], Any] = provision_worktree,
 ) -> AgentJob:
     task = redact_text(task)
     job_id = str(uuid4())
-    worktree = provision_worktree(job_id)
+    worktree = worktree_factory(job_id)
     try:
         role = ROLE_BY_AGENT_TYPE[agent_type]
     except KeyError as error:
@@ -114,7 +108,7 @@ def create_isolated_agent_job(
     return created
 
 
-def wait_for_job(repository: OrchestrationRepository, job_id: str, timeout_seconds: int) -> Result:
+def _wait_for_job(repository: OrchestrationRepository, job_id: str, timeout_seconds: int) -> Result:
     started = time.monotonic()
     emit("orchestration_job_wait_started", job_id=job_id, timeout_seconds=timeout_seconds)
     deadline = time.monotonic() + timeout_seconds
@@ -159,7 +153,13 @@ def wait_for_job(repository: OrchestrationRepository, job_id: str, timeout_secon
     return Result.failure("Timed out waiting for agent job", code="agent_wait_timeout", agent_job_id=job_id)
 
 
-def materialize_dag_plan(repository: OrchestrationRepository, planner_job_id: str, plan: dict) -> dict:
+def _materialize_dag_plan(
+    repository: OrchestrationRepository,
+    planner_job_id: str,
+    plan: dict,
+    *,
+    worktree_factory: Callable[[str], Any] = provision_worktree,
+) -> dict:
     """Create isolated persistent jobs for a validated penhin.dag/v1 plan."""
     if plan.get("protocol_version") != DAG_PROTOCOL_VERSION:
         raise ValueError("DAG protocol version is not supported")
@@ -176,7 +176,7 @@ def materialize_dag_plan(repository: OrchestrationRepository, planner_job_id: st
         if not ready:
             raise ValueError("DAG cannot be materialized because dependencies are cyclic")
         for spec in ready:
-            created[spec["key"]] = create_isolated_agent_job(
+            created[spec["key"]] = _create_isolated_agent_job(
                 repository,
                 spec["instruction"],
                 spec["agent_type"],
@@ -184,6 +184,7 @@ def materialize_dag_plan(repository: OrchestrationRepository, planner_job_id: st
                 depends_on=[created[key].id for key in spec["depends_on"]],
                 priority=spec.get("priority", 0),
                 timeout_seconds=spec.get("timeout_seconds"),
+                worktree_factory=worktree_factory,
             )
             del remaining[spec["key"]]
     data = {
@@ -200,7 +201,7 @@ def materialize_dag_plan(repository: OrchestrationRepository, planner_job_id: st
     return data
 
 
-def implementation_jobs_for_final_outputs(
+def _implementation_jobs_for_final_outputs(
     repository: OrchestrationRepository,
     final_job_ids: list[str],
 ) -> list[AgentJob]:
@@ -241,7 +242,7 @@ def implementation_jobs_for_final_outputs(
     return [job for job in reachable.values() if job.id in implementations and job.id not in implementation_ancestors]
 
 
-def finalize_dag(
+def _finalize_dag(
     repository: OrchestrationRepository,
     root_task_id: str,
     final_job_ids: list[str],
@@ -254,7 +255,7 @@ def finalize_dag(
     final_jobs = [repository.get_job(job_id) for job_id in final_job_ids]
     if not final_jobs or any(job is None or job.status != JobStatus.SUCCEEDED for job in final_jobs):
         return Result.failure("All final DAG jobs must succeed before integration", code="dag_not_complete")
-    implementation_jobs = implementation_jobs_for_final_outputs(repository, final_job_ids)
+    implementation_jobs = _implementation_jobs_for_final_outputs(repository, final_job_ids)
     if not implementation_jobs:
         return Result.success(
             "DAG completed without repository changes",
@@ -294,25 +295,24 @@ def finalize_dag(
     )
 
 
-def create_dag_plan(goal: str) -> Result:
+def _plan_dag(service: "OrchestrationService", goal: str) -> Result:
     """Run the planner, validate its structured artifact, then enqueue the DAG."""
     emit("orchestration_plan_started", goal_digest=anonymous_id(goal))
     try:
-        planner = enqueue_subagent_job(goal, agent_type="plan", dispatch=True)
+        planner = service.start_job(goal, agent_type="plan")
     except Exception as error:
         emit("orchestration_plan_failed", stage="planner_start", error_code="planner_start_failed", error_type=type(error).__name__)
         return Result.failure(f"Unable to start Planner: {error}", code="planner_start_failed")
     emit("orchestration_planner_enqueued", root_task_id=planner.id, planner_job_id=planner.id)
-    repository = repository_from_env()
     timeout_seconds = sync_agent_timeout_seconds()
-    outcome = wait_for_job(repository, planner.id, timeout_seconds)
+    outcome = service.await_graph([planner.id], timeout_seconds)
     if not outcome.ok:
         emit(
             "orchestration_plan_failed", root_task_id=planner.id, planner_job_id=planner.id,
             stage="planner_execution", error_code=outcome.meta.get("code", "planner_failed"),
         )
         return outcome
-    artifact = outcome.data["artifact"]
+    artifact = outcome.data[0]["artifact"]
     content = artifact.content
     if artifact.kind != "agent_dag_plan.v1" or not artifact.schema_valid or not content.get("protocol_valid"):
         emit(
@@ -337,10 +337,7 @@ def create_dag_plan(goal: str) -> Result:
         semantic_normalization_count=len(content.get("semantic_normalizations", [])),
     )
     try:
-        data = materialize_dag_plan(repository, planner.id, content)
-        scheduler = scheduler_from_env()
-        if scheduler:
-            scheduler.dispatch()
+        data = service.submit(planner.id, content)
     except Exception as error:
         emit(
             "orchestration_plan_failed", root_task_id=planner.id, planner_job_id=planner.id,
@@ -355,48 +352,98 @@ def create_dag_plan(goal: str) -> Result:
     return Result.success(json.dumps(data, ensure_ascii=False), data=data)
 
 
-def run_recorded_subagent(task: str, agent_type: str = "general", root_task_id: str | None = None) -> Result:
-    """Run a delegated agent in its own worktree and wait for its durable handoff."""
-    try:
-        job = enqueue_subagent_job(task, agent_type=agent_type, root_task_id=root_task_id)
-    except Exception as error:
-        return Result.failure(f"Unable to start isolated agent: {error}", code="agent_start_failed")
-    timeout_seconds = sync_agent_timeout_seconds()
-    repository = repository_from_env()
-    outcome = wait_for_job(repository, job.id, timeout_seconds)
-    if not outcome.ok:
-        if outcome.meta.get("code") == "agent_wait_timeout":
-            repository.request_cancel(job.id)
-        return Result.failure(outcome.error, code=outcome.meta.get("code", "agent_failed"), agent_job_id=job.id)
-    current = outcome.data["job"]
-    artifact = outcome.data["artifact"]
-    return Result.success(
-        json.dumps(artifact.content, ensure_ascii=False),
-        data=artifact.content,
-        agent_job_id=current["id"],
-        artifact_id=artifact.id,
-        worktree_path=current["worktree_path"],
-        worktree_branch=current["worktree_branch"],
-    )
-
-
 class OrchestrationService:
     """Stable application boundary for persistent jobs and DAG execution."""
 
-    def start_job(self, task: str, agent_type: str = "general", root_task_id: str | None = None) -> AgentJob:
-        return enqueue_subagent_job(task, agent_type, root_task_id)
+    def __init__(
+        self,
+        repository: OrchestrationRepository | None = None,
+        scheduler: PersistentScheduler | None = None,
+        *,
+        worktree_factory: Callable[[str], Any] = provision_worktree,
+    ) -> None:
+        self.repository = repository
+        self.scheduler = scheduler
+        self.worktree_factory = worktree_factory
+
+    def submit(self, planner_job_id: str, plan: dict) -> dict:
+        if self.repository is None:
+            raise RuntimeError("OrchestrationService requires a repository")
+        submitted = _materialize_dag_plan(
+            self.repository,
+            planner_job_id,
+            plan,
+            worktree_factory=self.worktree_factory,
+        )
+        if self.scheduler is not None:
+            self.scheduler.dispatch()
+        return submitted
+
+    def await_graph(self, final_job_ids: list[str], timeout_seconds: int) -> Result:
+        if self.repository is None:
+            raise RuntimeError("OrchestrationService requires a repository")
+        outcomes = []
+        for job_id in final_job_ids:
+            outcome = _wait_for_job(self.repository, job_id, timeout_seconds)
+            if not outcome.ok:
+                return outcome
+            outcomes.append(outcome.data)
+        return Result.success(
+            json.dumps([{"job_id": item["job"]["id"]} for item in outcomes]),
+            data=outcomes,
+        )
+
+    def start_job(
+        self,
+        task: str,
+        agent_type: str = "general",
+        root_task_id: str | None = None,
+        *,
+        dispatch: bool = True,
+    ) -> AgentJob:
+        if self.repository is None or self.scheduler is None:
+            raise RuntimeError("OrchestrationService requires a repository and scheduler")
+        job = _create_isolated_agent_job(
+            self.repository,
+            task,
+            agent_type,
+            root_task_id,
+            worktree_factory=self.worktree_factory,
+        )
+        if dispatch:
+            self.scheduler.dispatch()
+        return job
 
     def run_job(self, task: str, agent_type: str = "general", root_task_id: str | None = None) -> Result:
-        return run_recorded_subagent(task, agent_type, root_task_id)
+        try:
+            job = self.start_job(task, agent_type, root_task_id)
+        except Exception as error:
+            return Result.failure(f"Unable to start isolated agent: {error}", code="agent_start_failed")
+        outcome = self.await_graph([job.id], sync_agent_timeout_seconds())
+        if not outcome.ok:
+            if outcome.meta.get("code") == "agent_wait_timeout" and self.repository is not None:
+                self.repository.request_cancel(job.id)
+            return Result.failure(outcome.error, code=outcome.meta.get("code", "agent_failed"), agent_job_id=job.id)
+        current = outcome.data[0]["job"]
+        artifact = outcome.data[0]["artifact"]
+        return Result.success(
+            json.dumps(artifact.content, ensure_ascii=False),
+            data=artifact.content,
+            agent_job_id=current["id"],
+            artifact_id=artifact.id,
+            worktree_path=current["worktree_path"],
+            worktree_branch=current["worktree_branch"],
+        )
 
     def plan(self, goal: str) -> Result:
-        return create_dag_plan(goal)
+        if self.repository is None or self.scheduler is None:
+            raise RuntimeError("OrchestrationService requires a repository and scheduler")
+        return _plan_dag(self, goal)
 
     def finalize(self, root_task_id: str, final_job_ids: list[str], verification_command: list[str] | None = None) -> Result:
-        return finalize_dag(repository_from_env(), root_task_id, final_job_ids, verification_command)
+        if self.repository is None:
+            raise RuntimeError("OrchestrationService requires a repository")
+        return _finalize_dag(self.repository, root_task_id, final_job_ids, verification_command)
 
 
-orchestration_service = OrchestrationService()
-
-
-__all__ = ["OrchestrationService", "orchestration_service"]
+__all__ = ["OrchestrationService", "agent_types", "orchestration_service_from_env"]

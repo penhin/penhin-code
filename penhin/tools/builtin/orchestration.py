@@ -4,15 +4,14 @@ import json
 
 from penhin.orchestration.integration import apply_integration, start_integration, verify_integration
 from penhin.orchestration.service import (
-    agent_types, create_dag_plan, enqueue_subagent_job, finalize_dag, repository_from_env,
-    scheduler_from_env, wait_for_job,
+    agent_types, orchestration_service_from_env,
 )
 from penhin.result import Result
 
 
 def _repository_or_failure() -> tuple[object | None, Result | None]:
     try:
-        return repository_from_env(), None
+        return orchestration_service_from_env().repository, None
     except Exception as error:
         return None, Result.failure(f"Orchestration storage is unavailable: {error}", code="orchestration_unavailable")
 
@@ -23,7 +22,7 @@ def run_agent_job_start(task: str, agent_type: str = "general", root_task_id: st
     if agent_type not in agent_types():
         return Result.failure(f"Unknown agent type: {agent_type}", code="unknown_agent_type")
     try:
-        job = enqueue_subagent_job(task, agent_type=agent_type, root_task_id=root_task_id or None)
+        job = orchestration_service_from_env().start_job(task, agent_type=agent_type, root_task_id=root_task_id or None)
     except Exception as error:
         return Result.failure(f"Unable to enqueue agent job: {error}", code="scheduler_unavailable")
     data = job.to_dict()
@@ -71,7 +70,7 @@ def run_agent_artifact_show(job_id: str) -> Result:
 
 def run_agent_job_cancel(id: str) -> Result:
     try:
-        job = scheduler_from_env().request_cancel(id)
+        job = orchestration_service_from_env().scheduler.request_cancel(id)
     except KeyError:
         return Result.failure(f"Agent job {id} not found", code="not_found")
     except Exception as error:
@@ -82,7 +81,7 @@ def run_agent_job_cancel(id: str) -> Result:
 def run_agent_plan_create(goal: str) -> Result:
     if not goal.strip():
         return Result.failure("goal must not be empty", code="invalid_goal")
-    return create_dag_plan(goal)
+    return orchestration_service_from_env().plan(goal)
 
 
 def run_agent_dag_show(root_task_id: str) -> Result:
@@ -110,11 +109,11 @@ def run_agent_job_wait(id: str, timeout_seconds: int = 30) -> Result:
         return failure
     if timeout_seconds < 1 or timeout_seconds > 900:
         return Result.failure("timeout_seconds must be between 1 and 900", code="invalid_timeout")
-    outcome = wait_for_job(repository, id, timeout_seconds)
+    outcome = orchestration_service_from_env().await_graph([id], timeout_seconds)
     if not outcome.ok:
         return outcome
-    job = outcome.data["job"]
-    artifact = outcome.data["artifact"]
+    job = outcome.data[0]["job"]
+    artifact = outcome.data[0]["artifact"]
     data = {
         "job": job,
         "artifact": {
@@ -135,7 +134,7 @@ def run_agent_dag_finalize(
     repository, failure = _repository_or_failure()
     if failure:
         return failure
-    outcome = finalize_dag(repository, root_task_id, final_job_ids, command)
+    outcome = orchestration_service_from_env().finalize(root_task_id, final_job_ids, command)
     if not outcome.ok:
         return outcome
     return Result.success(json.dumps(outcome.data, ensure_ascii=False, indent=2), data=outcome.data)

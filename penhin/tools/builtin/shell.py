@@ -58,7 +58,7 @@ def command_escapes_workspace(command: str) -> str | None:
         return "invalid shell syntax"
     for token in tokens[1:]:
         candidate = token.split("=", 1)[-1].rstrip(",;:)")
-        if Path(candidate).is_absolute():
+        if Path(candidate).is_absolute() or candidate.startswith("/"):
             resolved = Path(candidate).resolve()
             if not resolved.is_relative_to(WORKDIR):
                 return "absolute path outside workspace"
