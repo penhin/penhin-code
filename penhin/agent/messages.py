@@ -7,7 +7,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 from penhin.result import Result
 from penhin.tools.execution import ApprovalFlow, PermissionPolicy, ToolRun, run_tool
-from penhin.tools.registry import TOOL_SPECS
+from penhin.tools.catalog import ToolCatalog
+from penhin.tools.registry import DEFAULT_TOOL_CATALOG
 
 if TYPE_CHECKING:
     from penhin.agent.context import RunContext
@@ -39,6 +40,7 @@ class ToolExecutionContext:
     run_context: RunContext | None = None
     max_tool_calls: int | None = None
     tool_calls_used: int = 0
+    catalog: ToolCatalog = DEFAULT_TOOL_CATALOG
 
 
 def build_tool_execution_context(
@@ -47,6 +49,7 @@ def build_tool_execution_context(
     approval_resolver: ApprovalResolver | None = None,
     context: RunContext | None = None,
     max_tool_calls: int | None = None,
+    catalog: ToolCatalog = DEFAULT_TOOL_CATALOG,
 ) -> ToolExecutionContext:
     return ToolExecutionContext(
         policy=policy,
@@ -54,6 +57,7 @@ def build_tool_execution_context(
         approval_resolver=approval_resolver,
         run_context=context,
         max_tool_calls=max_tool_calls,
+        catalog=catalog,
     )
 
 
@@ -115,8 +119,8 @@ def collect_tool_calls(content: Any) -> list[ToolCall]:
     return calls
 
 
-def tool_call_is_parallel_safe(call: ToolCall) -> bool:
-    spec = TOOL_SPECS.get(call.tool_name)
+def tool_call_is_parallel_safe(call: ToolCall, catalog: ToolCatalog = DEFAULT_TOOL_CATALOG) -> bool:
+    spec = catalog.get(call.tool_name)
     if spec is None:
         return False
     if spec.approval.requires_approval:
@@ -161,12 +165,15 @@ def run_tool_call(call: ToolCall, execution_context: ToolExecutionContext) -> tu
         )
         tool_run = ToolRun(blocked_result)
     else:
+        kwargs = {"context": execution_context.run_context}
+        if execution_context.catalog is not DEFAULT_TOOL_CATALOG:
+            kwargs["catalog"] = execution_context.catalog
         tool_run = run_tool(
             call.tool_name,
             call.tool_input,
             execution_context.policy,
             execution_context.approval,
-            context=execution_context.run_context,
+            **kwargs,
         )
 
     if tool_run.approval_required and execution_context.approval_resolver is not None:
@@ -227,6 +234,10 @@ def run_parallel_safe_calls(
                 execution_context.policy,
                 execution_context.approval,
                 context=execution_context.run_context,
+                **(
+                    {"catalog": execution_context.catalog}
+                    if execution_context.catalog is not DEFAULT_TOOL_CATALOG else {}
+                ),
             ): call
             for call in runnable_calls
         }
@@ -279,7 +290,7 @@ def execute_tool_blocks(
         return tool_results, manual_compact
 
     for call in calls:
-        if tool_call_is_parallel_safe(call):
+        if tool_call_is_parallel_safe(call, execution_context.catalog):
             parallel_batch.append(call)
             continue
 

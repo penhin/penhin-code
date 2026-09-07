@@ -14,7 +14,8 @@ from penhin.agent.prompts import build_main_system, ensure_project_instructions_
 from penhin.runtime import runtime_manager
 from penhin.runtime.manager import log_usage
 from penhin.tools.execution import ApprovalFlow, PermissionPolicy, approval_key, run_tool
-from penhin.tools.registry import PARENT_TOOLS
+from penhin.tools.catalog import ToolCatalog
+from penhin.tools.registry import DEFAULT_TOOL_CATALOG, PARENT_TOOLS
 from penhin.agent.transcript import transcripts
 
 
@@ -34,14 +35,15 @@ def run_with_one_time_approval(
     tool_input: dict[str, Any],
     policy: PermissionPolicy,
     approval: ApprovalFlow,
+    catalog: ToolCatalog = DEFAULT_TOOL_CATALOG,
 ):
     one_time_approval = approval.copy()
-    one_time_approval.approve(tool_name, tool_input)
+    one_time_approval.approve(tool_name, tool_input, catalog)
     return run_tool(
         tool_name,
         tool_input,
         policy,
-        one_time_approval,
+        one_time_approval, catalog=catalog,
     )
 
 
@@ -50,14 +52,15 @@ def run_with_one_time_rejection(
     tool_input: dict[str, Any],
     policy: PermissionPolicy,
     approval: ApprovalFlow,
+    catalog: ToolCatalog = DEFAULT_TOOL_CATALOG,
 ):
     one_time_rejection = approval.copy()
-    one_time_rejection.reject(tool_name, tool_input)
+    one_time_rejection.reject(tool_name, tool_input, catalog)
     return run_tool(
         tool_name,
         tool_input,
         policy,
-        one_time_rejection,
+        one_time_rejection, catalog=catalog,
     )
 
 
@@ -66,9 +69,10 @@ def resolve_approval(
     tool_input: dict[str, Any],
     policy: PermissionPolicy,
     approval: ApprovalFlow,
+    catalog: ToolCatalog = DEFAULT_TOOL_CATALOG,
 ):
     logger.info(f"[approval] tool: {tool_name}")
-    logger.info(f"[approval] key: {approval_key(tool_name, tool_input)}")
+    logger.info(f"[approval] key: {approval_key(tool_name, tool_input, catalog)}")
     logger.info(format_tool_input(tool_input))
     suggested_prefix = None
     if tool_name == "bash":
@@ -92,15 +96,15 @@ def resolve_approval(
         logger.info("[approval] no input available; rejecting")
         reply = ""
     if reply in {"1", "y"}:
-        return run_with_one_time_approval(tool_name, tool_input, policy, approval)
+        return run_with_one_time_approval(tool_name, tool_input, policy, approval, catalog)
 
     if reply in {"2", "ys"}:
-        approval.approve(tool_name, tool_input)
+        approval.approve(tool_name, tool_input, catalog)
         return run_tool(
             tool_name,
             tool_input,
             policy,
-            approval,
+            approval, catalog=catalog,
         )
 
     if reply in {"3", "yp"} and suggested_prefix:
@@ -109,10 +113,10 @@ def resolve_approval(
             tool_name,
             tool_input,
             policy,
-            approval,
+            approval, catalog=catalog,
         )
 
-    return run_with_one_time_rejection(tool_name, tool_input, policy, approval)
+    return run_with_one_time_rejection(tool_name, tool_input, policy, approval, catalog)
 
 
 def compact_context_for_llm(context: RunContext) -> None:
@@ -126,7 +130,7 @@ def compact_context_for_llm(context: RunContext) -> None:
     context.auto_compact_if_needed()
 
 
-def call_llm(context: RunContext, runtime):
+def call_llm(context: RunContext, runtime, catalog: ToolCatalog = DEFAULT_TOOL_CATALOG):
     ensure_project_instructions_message(context.messages)
     streamed = False
     stream = None
@@ -145,7 +149,7 @@ def call_llm(context: RunContext, runtime):
                 context.messages,
                 collapse_keep_recent=context.collapse_keep_recent,
             ),
-            tools=PARENT_TOOLS,
+            tools=PARENT_TOOLS if catalog is DEFAULT_TOOL_CATALOG else catalog.schemas("parent"),
             max_tokens=runtime.max_tokens,
             stream_callback=on_stream_text,
         )
@@ -162,14 +166,21 @@ def should_continue_with_tools(response) -> bool:
     return response.stop_reason == "tool_use"
 
 
-def execute_tool_uses(context: RunContext, response) -> tuple[ToolResults, bool]:
+def execute_tool_uses(
+    context: RunContext,
+    response,
+    catalog: ToolCatalog = DEFAULT_TOOL_CATALOG,
+) -> tuple[ToolResults, bool]:
     return execute_tool_blocks(
         response.content,
         build_tool_execution_context(
             context.policy,
             context.approval,
-            approval_resolver=resolve_approval,
+            approval_resolver=lambda name, tool_input, policy, approval: resolve_approval(
+                name, tool_input, policy, approval, catalog,
+            ),
             context=context,
+            catalog=catalog,
         ),
     )
 
@@ -188,13 +199,13 @@ def handle_circuit_open(context: RunContext, error: CircuitBreakerOpen) -> None:
     ])
 
 
-def build_agent_deps(runtime) -> AgentDeps:
+def build_agent_deps(runtime, catalog: ToolCatalog = DEFAULT_TOOL_CATALOG) -> AgentDeps:
     return AgentDeps(
         compact_context=compact_context_for_llm,
-        call_llm=lambda context: call_llm(context, runtime),
+        call_llm=lambda context: call_llm(context, runtime, catalog),
         record_llm_response=record_llm_response,
         should_continue_with_tools=should_continue_with_tools,
-        execute_tool_uses=execute_tool_uses,
+        execute_tool_uses=lambda context, response: execute_tool_uses(context, response, catalog),
         record_tool_results=record_tool_results,
         handle_circuit_open=handle_circuit_open,
     )
@@ -211,9 +222,9 @@ def run_agent_state_machine(
     return state
 
 
-def agent_loop(context: RunContext) -> AgentState:
+def agent_loop(context: RunContext, catalog: ToolCatalog = DEFAULT_TOOL_CATALOG) -> AgentState:
     runtime = runtime_manager.current()
-    return run_agent_state_machine(context, build_agent_deps(runtime))
+    return run_agent_state_machine(context, build_agent_deps(runtime, catalog))
 
 
 def run_once(query: str) -> None:

@@ -4,6 +4,7 @@ from prompt_toolkit.completion import Completer, Completion
 
 from penhin.agent.context import RunContext
 from penhin.cli import ui
+from penhin.plugins.contributions import PluginContributions
 
 from .auth import COMMANDS as AUTH_COMMANDS
 from .permissions import COMMANDS as PERMISSION_COMMANDS
@@ -11,12 +12,18 @@ from .runtime import COMMANDS as RUNTIME_COMMANDS
 from .session import COMMANDS as SESSION_COMMANDS
 from .types import CommandSpec
 from .workspace import COMMANDS as WORKSPACE_COMMANDS
+from .types import CommandSpec
+from .plugins import handle_plugin_command
 
 
 class CommandRouter:
     """The only public dispatcher for interactive slash commands."""
 
-    def __init__(self, commands: tuple[CommandSpec, ...] | None = None):
+    def __init__(
+        self,
+        commands: tuple[CommandSpec, ...] | None = None,
+        contributions: PluginContributions | None = None,
+    ):
         registered = commands or (
             *WORKSPACE_COMMANDS,
             *PERMISSION_COMMANDS,
@@ -24,7 +31,16 @@ class CommandRouter:
             *RUNTIME_COMMANDS,
             *AUTH_COMMANDS,
             *SESSION_COMMANDS,
+            CommandSpec("/plugin", "Manage installed plugins", handle_plugin_command),
         )
+        if contributions is not None:
+            registered = (*registered, *(
+                CommandSpec(
+                    command.name, command.description,
+                    lambda args, _context, command=command: ui.print_info(command.handler(args).message),
+                )
+                for command in contributions.commands.values()
+            ))
         self._commands = {command.name: command for command in registered}
 
     @property

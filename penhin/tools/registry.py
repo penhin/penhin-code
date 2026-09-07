@@ -25,6 +25,7 @@ from .builtin.plan_mode import run_enter_plan, run_exit_plan
 from .builtin.shell import run_bash
 from .types import ApprovalKey, ToolApproval, ToolCategory, ToolSchema, ToolSpec, tool_schema
 from .builtin.workspace import run_workspace
+from .catalog import ToolCatalog
 
 
 def _short_digest(value: Any) -> str:
@@ -522,6 +523,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
 
 CHILD_TOOLS = [tool_schema(spec) for spec in TOOL_SPECS.values() if spec.available_to_child]
 PARENT_TOOLS = [tool_schema(spec) for spec in TOOL_SPECS.values() if spec.available_to_parent]
+DEFAULT_TOOL_CATALOG = ToolCatalog(TOOL_SPECS)
 
 
 def tool_description_lines(tools: list[ToolSchema] = PARENT_TOOLS) -> list[str]:

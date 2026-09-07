@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from penhin.result import Result
-from penhin.tools.registry import TOOL_SPECS
+from penhin.tools.catalog import ToolCatalog
+from penhin.tools.registry import DEFAULT_TOOL_CATALOG
 from penhin.tools.types import ToolInput
 
 
@@ -15,15 +16,15 @@ TYPE_CHECKS = {
 }
 
 
-def unknown_tool_input_fields(tool_name: str, tool_input: ToolInput) -> list[str]:
-    spec = TOOL_SPECS.get(tool_name)
+def unknown_tool_input_fields(tool_name: str, tool_input: ToolInput, catalog: ToolCatalog = DEFAULT_TOOL_CATALOG) -> list[str]:
+    spec = catalog.get(tool_name)
     if spec is None:
         return []
     return sorted(set(tool_input) - set(spec.input_schema.get("properties", {})))
 
 
-def validate_tool_input(tool_name: str, tool_input: ToolInput) -> Result | None:
-    spec = TOOL_SPECS.get(tool_name)
+def validate_tool_input(tool_name: str, tool_input: ToolInput, catalog: ToolCatalog = DEFAULT_TOOL_CATALOG) -> Result | None:
+    spec = catalog.get(tool_name)
     if spec is None:
         return Result.failure(f"Unknown tool: {tool_name}", code="unknown_tool")
     properties = spec.input_schema.get("properties", {})

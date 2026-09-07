@@ -8,7 +8,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from penhin.result import Result
-from penhin.tools.registry import TOOL_SPECS
+from penhin.tools.catalog import ToolCatalog
+from penhin.tools.registry import DEFAULT_TOOL_CATALOG
 from penhin.tools.types import ToolInput
 from .approval import ApprovalFlow, PermissionPolicy, default_approval_flow, runtime_permission_setup
 from .observability import log_tool_blocked, log_tool_done, log_tool_start, short_hash
@@ -39,21 +40,22 @@ def check_tool_access(
     tool_input: ToolInput,
     policy: PermissionPolicy,
     approval: ApprovalFlow,
+    catalog: ToolCatalog = DEFAULT_TOOL_CATALOG,
 ) -> ToolRun | None:
     if tool_name in policy.deny:
         return ToolRun(Result.failure(f"Denied by policy: {tool_name}", code="tool_denied"))
 
-    spec = TOOL_SPECS.get(tool_name)
+    spec = catalog.get(tool_name)
     if spec is None:
         return ToolRun(Result.failure(f"Unknown tool: {tool_name}", code="unknown_tool"))
 
     if tool_name not in policy.allow:
         return ToolRun(Result.failure(f"Not allowed by policy: {tool_name}", code="tool_not_allowed"))
 
-    if approval.is_rejected(tool_name, tool_input):
+    if approval.is_rejected(tool_name, tool_input, catalog):
         return ToolRun(Result.failure(f"Approval rejected for tool: {tool_name}", code="tool_approval_rejected"))
 
-    if spec.approval.requires_approval and not approval.is_approved(tool_name, tool_input):
+    if spec.approval.requires_approval and not approval.is_approved(tool_name, tool_input, catalog):
         return ToolRun(
             Result.failure(f"Approval required for tool: {tool_name}", code="tool_approval_required"),
             approval_required=True,
@@ -66,10 +68,13 @@ def execute_tool(
     tool_name: str,
     tool_input: ToolInput,
     context: RunContext | None = None,
+    catalog: ToolCatalog = DEFAULT_TOOL_CATALOG,
 ) -> ToolRun:
-    spec = TOOL_SPECS[tool_name]
+    spec = catalog.get(tool_name)
+    if spec is None:
+        return ToolRun(Result.failure(f"Unknown tool: {tool_name}", code="unknown_tool"))
 
-    invalid = validate_tool_input(tool_name, tool_input)
+    invalid = validate_tool_input(tool_name, tool_input, catalog)
     if invalid:
         return ToolRun(invalid)
 
@@ -126,12 +131,13 @@ def run_tool(
     policy: PermissionPolicy,
     approval: ApprovalFlow = None,
     context: RunContext | None = None,
+    catalog: ToolCatalog = DEFAULT_TOOL_CATALOG,
 ) -> ToolRun:
-    approval = approval or default_approval_flow(policy)
+    approval = approval or default_approval_flow(policy, catalog)
 
     call_id = next_tool_call_id()
     start = time.perf_counter()
-    access_run = check_tool_access(tool_name, tool_input, policy, approval)
+    access_run = check_tool_access(tool_name, tool_input, policy, approval, catalog)
 
     if access_run is not None:
         duration_ms = (time.perf_counter() - start) * 1000
@@ -151,7 +157,7 @@ def run_tool(
         )
         return access_run
 
-    unknown_fields = unknown_tool_input_fields(tool_name, tool_input)
+    unknown_fields = unknown_tool_input_fields(tool_name, tool_input, catalog)
     if unknown_fields:
         logger.warning(
             f"[tool] unknown_input call_id={call_id} "
@@ -159,7 +165,7 @@ def run_tool(
         )
 
     log_tool_start(call_id, tool_name, tool_input)
-    tool_run = execute_tool(tool_name, tool_input, context)
+    tool_run = execute_tool(tool_name, tool_input, context, catalog)
 
     duration_ms = (time.perf_counter() - start) * 1000
     log_tool_done(call_id, tool_name, tool_run, duration_ms)
