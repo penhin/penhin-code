@@ -23,6 +23,14 @@ def repository(tmp_path: Path) -> SqliteOrchestrationRepository:
     return store
 
 
+def test_test_database_is_created_in_pytest_temp_directory(tmp_path: Path) -> None:
+    store = repository_from_database_url(database_url_from_env())
+    expected = tmp_path / "orchestration.sqlite3"
+    assert store.path == expected.resolve()
+    store.initialize()
+    assert expected.is_file()
+
+
 def executable_job(repository: SqliteOrchestrationRepository, subject: str, **kwargs) -> AgentJob:
     job_id = str(uuid4())
     return repository.create_job(AgentJob(

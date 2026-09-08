@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 import sys
 import venv
@@ -28,6 +29,75 @@ class PluginTool:
     description: str
     input_schema: dict[str, Any]
     entrypoint: str
+
+
+@dataclass(frozen=True)
+class PluginManifest:
+    name: str
+    tools: tuple[PluginTool, ...]
+    capabilities: frozenset[str]
+
+
+def read_local_plugin_manifest(path: str | Path, expected_name: str | None = None) -> PluginManifest:
+    """Validate a local artifact without creating a host or virtual environment."""
+    root = Path(path).resolve()
+    manifest_path = root / "penhin-plugin.yaml"
+    if not manifest_path.is_file():
+        raise PluginError("Missing penhin-plugin.yaml")
+    try:
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as error:
+        raise PluginError(f"Invalid plugin manifest: {error}") from error
+    if not isinstance(manifest, dict):
+        raise PluginError("Plugin manifest must be an object")
+    name = manifest.get("name")
+    tools = manifest.get("tools")
+    declared = manifest.get("capabilities", [])
+    api_version = manifest.get("api_version")
+    if api_version not in {1, "1"}:
+        raise PluginError("Plugin requires compatible api_version: 1")
+    if not isinstance(name, str) or not name.replace("_", "").isalnum() or not isinstance(tools, list):
+        raise PluginError("Manifest requires an alphanumeric name and a tools list")
+    if expected_name is not None and name != expected_name:
+        raise PluginError(f"Manifest name {name!r} does not match configured Plugin {expected_name!r}")
+    if not isinstance(declared, list) or not all(isinstance(capability, str) for capability in declared):
+        raise PluginError("Manifest capabilities must be a list of strings")
+    parsed: list[PluginTool] = []
+    for item in tools:
+        if not isinstance(item, dict) or not all(isinstance(item.get(key), str) for key in ("name", "description", "entrypoint")):
+            raise PluginError("Each tool requires name, description, and module:function entrypoint")
+        if not item["name"].replace("_", "").isalnum():
+            raise PluginError("Tool names must be alphanumeric with optional underscores")
+        schema = item.get("input_schema", {"type": "object", "properties": {}, "required": []})
+        if not isinstance(schema, dict) or schema.get("type") != "object":
+            raise PluginError(f"Tool {item['name']} has an invalid input_schema")
+        parsed.append(PluginTool(item["name"], item["description"], schema, item["entrypoint"]))
+    return PluginManifest(name, tuple(parsed), frozenset(declared))
+
+
+class LocalPluginLoader:
+    """Adapter that defers host construction until PluginRuntime activation."""
+
+    def validate(self, registration) -> Result:
+        try:
+            manifest = read_local_plugin_manifest(registration.source, expected_name=registration.name)
+            allowed = registration.config.get("capabilities", list(manifest.capabilities))
+            if not isinstance(allowed, list) or not all(isinstance(capability, str) for capability in allowed):
+                raise PluginError("Plugin config capabilities must be a list of strings")
+        except PluginError as error:
+            return Result.failure(str(error), code="plugin_manifest_invalid")
+        digest = hashlib.sha256((Path(registration.source).resolve() / "penhin-plugin.yaml").read_bytes()).hexdigest()
+        return Result.success(data={
+            "identity": str(Path(registration.source).resolve()),
+            "digest": digest,
+            "capabilities": sorted(manifest.capabilities),
+        })
+
+    def load(self, registration) -> "LocalPlugin":
+        manifest = read_local_plugin_manifest(registration.source, expected_name=registration.name)
+        allowed = set(registration.config.get("capabilities", manifest.capabilities))
+        capability_policy = PermissionPolicy(allow=set(manifest.capabilities) & allowed)
+        return load_local_plugin(registration.source, capability_policy, expected_name=registration.name)
 
 
 class PluginHost:
@@ -94,40 +164,26 @@ class LocalPlugin:
         ])
 
     def close(self) -> None:
-        self.host.close()
-        self.environment.cleanup()
+        try:
+            self.host.close()
+        finally:
+            self.environment.cleanup()
 
 
-def load_local_plugin(path: str | Path, policy: PermissionPolicy | None = None) -> LocalPlugin:
+def load_local_plugin(
+    path: str | Path,
+    policy: PermissionPolicy | None = None,
+    expected_name: str | None = None,
+) -> LocalPlugin:
     root = Path(path).resolve()
-    manifest_path = root / "penhin-plugin.yaml"
-    if not manifest_path.is_file():
-        raise PluginError("Missing penhin-plugin.yaml")
+    manifest = read_local_plugin_manifest(root, expected_name=expected_name)
+    environment = TemporaryDirectory(prefix=f"penhin-plugin-{manifest.name}-")
     try:
-        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
-    except yaml.YAMLError as error:
-        raise PluginError(f"Invalid plugin manifest: {error}") from error
-    name = manifest.get("name")
-    tools = manifest.get("tools")
-    declared = set(manifest.get("capabilities", []))
-    api_version = manifest.get("api_version")
-    if api_version not in {1, "1"}:
-        raise PluginError("Plugin requires compatible api_version: 1")
-    if not isinstance(name, str) or not name.replace("_", "").isalnum() or not isinstance(tools, list):
-        raise PluginError("Manifest requires an alphanumeric name and a tools list")
-    parsed = []
-    for item in tools:
-        if not isinstance(item, dict) or not all(isinstance(item.get(key), str) for key in ("name", "description", "entrypoint")):
-            raise PluginError("Each tool requires name, description, and module:function entrypoint")
-        if not item["name"].replace("_", "").isalnum():
-            raise PluginError("Tool names must be alphanumeric with optional underscores")
-        schema = item.get("input_schema", {"type": "object", "properties": {}, "required": []})
-        if not isinstance(schema, dict) or schema.get("type") != "object":
-            raise PluginError(f"Tool {item['name']} has an invalid input_schema")
-        parsed.append(PluginTool(item["name"], item["description"], schema, item["entrypoint"]))
-    environment = TemporaryDirectory(prefix=f"penhin-plugin-{name}-")
-    venv.EnvBuilder(with_pip=False).create(environment.name)
-    executable = Path(environment.name) / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
-    policy = policy or PermissionPolicy(declared)
-    broker = PluginCapabilityBroker(name, declared, policy)
-    return LocalPlugin(name, root, environment, PluginHost(executable, root, broker), tuple(parsed), broker)
+        venv.EnvBuilder(with_pip=False).create(environment.name)
+        executable = Path(environment.name) / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+        policy = policy or PermissionPolicy(set(manifest.capabilities))
+        broker = PluginCapabilityBroker(manifest.name, set(manifest.capabilities), policy)
+        return LocalPlugin(manifest.name, root, environment, PluginHost(executable, root, broker), manifest.tools, broker)
+    except BaseException:
+        environment.cleanup()
+        raise

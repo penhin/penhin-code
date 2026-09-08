@@ -31,7 +31,7 @@ class CommandRouter:
             *RUNTIME_COMMANDS,
             *AUTH_COMMANDS,
             *SESSION_COMMANDS,
-            CommandSpec("/plugin", "Manage installed plugins", handle_plugin_command),
+            CommandSpec("/plugin", "Manage and activate plugins for this session", handle_plugin_command),
         )
         if contributions is not None:
             registered = (*registered, *(

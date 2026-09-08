@@ -1,5 +1,6 @@
 import json
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from penhin.cli import ui
@@ -199,13 +200,18 @@ def handle_circuit_open(context: RunContext, error: CircuitBreakerOpen) -> None:
     ])
 
 
-def build_agent_deps(runtime, catalog: ToolCatalog = DEFAULT_TOOL_CATALOG) -> AgentDeps:
+def build_agent_deps(
+    runtime,
+    catalog: ToolCatalog = DEFAULT_TOOL_CATALOG,
+    catalog_provider: Callable[[], ToolCatalog] | None = None,
+) -> AgentDeps:
+    current_catalog = catalog_provider or (lambda: catalog)
     return AgentDeps(
         compact_context=compact_context_for_llm,
-        call_llm=lambda context: call_llm(context, runtime, catalog),
+        call_llm=lambda context: call_llm(context, runtime, current_catalog()),
         record_llm_response=record_llm_response,
         should_continue_with_tools=should_continue_with_tools,
-        execute_tool_uses=lambda context, response: execute_tool_uses(context, response, catalog),
+        execute_tool_uses=lambda context, response: execute_tool_uses(context, response, current_catalog()),
         record_tool_results=record_tool_results,
         handle_circuit_open=handle_circuit_open,
     )
@@ -224,7 +230,9 @@ def run_agent_state_machine(
 
 def agent_loop(context: RunContext, catalog: ToolCatalog = DEFAULT_TOOL_CATALOG) -> AgentState:
     runtime = runtime_manager.current()
-    return run_agent_state_machine(context, build_agent_deps(runtime, catalog))
+    plugin_runtime = context.plugin_runtime
+    catalog_provider = plugin_runtime.catalog if plugin_runtime is not None else None
+    return run_agent_state_machine(context, build_agent_deps(runtime, catalog, catalog_provider))
 
 
 def run_once(query: str) -> None:

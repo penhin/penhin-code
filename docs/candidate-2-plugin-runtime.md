@@ -2,6 +2,8 @@
 
 ## Objective
 
+Decision checkpoint (2026-09-08): see [grill checkpoint](candidate-2-grill-checkpoint.md) for confirmed authorization rules, the explicit bulk Plugin reload exception, and unresolved questions. That checkpoint supersedes conflicting earlier decisions below; implementation remains incomplete.
+
 Introduce a deep `PluginRuntime` module that owns the governed Plugin lifecycle for one Penhin run: effective configuration, Artifact validation, activation, a unified tool catalog, and cleanup. Callers use its interface instead of coordinating PluginManager, source resolution, locks, hosts, routing, and catalogs themselves.
 
 ## Decisions
@@ -9,7 +11,7 @@ Introduce a deep `PluginRuntime` module that owns the governed Plugin lifecycle 
 - A **PluginRuntime** discovers and validates every effective Plugin Artifact at run start, but does not start a Plugin host until explicit Plugin Activation.
 - A Plugin's tools are always namespaced as `plugin__tool`; Plugin Contributions cannot replace built-in tools.
 - Global configuration is overlaid by project configuration for the same Plugin name.
-- Installation and updates are explicit CLI operations. A run uses the Artifact digest selected when it starts; updates affect later runs only.
+- Installation and updates are explicit CLI operations. A run uses the Artifact digest selected when it starts; ordinary updates affect later runs only. Explicit user-requested reload may switch the current run to new Artifacts. The user selected bulk reload of all Plugins; detailed semantics remain under discussion in the checkpoint.
 - An active Plugin owns one isolated host for the run. Deactivation immediately removes all of its Plugin Contributions from the catalog and closes that host.
 - Manifest declarations are an upper capability limit; the effective capability set is their intersection with the user permission policy.
 - A failed Artifact validation or host startup disables only that Plugin, produces an auditable diagnostic, and leaves built-in tools and other Plugins available.
@@ -59,7 +61,7 @@ runtime.close()                         # closes every active host
 - A malformed manifest, mismatched Artifact digest, or failed host startup records diagnostics without disabling other tools.
 - A project Plugin overrides a same-named global Plugin.
 - A Plugin cannot request a capability absent from either its manifest or the user policy.
-- Updating a Plugin does not change the Artifact used by an active run.
+- Updating a Plugin does not change the Artifact used by an active run unless the user explicitly requests reload.
 - Session activation/deactivation appears in the transcript and does not alter persistent `enabled` configuration.
 
 ## Non-goals
@@ -68,4 +70,4 @@ runtime.close()                         # closes every active host
 - Natural-language-triggered Plugin loading.
 - Built-in tool overrides.
 - Pi-style shared-process extension execution.
-- Reloading an active run onto a newly updated Artifact.
+- Implicitly switching an active run onto a newly updated Artifact without explicit reload.

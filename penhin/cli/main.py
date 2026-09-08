@@ -12,6 +12,7 @@ from penhin.infrastructure.config import get_permission_mode, get_version
 from penhin.agent.context import RunContext
 from penhin.permissions import normalize_permission_mode
 from penhin.runtime import AuthenticationRequired, runtime_manager
+from penhin.plugins.bootstrap import plugin_runtime_for_session
 from penhin.tools.execution import runtime_permission_setup
 from penhin.tools.registry import tool_names
 from penhin.tools.builtin.workspace import workspace_info
@@ -123,6 +124,7 @@ def main() -> None:
         approval=approval,
         session_path=session_path,
     )
+    context.plugin_runtime = plugin_runtime_for_session()
     workspace = workspace_info()
     provider = runtime_manager.configured_provider()
     api_label = {"anthropic": "Anthropic API", "openai": "OpenAI API", "openai-codex": "OpenAI ChatGPT Plus/Pro", "gemini": "Gemini API", "deepseek": "DeepSeek API"}.get(provider, provider or "Configured API")
@@ -133,31 +135,34 @@ def main() -> None:
         workspace=str(workspace.get("cwd", ".")),
     )
 
-    while True:
-        try:
-            user_input = prompt_input(completer=command_completer).strip()
-            
-            if user_input.startswith("/"):
-                print_info("")
-                handled = handle_local_command(user_input, context)
-                if handled:
+    try:
+        while True:
+            try:
+                user_input = prompt_input(completer=command_completer).strip()
+
+                if user_input.startswith("/"):
                     print_info("")
-                    continue
-        except (EOFError, KeyboardInterrupt):
-            logger.info("")
-            break
+                    handled = handle_local_command(user_input, context)
+                    if handled:
+                        print_info("")
+                        continue
+            except (EOFError, KeyboardInterrupt):
+                logger.info("")
+                break
 
-        if user_input in {"", "q", "quit", "exit"}:
-            break
+            if user_input in {"", "q", "quit", "exit"}:
+                break
 
-        context.add_user_message(user_input)
-        print_user_message(user_input)
-        try:
-            agent_loop(context)
-        except AuthenticationRequired as error:
-            print_error(str(error))
-            continue
-        context.session_path = transcripts.save_session(context.session_path, context.messages)
+            context.add_user_message(user_input)
+            print_user_message(user_input)
+            try:
+                agent_loop(context)
+            except AuthenticationRequired as error:
+                print_error(str(error))
+                continue
+            context.session_path = transcripts.save_session(context.session_path, context.messages)
+    finally:
+        context.plugin_runtime.close()
 
 
 def run_cli() -> int:
