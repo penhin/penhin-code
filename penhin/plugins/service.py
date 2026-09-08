@@ -14,6 +14,7 @@ import yaml
 
 from penhin.result import Result
 from penhin.plugins.capabilities import PluginCapabilityBroker
+from penhin.plugins.installation import verify_plugin_artifact
 from penhin.tools.catalog import ToolCatalog
 from penhin.tools.execution import PermissionPolicy
 from penhin.tools.types import ToolApproval, ToolCategory, ToolSpec
@@ -78,17 +79,23 @@ def read_local_plugin_manifest(path: str | Path, expected_name: str | None = Non
 class LocalPluginLoader:
     """Adapter that defers host construction until PluginRuntime activation."""
 
+    def __init__(self, trust_roots: dict[str, str] | None = None) -> None:
+        self._trust_roots = trust_roots
+
     def validate(self, registration) -> Result:
         try:
             manifest = read_local_plugin_manifest(registration.source, expected_name=registration.name)
             allowed = registration.config.get("capabilities", list(manifest.capabilities))
             if not isinstance(allowed, list) or not all(isinstance(capability, str) for capability in allowed):
                 raise PluginError("Plugin config capabilities must be a list of strings")
+            artifact = verify_plugin_artifact(Path(registration.source), self._trust_roots) if self._trust_roots is not None else None
         except PluginError as error:
             return Result.failure(str(error), code="plugin_manifest_invalid")
-        digest = hashlib.sha256((Path(registration.source).resolve() / "penhin-plugin.yaml").read_bytes()).hexdigest()
+        except ValueError as error:
+            return Result.failure(str(error), code="plugin_artifact_untrusted")
+        digest = artifact.digest if artifact is not None else hashlib.sha256((Path(registration.source).resolve() / "penhin-plugin.yaml").read_bytes()).hexdigest()
         return Result.success(data={
-            "identity": str(Path(registration.source).resolve()),
+            "identity": artifact.resolved if artifact is not None else str(Path(registration.source).resolve()),
             "digest": digest,
             "capabilities": sorted(manifest.capabilities),
         })

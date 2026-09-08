@@ -32,14 +32,17 @@ class HookOutcome:
 class PluginContributions:
     """Additive skills, commands, and observation-only lifecycle hooks."""
 
-    def __init__(self, core_commands: set[str], core_tools: set[str]) -> None:
+    def __init__(self, core_commands: set[str], core_tools: set[str], *, plugin_id: str) -> None:
         self._core_commands = core_commands
         self._core_tools = core_tools
+        self._plugin_id = plugin_id
         self.skills: dict[str, PluginSkill] = {}
         self.commands: dict[str, PluginCommand] = {}
         self.hooks: dict[str, list[Callable[[dict[str, Any]], HookOutcome]]] = {}
 
     def add_skill(self, skill: PluginSkill) -> None:
+        if not skill.name.startswith(f"{self._plugin_id}__"):
+            raise ValueError("Plugin skill must be Plugin-ID namespaced")
         if skill.name in self.skills:
             raise ValueError(f"Duplicate plugin skill: {skill.name}")
         self.skills[skill.name] = skill
@@ -51,6 +54,8 @@ class PluginContributions:
             raise ValueError(f"Plugin command conflicts with an existing command: {command.name}")
         if command.name.removeprefix("/") in self._core_tools:
             raise ValueError("Plugin command cannot replace a core tool")
+        if not command.name.startswith(f"/{self._plugin_id}__"):
+            raise ValueError("Plugin command must be Plugin-ID namespaced")
         self.commands[command.name] = command
 
     def add_hook(self, event: str, hook: Callable[[dict[str, Any]], HookOutcome]) -> None:

@@ -206,6 +206,11 @@ class PluginRuntime:
             data.setdefault("identity", str(Path(registration.source).expanduser().resolve()))
             data.setdefault("digest", registration.config.get("digest", ""))
             data.setdefault("capabilities", sorted(registration.config.get("capabilities", [])))
+            authorization_for = getattr(self._manager, "authorization_for", None)
+            if callable(authorization_for):
+                decision = authorization_for(registration.name, data["identity"], data["digest"], data["capabilities"])
+                if decision not in {"approved", "inherited"}:
+                    return Result.failure(f"Plugin Artifact authorization is {decision}", code=f"plugin_authorization_{decision}")
             self._metadata[registration.name] = data
         return outcome
 
@@ -265,6 +270,13 @@ class PluginRuntime:
             self._diagnostics.append({"plugin": name, "stage": "deactivation", "error": str(error)})
             return Result.failure(f"Unable to close Plugin {name!r}: {error}", code="plugin_deactivation_failed")
         return Result.success(data={"plugin": name, "active": False})
+
+    def revoke(self, name: str) -> Result:
+        """Immediately withdraw an authorized Plugin from this run's catalog."""
+        result = self.deactivate(name) if name in self._active else Result.success(data={"plugin": name, "active": False})
+        self._available.discard(name)
+        self._record_audit({"event": "plugin_authorization_revoked", "plugin": name})
+        return result
 
     def _authorized(self, old: dict[str, Any] | None, new: dict[str, Any], registration: PluginRegistration) -> str:
         configured = registration.config.get("authorized", True)

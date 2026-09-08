@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 import pytest
 
 from penhin.agent.context import RunContext
@@ -281,3 +281,43 @@ def test_reload_command_delegates_to_runtime() -> None:
     with patch("penhin.cli.commands.plugins.ui.print_json") as printed:
         handle_plugin_command(["reload"], context)
     assert printed.called
+
+
+def test_revocation_immediately_withdraws_an_active_plugin() -> None:
+    loader = Loader()
+    runtime = PluginRuntime(ToolCatalog([tool("read")]), [PluginRegistration("weather", ".")], loader)
+    runtime.discover(); runtime.activate("weather")
+
+    outcome = runtime.revoke("weather")
+
+    assert outcome.ok
+    assert runtime.active() == () and runtime.available() == ()
+    assert runtime.catalog().names() == {"read"}
+
+
+def test_runtime_never_activates_an_artifact_without_project_authorization(tmp_path: Path) -> None:
+    manager = PluginManager(tmp_path / "global.json", tmp_path / "project.json")
+    manager.install("weather", "weather-source")
+
+    runtime = PluginRuntime.from_manager(ToolCatalog([]), manager, ReloadLoader())
+    runtime.discover()
+
+    assert runtime.available() == ()
+    assert runtime.diagnostics()[0]["error"] == "Plugin Artifact authorization is pending"
+    manager.authorize_artifact("weather", "weather-source", "weather-source", [])
+    authorized = PluginRuntime.from_manager(ToolCatalog([]), manager, ReloadLoader())
+    authorized.discover()
+    assert authorized.activate("weather").ok
+
+
+def test_require_command_writes_one_eligible_project_contribution_or_shows_selector() -> None:
+    service = MagicMock()
+    service.eligible_contributions.return_value = [{"plugin": "speech", "id": "transcribe"}]
+    with patch("penhin.cli.commands.plugins.manager", return_value=service), patch("penhin.cli.commands.plugins.ui.print_info"):
+        handle_plugin_command(["require", "transcribe"])
+    service.require_contribution.assert_called_once_with({"plugin": "speech", "id": "transcribe"})
+
+    service.eligible_contributions.return_value = [{"plugin": "a", "id": "transcribe"}, {"plugin": "b", "id": "transcribe"}]
+    with patch("penhin.cli.commands.plugins.manager", return_value=service), patch("penhin.cli.commands.plugins.ui.print_json") as shown:
+        handle_plugin_command(["require", "transcribe"])
+    assert shown.call_args.args[0]["eligible"] == service.eligible_contributions.return_value

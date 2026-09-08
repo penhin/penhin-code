@@ -34,6 +34,10 @@ class CommandRouter:
             CommandSpec("/plugin", "Manage and activate plugins for this session", handle_plugin_command),
         )
         if contributions is not None:
+            existing_names = {command.name for command in registered}
+            conflicting = existing_names & set(contributions.commands)
+            if conflicting:
+                raise ValueError(f"Plugin commands cannot replace existing commands: {sorted(conflicting)}")
             registered = (*registered, *(
                 CommandSpec(
                     command.name, command.description,
