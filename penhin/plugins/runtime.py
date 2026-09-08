@@ -221,12 +221,26 @@ class PluginRuntime:
         """Publish a new whole-catalog generation; old snapshots stay immutable."""
         self._catalog = self._base_catalog.merged(*(plugin.catalog() for plugin in self._active.values()))
 
+    def _load_and_bind_plugin(self, name: str, registration: PluginRegistration) -> Any:
+        """Create one Plugin's host and bind only its runtime-assigned identity."""
+        plugin = self._loader.load(registration)
+        bind_plugin_id = getattr(plugin, "bind_plugin_id", None)
+        if callable(bind_plugin_id): bind_plugin_id(name)
+        return plugin
+
+    def _assert_independent_host(self, name: str, plugin: Any) -> None:
+        identity = getattr(plugin, "host_identity", None)
+        if identity is not None and any(getattr(active, "host_identity", object()) == identity for active_name, active in self._active.items() if active_name != name):
+            raise ValueError("Each active Plugin requires an independent host")
+
     def activate(self, name: str) -> Result:
         if name not in self._available: return Result.failure(f"Plugin {name!r} is not available", code="plugin_unavailable")
         if name in self._active: return Result.success(data={"plugin": name, "active": True})
         plugin = None
         try:
-            plugin = self._loader.load(self._registrations[name]); proposed = plugin.catalog()
+            plugin = self._load_and_bind_plugin(name, self._registrations[name])
+            self._assert_independent_host(name, plugin)
+            proposed = plugin.catalog()
             invalid = sorted(item for item in proposed.names() if not item.startswith(f"{name}__"))
             if invalid: raise ValueError(f"Non-namespaced tools: {', '.join(invalid)}")
             self._base_catalog.merged(*(p.catalog() for p in self._active.values()), proposed)
@@ -302,7 +316,9 @@ class PluginRuntime:
                 else:
                     replacement = None
                     try:
-                        replacement = self._loader.load(registration); proposed = replacement.catalog()
+                        replacement = self._load_and_bind_plugin(name, registration)
+                        self._assert_independent_host(name, replacement)
+                        proposed = replacement.catalog()
                         invalid = sorted(item for item in proposed.names() if not item.startswith(f"{name}__"))
                         if invalid: raise ValueError(f"Non-namespaced tools: {', '.join(invalid)}")
                         self._base_catalog.merged(*(p.catalog() for key, p in self._active.items() if key != name), proposed)
@@ -335,4 +351,6 @@ class PluginRuntime:
         plugins, self._active = tuple(self._active.items()), {}
         self._generations.clear()
         self._publish()
-        for name, plugin in plugins: self._close_plugin(name, plugin)
+        for name, plugin in plugins:
+            try: self._stop_old(plugin)
+            except Exception as error: self._diagnostics.append({"plugin": name, "stage": "cleanup", "error": str(error)})
