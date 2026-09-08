@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from dataclasses import dataclass, field
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Protocol
 from penhin.infrastructure.atomic_io import write_json_atomic
@@ -28,9 +29,24 @@ class PluginGeneration:
     catalog: ToolCatalog
     contributions: Any | None = None
 
+
+@dataclass(frozen=True)
+class InputEnricherDeclaration:
+    event_kinds: tuple[str, ...] = ("*",)
+    mime_types: tuple[str, ...] = ("*",)
+    parallel_safe: bool = False
+    required_eligible: bool = False
+
+
+@dataclass(frozen=True)
+class InputRequirement:
+    plugin: str
+    event_kind: str = "*"
+    mime_type: str = "*"
+
 class PluginRuntime:
     """Owns discovery, activation, immutable catalog generations, and reload."""
-    def __init__(self, base_catalog: ToolCatalog, registrations: list[PluginRegistration], loader: PluginLoader, *, manager: Any = None, audit_path: Path | None = None, cancellation_deadline: float = 2.0) -> None:
+    def __init__(self, base_catalog: ToolCatalog, registrations: list[PluginRegistration], loader: PluginLoader, *, manager: Any = None, audit_path: Path | None = None, cancellation_deadline: float = 2.0, input_policy: dict[str, Any] | None = None) -> None:
         self._base_catalog, self._loader, self._manager = base_catalog, loader, manager
         self._audit_path, self._cancellation_deadline = audit_path, cancellation_deadline
         self._registrations = self._unique(registrations)
@@ -38,6 +54,9 @@ class PluginRuntime:
         self._metadata: dict[str, dict[str, Any]] = {}; self._diagnostics: list[dict[str, str]] = []
         self._audit: list[dict[str, Any]] = []; self._catalog = base_catalog
         self._generations: dict[str, PluginGeneration] = {}
+        self._withdrawn_input_generations: set[tuple[str, int]] = set()
+        self._input_policy = dict(input_policy or {})
+        self._input_bypass: dict[tuple[str, str, str], str] = {}
 
     @staticmethod
     def _unique(registrations: list[PluginRegistration]) -> dict[str, PluginRegistration]:
@@ -71,6 +90,55 @@ class PluginRuntime:
     def diagnostics(self) -> tuple[dict[str, str], ...]: return tuple(dict(item) for item in self._diagnostics)
     def audit_records(self) -> tuple[dict[str, Any], ...]: return tuple(dict(item) for item in self._audit)
 
+    def emergency_bypass_input_requirement(self, plugin: str, event_kind: str, mime_type: str, *, reason: str) -> Result:
+        """Explicitly bypass one project-required contribution and audit the exception."""
+        if not reason:
+            return Result.failure("Emergency bypass requires a reason", code="input_bypass_reason_required")
+        key = (plugin, event_kind, mime_type)
+        self._input_bypass[key] = reason
+        self._record_audit({"event": "input_enrichment_emergency_bypass", "plugin": plugin, "event_kind": event_kind, "mime_type": mime_type, "reason": reason})
+        return Result.success(data={"bypassed": key})
+
+    @staticmethod
+    def _enricher_declaration(plugin: Any) -> InputEnricherDeclaration:
+        declaration = getattr(plugin, "input_enricher", {})
+        if declaration is None: declaration = {}
+        if not isinstance(declaration, dict):
+            raise ValueError("Input Enricher declaration must be an object")
+        event_kinds = declaration.get("event_kinds", ["*"])
+        mime_types = declaration.get("mime_types", ["*"])
+        if not all(isinstance(item, str) for item in event_kinds) or not all(isinstance(item, str) for item in mime_types):
+            raise ValueError("Input Enricher event and MIME declarations must be strings")
+        return InputEnricherDeclaration(tuple(event_kinds), tuple(mime_types), declaration.get("parallel_safe", False), declaration.get("required_eligible", False))
+
+    @staticmethod
+    def _matches(declaration: InputEnricherDeclaration, event: InputEvent) -> bool:
+        if "*" not in declaration.event_kinds and event.kind not in declaration.event_kinds: return False
+        mimes = declaration.mime_types
+        return "*" in mimes or any(attachment.mime_type in mimes for attachment in event.attachments)
+
+    def _required(self, name: str, declaration: InputEnricherDeclaration, event: InputEvent) -> tuple[bool, str | None]:
+        for rule in self._input_policy.get("required", []):
+            if not isinstance(rule, dict): continue
+            requirement = InputRequirement(rule.get("plugin", ""), rule.get("event_kind", "*"), rule.get("mime_type", "*"))
+            if requirement.plugin != name: continue
+            kind, mime = requirement.event_kind, requirement.mime_type
+            if kind not in {"*", event.kind}: continue
+            if mime != "*" and not any(item.mime_type == mime for item in event.attachments): continue
+            if not declaration.required_eligible: continue
+            if (name, kind, mime) in self._input_bypass: return False, self._input_bypass[(name, kind, mime)]
+            return True, None
+        return False, None
+
+    def _display_mode(self, name: str, event: InputEvent) -> str:
+        """Project policy, never a Plugin, decides model submission mode."""
+        for rule in self._input_policy.get("display", []):
+            if not isinstance(rule, dict) or rule.get("plugin") != name: continue
+            kind, mime, mode = rule.get("event_kind", "*"), rule.get("mime_type", "*"), rule.get("mode", "submit")
+            if mode not in {"submit", "display"}: raise ValueError("Input display policy mode must be 'submit' or 'display'")
+            if kind in {"*", event.kind} and (mime == "*" or any(item.mime_type == mime for item in event.attachments)): return mode
+        return "submit"
+
     def process_input(self, event: InputEvent) -> Result:
         """Run active Input Enrichers against one immutable Plugin generation snapshot."""
         if not isinstance(event, InputEvent):
@@ -78,21 +146,55 @@ class PluginRuntime:
         if not event.attachments_are_live():
             return Result.failure("Input event contains expired attachments", code="attachment_expired")
         handles = tuple(AttachmentHandle(attachment) for attachment in event.attachments)
-        active = tuple((name, self._active[name], self._generations[name]) for name in sorted(self._active))
+        configured_order = self._input_policy.get("order", [])
+        if not isinstance(configured_order, list) or not all(isinstance(name, str) for name in configured_order):
+            return Result.failure("Input enrichment policy order must be a list of Plugin IDs", code="invalid_input_policy")
+        rank = {name: index for index, name in enumerate(configured_order)}
+        active = []
+        for name, plugin in self._active.items():
+            if not callable(getattr(plugin, "enrich_input", None)): continue
+            try: declaration = self._enricher_declaration(plugin)
+            except ValueError as error:
+                self._diagnostics.append({"plugin": name, "stage": "input_enrichment", "error": str(error)})
+                continue
+            if self._matches(declaration, event): active.append((name, plugin, self._generations[name], declaration))
+        active.sort(key=lambda item: (rank.get(item[0], len(rank)), item[0]))
         supplements = []
         generations = {}
         diagnostics = []
-        for name, plugin, generation in active:
-            enrich = getattr(plugin, "enrich_input", None)
-            if not callable(enrich):
-                continue
+        def invoke(item: tuple[str, Any, PluginGeneration, InputEnricherDeclaration]):
+            name, plugin, generation, declaration = item
             generations[name] = generation.number
             try:
-                supplement = supplement_from_result(name, generation.number, enrich(InputEnrichmentEvent(event.kind, event.text), handles))
+                supplement = supplement_from_result(name, generation.number, plugin.enrich_input(InputEnrichmentEvent(event.kind, event.text), handles))
+                if (name, generation.number) in self._withdrawn_input_generations:
+                    return None, {"plugin": name, "stage": "input_enrichment", "error": "Contribution withdrawn during enrichment"}, False
+                supplement = replace(supplement, display_mode=self._display_mode(name, event))
             except Exception as error:
-                diagnostics.append({"plugin": name, "stage": "input_enrichment", "error": str(error)})
-                continue
-            supplements.append(supplement)
+                return None, {"plugin": name, "stage": "input_enrichment", "error": str(error)}, self._required(name, declaration, event)[0]
+            return supplement, None, False
+
+        index = 0
+        while index < len(active):
+            item = active[index]
+            batch = [item]
+            index += 1
+            if item[3].parallel_safe:
+                while index < len(active) and active[index][3].parallel_safe:
+                    batch.append(active[index]); index += 1
+            if len(batch) == 1:
+                outcomes = [invoke(batch[0])]
+            else:
+                with ThreadPoolExecutor(max_workers=len(batch)) as executor:
+                    outcomes = list(executor.map(invoke, batch))
+            for supplement, diagnostic, required in outcomes:
+                if diagnostic is not None:
+                    diagnostics.append(diagnostic)
+                    if required:
+                        self._diagnostics.extend(diagnostics)
+                        return Result.failure("Required Input Enricher failed", code="required_input_enrichment_failed", data={"diagnostics": diagnostics})
+                elif supplement is not None:
+                    supplements.append(supplement)
         self._diagnostics.extend(diagnostics)
         return Result.success(data=InputSubmission(event.text, tuple(supplements), generations))
 
@@ -141,8 +243,10 @@ class PluginRuntime:
     def deactivate(self, name: str) -> Result:
         plugin = self._active.pop(name, None)
         if plugin is None: return Result.failure(f"Plugin {name!r} is not active", code="plugin_inactive")
-        self._generations.pop(name, None); self._publish()
-        try: plugin.close()
+        generation = self._generations.pop(name, None)
+        if generation is not None: self._withdrawn_input_generations.add((name, generation.number))
+        self._publish()
+        try: self._stop_old(plugin)
         except Exception as error:
             self._diagnostics.append({"plugin": name, "stage": "deactivation", "error": str(error)})
             return Result.failure(f"Unable to close Plugin {name!r}: {error}", code="plugin_deactivation_failed")

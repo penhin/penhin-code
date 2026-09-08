@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from threading import Event, Thread
 
 import pytest
 
@@ -117,6 +118,97 @@ def test_runtime_enriches_attachment_through_a_brokered_handle() -> None:
     assert supplement.plugin_id == "ocr"
     assert supplement.content == "receipt total: 42"
     assert supplement.trust == "untrusted"
+
+
+def test_runtime_applies_project_order_and_preserves_display_only_results() -> None:
+    class Enricher:
+        def __init__(self, label, mode="submit"):
+            self.label, self.mode = label, mode
+            self.input_enricher = {
+                "event_kinds": ["paste"], "mime_types": ["image/png"], "parallel_safe": False,
+            }
+
+        def catalog(self): return ToolCatalog([])
+        def enrich_input(self, _event, _attachments):
+            return {"content": self.label, "schema_version": 1, "display_mode": self.mode}
+        def close(self): pass
+
+    class Loader:
+        def validate(self, _registration): return Result.success()
+        def load(self, registration): return {"ocr": Enricher("ocr"), "caption": Enricher("caption", "display")}[registration.name]
+
+    runtime = PluginRuntime(
+        ToolCatalog([]),
+        [PluginRegistration("ocr", "ocr"), PluginRegistration("caption", "caption")],
+        Loader(),
+        input_policy={"order": ["caption", "ocr"], "display": [{"plugin": "caption", "mode": "display"}]},
+    )
+    runtime.discover()
+    runtime.activate("ocr")
+    runtime.activate("caption")
+
+    result = runtime.process_input(InputEvent("paste", "inspect", (Attachment.create(b"image", source="paste", mime_type="image/png"),)))
+
+    assert result.ok
+    assert [(item.plugin_id, item.display_mode, item.trust) for item in result.data.supplements] == [
+        ("caption", "display", "untrusted"), ("ocr", "submit", "untrusted"),
+    ]
+    assert [item.content for item in result.data.model_supplements()] == ["ocr"]
+
+
+def test_required_failure_blocks_only_matching_submission_and_audited_bypass_recovers() -> None:
+    class FailingEnricher:
+        input_enricher = {"event_kinds": ["paste"], "mime_types": ["image/png"], "required_eligible": True}
+        def catalog(self): return ToolCatalog([])
+        def enrich_input(self, _event, _attachments): raise RuntimeError("OCR unavailable")
+        def close(self): pass
+
+    class Loader:
+        def validate(self, _registration): return Result.success()
+        def load(self, _registration): return FailingEnricher()
+
+    runtime = PluginRuntime(ToolCatalog([]), [PluginRegistration("ocr", "fixture")], Loader(), input_policy={
+        "required": [{"plugin": "ocr", "event_kind": "paste", "mime_type": "image/png"}],
+    })
+    runtime.discover(); runtime.activate("ocr")
+    image = Attachment.create(b"image", source="paste", mime_type="image/png")
+
+    blocked = runtime.process_input(InputEvent("paste", "inspect", (image,)))
+    unrelated = runtime.process_input(InputEvent("paste", "no attachment"))
+    assert not blocked.ok and blocked.meta["code"] == "required_input_enrichment_failed"
+    assert unrelated.ok
+
+    assert runtime.emergency_bypass_input_requirement("ocr", "paste", "image/png", reason="incident-123").ok
+    assert runtime.process_input(InputEvent("paste", "inspect", (image,))).ok
+    assert runtime.audit_records()[-1]["reason"] == "incident-123"
+
+
+def test_deactivation_withdraws_and_cancels_an_in_flight_input_enricher() -> None:
+    class BlockingEnricher:
+        input_enricher = {"parallel_safe": True}
+        def __init__(self): self.started, self.cancelled = Event(), Event()
+        def catalog(self): return ToolCatalog([])
+        def enrich_input(self, _event, _attachments):
+            self.started.set(); self.cancelled.wait(1)
+            raise RuntimeError("cancelled")
+        def cancel(self): self.cancelled.set()
+        def running(self): return not self.cancelled.is_set()
+        def close(self): pass
+
+    plugin = BlockingEnricher()
+    class Loader:
+        def validate(self, _registration): return Result.success()
+        def load(self, _registration): return plugin
+
+    runtime = PluginRuntime(ToolCatalog([]), [PluginRegistration("ocr", "fixture")], Loader())
+    runtime.discover(); runtime.activate("ocr")
+    worker = Thread(target=lambda: runtime.process_input(InputEvent("paste", "inspect")))
+    worker.start(); assert plugin.started.wait(1)
+
+    assert runtime.deactivate("ocr").ok
+    worker.join(1)
+    assert plugin.cancelled.is_set()
+    assert runtime.process_input(InputEvent("paste", "later")).ok
 
 
 def test_editor_folds_long_paste_expands_it_for_submission_and_backspace_removes_it() -> None:

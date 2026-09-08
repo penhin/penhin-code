@@ -9,6 +9,7 @@ from uuid import uuid4
 
 
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+MAX_CONTEXT_SUPPLEMENT_CHARS = 50_000
 
 
 @dataclass(frozen=True)
@@ -184,6 +185,7 @@ class ContextSupplement:
     schema_version: int
     trust: str = "untrusted"
     display_mode: str = "submit"
+    truncated: bool = False
 
 
 @dataclass(frozen=True)
@@ -197,6 +199,10 @@ class InputSubmission:
 
     def generation(self, plugin_id: str) -> int | None:
         return self._generations.get(plugin_id)
+
+    def model_supplements(self) -> tuple[ContextSupplement, ...]:
+        """Return only supplements that project policy permits model submission."""
+        return tuple(item for item in self.supplements if item.display_mode == "submit")
 
 
 def supplement_from_result(plugin_id: str, generation: int, result: Any) -> ContextSupplement:
@@ -212,4 +218,8 @@ def supplement_from_result(plugin_id: str, generation: int, result: Any) -> Cont
     display_mode = result.get("display_mode", "submit")
     if display_mode not in {"submit", "display"}:
         raise ValueError("Input Enricher display_mode must be 'submit' or 'display'")
-    return ContextSupplement(plugin_id, generation, content, schema_version, display_mode=display_mode)
+    truncated = len(content) > MAX_CONTEXT_SUPPLEMENT_CHARS
+    return ContextSupplement(
+        plugin_id, generation, content[:MAX_CONTEXT_SUPPLEMENT_CHARS], schema_version,
+        display_mode=display_mode, truncated=truncated,
+    )
