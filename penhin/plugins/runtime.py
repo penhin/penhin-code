@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 from penhin.infrastructure.atomic_io import write_json_atomic
+from penhin.plugins.input import AttachmentHandle, InputEnrichmentEvent, InputEvent, InputSubmission, supplement_from_result
 from penhin.result import Result
 from penhin.tools.catalog import ToolCatalog
 
@@ -69,6 +70,31 @@ class PluginRuntime:
     def generation(self, name: str) -> PluginGeneration | None: return self._generations.get(name)
     def diagnostics(self) -> tuple[dict[str, str], ...]: return tuple(dict(item) for item in self._diagnostics)
     def audit_records(self) -> tuple[dict[str, Any], ...]: return tuple(dict(item) for item in self._audit)
+
+    def process_input(self, event: InputEvent) -> Result:
+        """Run active Input Enrichers against one immutable Plugin generation snapshot."""
+        if not isinstance(event, InputEvent):
+            return Result.failure("PluginRuntime input requires an InputEvent", code="invalid_input_event")
+        if not event.attachments_are_live():
+            return Result.failure("Input event contains expired attachments", code="attachment_expired")
+        handles = tuple(AttachmentHandle(attachment) for attachment in event.attachments)
+        active = tuple((name, self._active[name], self._generations[name]) for name in sorted(self._active))
+        supplements = []
+        generations = {}
+        diagnostics = []
+        for name, plugin, generation in active:
+            enrich = getattr(plugin, "enrich_input", None)
+            if not callable(enrich):
+                continue
+            generations[name] = generation.number
+            try:
+                supplement = supplement_from_result(name, generation.number, enrich(InputEnrichmentEvent(event.kind, event.text), handles))
+            except Exception as error:
+                diagnostics.append({"plugin": name, "stage": "input_enrichment", "error": str(error)})
+                continue
+            supplements.append(supplement)
+        self._diagnostics.extend(diagnostics)
+        return Result.success(data=InputSubmission(event.text, tuple(supplements), generations))
 
     def _validate(self, registration: PluginRegistration) -> Result:
         try: outcome = self._loader.validate(registration)
