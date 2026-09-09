@@ -111,6 +111,15 @@ def test_transcript_and_composer_use_the_terminal_default_background() -> None:
     assert ui.TERMINAL_STYLE.get_attrs_for_style_str("class:card-content").bgcolor == ""
 
 
+def test_terminal_follows_the_latest_transcript_content() -> None:
+    terminal = ui.TerminalInterface(lambda _message: None)
+    terminal.output.vertical_scroll = 0
+
+    terminal.add_message("agent", "ChatGPT", "new reply")
+
+    assert terminal.output.vertical_scroll == ui.LATEST_SCROLL
+
+
 def test_secret_prompt_interruption_does_not_mask_later_input(monkeypatch) -> None:
     calls = []
 

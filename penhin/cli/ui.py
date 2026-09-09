@@ -35,6 +35,7 @@ restore_queued_prompts = None
 status_context = None
 status_queue = None
 active_terminal = None
+LATEST_SCROLL = 1_000_000
 
 
 TERMINAL_STYLE = Style.from_dict({
@@ -414,7 +415,7 @@ class TerminalInterface:
     def add_message(self, kind: str, name: str, content: str, *, tokens: int | None = None) -> MessageCard:
         with self._output_lock:
             card = self.transcript.add_message(kind, name, content, tokens=tokens)
-        self.app.invalidate()
+        self._refresh_transcript()
         return card
 
     def start_stream(self, name: str) -> CardStream:
@@ -423,6 +424,7 @@ class TerminalInterface:
         return stream
 
     def _refresh_transcript(self) -> None:
+        self.output.vertical_scroll = LATEST_SCROLL
         self.app.invalidate()
 
     def _main_panel(self) -> FormattedText:
