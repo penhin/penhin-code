@@ -5,6 +5,9 @@ import logging
 import os
 import sys
 import time
+from threading import Thread
+
+from prompt_toolkit.patch_stdout import patch_stdout
 
 from penhin.agent.loop import agent_loop, run_once
 from penhin.cli.commands import handle_local_command, setup_command_completion
@@ -17,6 +20,8 @@ from penhin.tools.execution import runtime_permission_setup
 from penhin.tools.registry import tool_names
 from penhin.tools.builtin.workspace import workspace_info
 from penhin.agent.transcript import transcripts
+from penhin.cli import ui
+from penhin.cli.prompt_queue import PromptQueue
 from penhin.cli.ui import print_error, print_info, print_user_message, print_welcome, prompt_input
 from penhin.infrastructure.quality_gate import run_quality_gate
 
@@ -135,33 +140,44 @@ def main() -> None:
         workspace=str(workspace.get("cwd", ".")),
     )
 
-    try:
-        while True:
-            try:
-                user_input = prompt_input(completer=command_completer).strip()
+    pending = PromptQueue()
 
-                if user_input.startswith("/"):
-                    print_info("")
-                    handled = handle_local_command(user_input, context)
-                    if handled:
-                        print_info("")
-                        continue
-            except (EOFError, KeyboardInterrupt):
-                logger.info("")
-                break
-
-            if user_input in {"", "q", "quit", "exit"}:
-                break
-
-            context.add_user_message(user_input)
-            print_user_message(user_input)
+    def run_pending_prompts() -> None:
+        while (prompt := pending.next()) is not None:
+            context.add_user_message(prompt)
             try:
                 agent_loop(context)
             except AuthenticationRequired as error:
                 print_error(str(error))
-                continue
-            context.session_path = transcripts.save_session(context.session_path, context.messages)
+            finally:
+                context.session_path = transcripts.save_session(context.session_path, context.messages)
+
+    worker = Thread(target=run_pending_prompts, name="penhin-agent", daemon=True)
+    worker.start()
+    ui.restore_queued_prompts = pending.restore_all
+    ui.configure_status(context, pending)
+    try:
+        with patch_stdout(raw=True):
+            while True:
+                try:
+                    user_input = prompt_input(completer=command_completer).strip()
+                    if user_input.startswith("/"):
+                        print_info("")
+                        if handle_local_command(user_input, context):
+                            print_info("")
+                            continue
+                except (EOFError, KeyboardInterrupt):
+                    logger.info("")
+                    break
+                if user_input in {"", "q", "quit", "exit"}:
+                    break
+                print_user_message(user_input)
+                pending.submit(user_input)
     finally:
+        pending.close()
+        worker.join(timeout=1)
+        ui.restore_queued_prompts = None
+        ui.configure_status()
         context.plugin_runtime.close()
 
 

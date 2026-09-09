@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import FormattedText
+from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.styles import Style
 from rich.columns import Columns
 from rich.console import Console, Group
@@ -15,13 +16,31 @@ from penhin.infrastructure.observability import cli_status_line
 
 console = Console()
 prompt_session = None
+restore_queued_prompts = None
+status_context = None
+status_queue = None
+
+
+def configure_status(context=None, queue=None) -> None:
+    global status_context, status_queue
+    status_context, status_queue = context, queue
+
+
+def _status_line() -> str:
+    if status_context is None:
+        return cli_status_line()
+    from penhin.agent.compaction import BLOCKING_THRESHOLD, estimate_api_tokens
+    used = estimate_api_tokens(status_context.messages, status_context.collapse_keep_recent)
+    queued = status_queue.size if status_queue is not None else 0
+    queue_label = f"  ·  {queued} queued" if queued else ""
+    return f"{used / 1000:.1f}k / {BLOCKING_THRESHOLD / 1000:.0f}k (auto){queue_label}"
 
 
 def get_prompt_session() -> PromptSession:
     global prompt_session
     if prompt_session is None:
         prompt_session = PromptSession(
-            bottom_toolbar=lambda: [("class:bottom-toolbar", f"  {cli_status_line()}  ")],
+            bottom_toolbar=lambda: [("class:bottom-toolbar", f"  {_status_line()}  ")],
             reserve_space_for_menu=8,
             complete_while_typing=True,
             style=Style.from_dict({
@@ -41,11 +60,23 @@ def get_prompt_session() -> PromptSession:
 
 
 def prompt_input(prompt: str = "❯ ", completer=None) -> str:
+    bindings = KeyBindings()
+
+    @bindings.add("c-q")
+    def restore_queue(event) -> None:
+        if restore_queued_prompts is None:
+            return
+        restored = restore_queued_prompts()
+        if restored:
+            event.current_buffer.text = "\n\n".join(restored)
+            event.current_buffer.cursor_position = len(event.current_buffer.text)
+
     return get_prompt_session().prompt(
         FormattedText([("class:prompt", prompt)]),
         completer=completer,
         is_password=False,
         placeholder=FormattedText([("class:prompt-label", "ask or /command")]),
+        key_bindings=bindings,
     )
 
 
