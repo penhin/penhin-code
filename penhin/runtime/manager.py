@@ -217,6 +217,9 @@ class Runtime:
 
 
 def log_usage(label: str, response) -> None:
+    from penhin.cli import ui
+    if ui.active_terminal is not None:
+        return
     usage = response.usage
     logger.info(
         f"[usage:{label}] "

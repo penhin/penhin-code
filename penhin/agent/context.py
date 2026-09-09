@@ -57,6 +57,7 @@ class RunContext:
     post_delegation_source: str = ""
     pending_force_compact_hint: str | None = None
     pre_plan_mode: PermissionMode | None = None
+    plugin_runtime: Any = None
 
     def add_user_message(self, content: Any) -> None:
         if not is_tool_result_content(content):

@@ -1,4 +1,5 @@
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,6 +21,14 @@ from penhin.tools.task_state import TaskStatusManager
 from penhin.tools import TOOL_SPECS
 from penhin.tools.builtin import tasks as task_tools
 from penhin.tools.builtin.plans import write_plan
+
+
+@contextmanager
+def mocked_orchestration_service(message: str):
+    with patch("penhin.orchestration.service.orchestration_service_from_env") as factory:
+        run_job = factory.return_value.run_job
+        run_job.return_value = Result.success(message)
+        yield run_job
 
 
 class FakeResponse:
@@ -293,7 +302,7 @@ def test_task_tool_exposes_limited_agent_types() -> None:
 
 
 def test_run_task_uses_general_subagent() -> None:
-    with patch("penhin.orchestration.service.run_recorded_subagent", return_value=Result.success("ok")) as mocked_run_subagent:
+    with mocked_orchestration_service("ok") as mocked_run_subagent:
         result = task_tools.run_task("inspect work")
 
     assert result.ok is True
@@ -301,7 +310,7 @@ def test_run_task_uses_general_subagent() -> None:
 
 
 def test_run_task_uses_requested_subagent_type() -> None:
-    with patch("penhin.orchestration.service.run_recorded_subagent", return_value=Result.success("ok")) as mocked_run_subagent:
+    with mocked_orchestration_service("ok") as mocked_run_subagent:
         result = task_tools.run_task("inspect work", agent_type="explore")
 
     assert result.ok is True
@@ -312,7 +321,7 @@ def test_task_tool_handler_uses_general_subagent() -> None:
     handler = TOOL_SPECS["task"].handler
     assert handler is not None
 
-    with patch("penhin.orchestration.service.run_recorded_subagent", return_value=Result.success("ok")) as mocked_run_subagent:
+    with mocked_orchestration_service("ok") as mocked_run_subagent:
         result = handler(task="inspect work")
 
     assert result.ok is True
@@ -323,7 +332,7 @@ def test_task_tool_handler_uses_requested_subagent_type() -> None:
     handler = TOOL_SPECS["task"].handler
     assert handler is not None
 
-    with patch("penhin.orchestration.service.run_recorded_subagent", return_value=Result.success("ok")) as mocked_run_subagent:
+    with mocked_orchestration_service("ok") as mocked_run_subagent:
         result = handler(task="inspect work", agent_type="explore")
 
     assert result.ok is True
@@ -331,7 +340,7 @@ def test_task_tool_handler_uses_requested_subagent_type() -> None:
 
 
 def test_run_verify_uses_verification_subagent() -> None:
-    with patch("penhin.orchestration.service.run_recorded_subagent", return_value=Result.success("verified")) as mocked_run_subagent:
+    with mocked_orchestration_service("verified") as mocked_run_subagent:
         result = task_tools.run_verify(
             goal="add verification tool",
             plan="wire tool registry",
@@ -353,7 +362,7 @@ def test_verify_tool_handler_uses_verification_subagent() -> None:
     handler = TOOL_SPECS["verify"].handler
     assert handler is not None
 
-    with patch("penhin.orchestration.service.run_recorded_subagent", return_value=Result.success("verified")) as mocked_run_subagent:
+    with mocked_orchestration_service("verified") as mocked_run_subagent:
         result = handler(goal="finish work", test_hint="run smoke")
 
     assert result.ok is True
@@ -371,7 +380,7 @@ def test_run_verify_loads_current_task_plan_slug() -> None:
         task_tools.task_status = manager
         manager.start("verify work", plan_slug=slug)
 
-        with patch("penhin.orchestration.service.run_recorded_subagent", return_value=Result.success("verified")) as mocked_run_subagent:
+        with mocked_orchestration_service("verified") as mocked_run_subagent:
             result = task_tools.run_verify(goal="confirm verification")
 
         prompt = mocked_run_subagent.call_args.args[0]
@@ -399,7 +408,7 @@ def test_run_verify_loads_explicit_plan_slug() -> None:
         task_tools.task_status = manager
         manager.start("verify work", plan_slug="different-current-plan")
 
-        with patch("penhin.orchestration.service.run_recorded_subagent", return_value=Result.success("verified")) as mocked_run_subagent:
+        with mocked_orchestration_service("verified") as mocked_run_subagent:
             result = task_tools.run_verify(
                 goal="confirm verification",
                 plan_slug=slug,
@@ -428,7 +437,7 @@ def test_run_verify_explicit_plan_overrides_current_task_plan_slug() -> None:
         task_tools.task_status = manager
         manager.start("verify work", plan_slug=slug)
 
-        with patch("penhin.orchestration.service.run_recorded_subagent", return_value=Result.success("verified")) as mocked_run_subagent:
+        with mocked_orchestration_service("verified") as mocked_run_subagent:
             result = task_tools.run_verify(
                 goal="confirm verification",
                 plan="explicit plan wins",

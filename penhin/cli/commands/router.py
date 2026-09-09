@@ -4,6 +4,7 @@ from prompt_toolkit.completion import Completer, Completion
 
 from penhin.agent.context import RunContext
 from penhin.cli import ui
+from penhin.plugins.contributions import PluginContributions
 
 from .auth import COMMANDS as AUTH_COMMANDS
 from .permissions import COMMANDS as PERMISSION_COMMANDS
@@ -11,12 +12,18 @@ from .runtime import COMMANDS as RUNTIME_COMMANDS
 from .session import COMMANDS as SESSION_COMMANDS
 from .types import CommandSpec
 from .workspace import COMMANDS as WORKSPACE_COMMANDS
+from .types import CommandSpec
+from .plugins import handle_plugin_command
 
 
 class CommandRouter:
     """The only public dispatcher for interactive slash commands."""
 
-    def __init__(self, commands: tuple[CommandSpec, ...] | None = None):
+    def __init__(
+        self,
+        commands: tuple[CommandSpec, ...] | None = None,
+        contributions: PluginContributions | None = None,
+    ):
         registered = commands or (
             *WORKSPACE_COMMANDS,
             *PERMISSION_COMMANDS,
@@ -24,12 +31,28 @@ class CommandRouter:
             *RUNTIME_COMMANDS,
             *AUTH_COMMANDS,
             *SESSION_COMMANDS,
+            CommandSpec("/plugin", "Manage and activate plugins for this session", handle_plugin_command),
         )
+        if contributions is not None:
+            existing_names = {command.name for command in registered}
+            conflicting = existing_names & set(contributions.commands)
+            if conflicting:
+                raise ValueError(f"Plugin commands cannot replace existing commands: {sorted(conflicting)}")
+            registered = (*registered, *(
+                CommandSpec(
+                    command.name, command.description,
+                    lambda args, _context, command=command: ui.print_info(command.handler(args).message),
+                )
+                for command in contributions.commands.values()
+            ))
         self._commands = {command.name: command for command in registered}
 
     @property
     def command_names(self) -> tuple[str, ...]:
         return tuple(self._commands)
+
+    def command_description(self, name: str) -> str:
+        return self._commands[name].description
 
     def dispatch(self, text: str, context: RunContext | None = None) -> bool:
         if not text.startswith("/"):
@@ -57,7 +80,12 @@ class LocalCommandCompleter(Completer):
             return
         for name in self._router.command_names:
             if name.startswith(text):
-                yield Completion(name, start_position=-len(text))
+                yield Completion(
+                    name,
+                    start_position=-len(text),
+                    display=f"{name:<18}",
+                    display_meta=self._router.command_description(name),
+                )
 
 
 _router = CommandRouter()

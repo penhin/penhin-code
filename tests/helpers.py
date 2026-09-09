@@ -10,7 +10,7 @@ from penhin.tools import TOOL_SPECS
 def run_spec_tool(tool_name: str, **kwargs) -> Result:
     handler = TOOL_SPECS[tool_name].handler
     assert handler is not None
-    return handler(**kwargs)
+    return handler(**kwargs).result
 
 
 class ToolUseBlock:

@@ -16,6 +16,19 @@ class ToolCategory(Enum):
 ToolInput = dict[str, Any]
 ToolSchema = dict[str, Any]
 ApprovalKey = Callable[[ToolInput], str]
+ToolHandler = Callable[..., "ToolOutcome"]
+
+
+@dataclass(frozen=True)
+class ToolEffect:
+    kind: str
+    payload: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ToolOutcome:
+    result: Result
+    effects: tuple[ToolEffect, ...] = ()
 
 
 @dataclass
@@ -35,12 +48,11 @@ class ToolSpec:
     description: str
     input_schema: ToolSchema
     category: ToolCategory
-    handler: Callable[..., Result] | None
+    handler: ToolHandler | None
     parallel_safe: bool = False
     available_to_child: bool = True
     available_to_parent: bool = True
     approval: ToolApproval = field(default_factory=ToolApproval)
-
 
 def tool_schema(spec: ToolSpec) -> ToolSchema:
     return {

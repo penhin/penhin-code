@@ -168,9 +168,8 @@ def restore_tool_logs(handler, logger, original_level, original_propagate) -> No
 def test_tool_runtime_logs_result_status() -> None:
     stream, handler, logger, original_level, original_propagate = capture_tool_logs()
     try:
-        with patch.object(
-            tool_runtime,
-            "execute_tool",
+        with patch(
+                "penhin.tools.execution.invocation.ToolInvocation.apply_outcome",
             return_value=ToolRun(Result.failure("broken", code="tool_error")),
         ):
             result = run_tool("workspace", {}, PermissionPolicy(allow={"workspace"}, deny=set()))
@@ -195,9 +194,8 @@ def test_tool_runtime_logs_result_status() -> None:
 def test_tool_runtime_logs_input_summary() -> None:
     stream, handler, logger, original_level, original_propagate = capture_tool_logs()
     try:
-        with patch.object(
-            tool_runtime,
-            "execute_tool",
+        with patch(
+                "penhin.tools.execution.invocation.ToolInvocation.apply_outcome",
             return_value=ToolRun(Result.success("ok")),
         ):
             result = run_tool(
@@ -327,9 +325,8 @@ def test_tool_runtime_reports_invalid_enum_value() -> None:
 def test_tool_runtime_logs_unknown_input_fields_without_blocking() -> None:
     stream, handler, logger, original_level, original_propagate = capture_tool_logs()
     try:
-        with patch.object(
-            tool_runtime,
-            "execute_tool",
+        with patch(
+                "penhin.tools.execution.invocation.ToolInvocation.apply_outcome",
             return_value=ToolRun(Result.success("ok")),
         ):
             result = run_tool(

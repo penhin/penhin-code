@@ -7,12 +7,12 @@ from penhin.tools.builtin.plans import read_plan
 
 
 def run_task(task: str, agent_type: str = "general") -> Result:
-    from penhin.orchestration.service import run_recorded_subagent
+    from penhin.orchestration.service import orchestration_service_from_env
     current = current_running_task()
     root_task_id = str(current.get("orchestration_job_id", "")) if current else None
     if root_task_id:
-        return run_recorded_subagent(task, agent_type=agent_type, root_task_id=root_task_id)
-    return run_recorded_subagent(task, agent_type=agent_type)
+        return orchestration_service_from_env().run_job(task, agent_type=agent_type, root_task_id=root_task_id)
+    return orchestration_service_from_env().run_job(task, agent_type=agent_type)
 
 
 def run_verify(
@@ -22,7 +22,7 @@ def run_verify(
     changes: str = "",
     test_hint: str = "",
 ) -> Result:
-    from penhin.orchestration.service import run_recorded_subagent
+    from penhin.orchestration.service import orchestration_service_from_env
 
     plan_content = plan.strip()
     linked_task = current_running_task()
@@ -52,11 +52,11 @@ def run_verify(
     )
     root_task_id = str(linked_task.get("orchestration_job_id", "")) if linked_task else None
     if root_task_id:
-        result = run_recorded_subagent(
+        result = orchestration_service_from_env().run_job(
             "\n\n".join(sections), agent_type="verification", root_task_id=root_task_id,
         )
     else:
-        result = run_recorded_subagent("\n\n".join(sections), agent_type="verification")
+        result = orchestration_service_from_env().run_job("\n\n".join(sections), agent_type="verification")
     if result.ok and linked_task and linked_plan_slug and plan_content:
         task_status.mark_plan_verified(int(linked_task["id"]), linked_plan_slug)
     return result
@@ -89,10 +89,10 @@ def run_task_start(
     orchestration_job_id = ""
     try:
         from penhin.auth.secrets import redact_text
-        from penhin.orchestration.service import repository_from_env
+        from penhin.orchestration.service import orchestration_service_from_env
         from penhin.orchestration.models import JobStatus
 
-        repository = repository_from_env()
+        repository = orchestration_service_from_env().repository
         if repository is not None:
             root_job = repository.create_root_job(
                 redact_text(subject), redact_text(description or subject), status=JobStatus.SUCCEEDED,

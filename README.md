@@ -1,97 +1,68 @@
 # Penhin Code
 
-Penhin Code 是一个在本地项目中运行的命令行 coding agent，支持会话恢复、文件与 Shell 工具、子 Agent 和多 Agent 任务编排。
-
-## 安装
-
-推荐使用 `pipx`：
-
-```bash
-pipx install penhin-code
-```
-
-也可以从源码安装：
-
-```bash
-git clone https://github.com/penhin/penhin-code.git
-cd penhin-code
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install -e .
-```
+Penhin 是在本地项目目录中运行的命令行 coding agent。它可以读取和修改文件、运行命令，并把会话保存在当前项目中。
 
 ## 开始使用
 
-在要处理的项目目录运行：
+安装后，进入你想处理的项目目录，直接运行：
 
-```bash
+```powershell
 penhin
 ```
 
-首次启动后执行 `/login`。Penhin 会先让你选择认证方式，再显示可用的 Provider：
-
-- API key：Anthropic、OpenAI、Gemini 或 DeepSeek。
-- Account：Claude Pro/Max 或 ChatGPT Plus/Pro，属于实验性 OAuth 支持。
-
-凭证优先保存到系统钥匙串。系统钥匙串不可用时，Penhin 会询问是否改用权限为 `0600` 的本地凭证文件，不会静默降级。认证成功后会列出该 Provider 的兼容模型，选择结果保存在用户配置中。
-
-支持的 Provider 为 `anthropic`、`openai`、`openai-codex`、`gemini` 和 `deepseek`。
-
-## 常用操作
+首次使用时输入 `/login`，按提示选择 Provider 并登录。随后直接描述你的需求即可：
 
 ```text
-/login [provider]              登录或保存 API key
-/logout [provider]             删除 Penhin 保存的凭证
-/auth status                   查看认证状态和来源
-/provider <provider> [model]   切换 Provider
-/model [provider/model]        选择模型；不带参数时打开列表
-/thinking [off|high|max]       调整当前模型的思考等级
-/status                        查看当前状态
-/session                       查看当前会话、文件和活动叶节点
-/tree [entry-id]               查看会话树，或从历史节点继续形成分支
-/fork [entry-id]               从当前或指定节点派生独立会话
-/rename <name>                 设置当前会话名称
-/permission <mode>             切换权限模式
-/compact                       压缩当前会话上下文
-/help                          查看全部本地命令
+帮我理解这个项目的结构，并找出测试入口。
 ```
 
-例如选择 DeepSeek Pro，或同时指定思考等级：
+一次性执行而不进入交互界面：
+
+```powershell
+penhin --once "解释这个项目的主要模块"
+```
+
+## 安装
+
+推荐通过 pip 安装：
+
+```powershell
+python -m pip install --user penhin-code
+```
+
+如果从源码运行，克隆后在仓库根目录执行：
+
+```powershell
+python -m pip install --user -e .
+```
+
+重新打开终端后即可使用 `penhin`。如果 Windows 提示找不到命令，请将 Python 用户 Scripts 目录加入 `PATH`。
+
+## 常用命令
 
 ```text
-/model deepseek/deepseek-v4-pro
-/model deepseek/deepseek-v4-pro:max
+/login                 登录或保存 API Key
+/logout                删除已保存的凭据
+/auth status           查看认证状态
+/model                 选择模型
+/permission <mode>     调整工具执行权限
+/status                查看当前会话状态
+/help                  查看全部本地命令
 ```
 
-单次执行或开启新会话：
+Penhin 默认会恢复最近的会话。使用 `penhin --new` 可开始新会话，使用 `penhin --sessions` 可查看已有会话。
 
-```bash
-penhin --once "解释这个项目"
-penhin --new
+## 验证安装
+
+```powershell
+penhin --version
+penhin --quality-gate
 ```
 
-Penhin 默认恢复最近一次会话。会话使用 append-only JSONL 保存，每条记录通过 `id`/`parentId` 组成分支树；`/tree` 可以回到历史节点并从那里继续，旧分支不会被删除。`/fork` 会把选中的上下文路径复制为一个独立会话。
+需要运行内置评测时：
 
-子 Agent 会使用隔离的 Git worktree；如果需要它读取当前修改，请先提交这些修改。
-
-## 权限与本地数据
-
-权限模式包括交互确认、自动审查和完全访问。建议从默认模式开始，只在可信项目中扩大权限。
-
-本地会话、任务和编排数据保存在 `.penhin/` 和 `.tasks/`。这些目录不会作为项目源码提交。多 Agent 默认使用本地 SQLite；需要 PostgreSQL 时安装：
-
-```bash
-python -m pip install "penhin-code[postgres]"
-```
-
-然后设置 `PENHIN_DATABASE_URL`。
-
-## Agent 评测
-
-验证内置评测任务：
-
-```bash
+```powershell
 penhin-eval validate --suite baseline-v1
 ```
 
-完整评测、预算和报告说明见 [docs/evaluation.md](docs/evaluation.md)。版本变化见 [CHANGELOG.md](CHANGELOG.md)。项目采用 [MIT License](LICENSE)。
+更多评测选项见 [docs/evaluation.md](docs/evaluation.md)。

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import os
-import resource
 from dataclasses import dataclass
 from pathlib import Path
+
+try:
+    import resource
+except ModuleNotFoundError:  # Windows has no POSIX resource module.
+    resource = None
 
 
 @dataclass(frozen=True)
@@ -30,8 +34,9 @@ def process_snapshot() -> ProcessSnapshot:
         rss_bytes = rss_pages * os.sysconf("SC_PAGE_SIZE")
     except (FileNotFoundError, IndexError, OSError, ValueError):
         # macOS reports bytes while Linux reports KiB for ru_maxrss.
-        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        rss_bytes = peak if os.uname().sysname == "Darwin" else peak * 1024
+        if resource is not None:
+            peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            rss_bytes = peak if os.name == "posix" and os.uname().sysname == "Darwin" else peak * 1024
     return ProcessSnapshot(pid=os.getpid(), rss_bytes=rss_bytes)
 
 

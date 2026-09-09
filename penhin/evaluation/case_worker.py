@@ -54,14 +54,17 @@ def run_child(case: EvaluationCase) -> Result:
 def run_multi_agent(case: EvaluationCase) -> Result:
     from penhin.orchestration.models import TERMINAL_JOB_STATUSES, AgentRole, Artifact, JobStatus
     from penhin.orchestration.planning import validate_dag_plan
-    from penhin.orchestration.service import create_dag_plan, finalize_dag, materialize_dag_plan, repository_from_env, scheduler_from_env, wait_for_job
+    from penhin.orchestration.service import orchestration_service_from_env
+    service = orchestration_service_from_env()
     if case.orchestration_plan is None:
-        planned = create_dag_plan(case.prompt)
+        planned = service.plan(case.prompt)
     else:
         errors = validate_dag_plan(case.orchestration_plan)
         if errors:
             return Result.failure("Invalid fixture orchestration plan", code="invalid_fixture_plan", errors=errors)
-        repository = repository_from_env()
+        repository = service.repository
+        if repository is None:
+            return Result.failure("Orchestration storage is unavailable", code="orchestration_unavailable")
         planner = repository.create_root_job("Evaluation fixture plan", case.prompt, AgentRole.PLANNER)
         attempt = repository.start_attempt(planner.id, model="evaluation-fixture")
         artifact = Artifact(
@@ -71,8 +74,7 @@ def run_multi_agent(case: EvaluationCase) -> Result:
         repository.finish_attempt(attempt.id, JobStatus.SUCCEEDED, artifact=artifact, terminal_reason="fixture_materialized")
         root_task_id = planner.id
         emit("orchestration_plan_started", root_task_id=root_task_id, planner_job_id=planner.id, plan_source="evaluation_fixture")
-        data = materialize_dag_plan(repository, planner.id, case.orchestration_plan)
-        scheduler_from_env().dispatch()
+        data = service.submit(planner.id, case.orchestration_plan)
         emit(
             "orchestration_plan_validated", root_task_id=root_task_id,
             job_count=len(case.orchestration_plan["jobs"]), plan_source="evaluation_fixture",
@@ -80,7 +82,9 @@ def run_multi_agent(case: EvaluationCase) -> Result:
         planned = Result.success(json.dumps(data, ensure_ascii=False), data=data)
     if not planned.ok:
         return planned
-    repository = repository_from_env()
+    repository = service.repository
+    if repository is None:
+        return Result.failure("Orchestration storage is unavailable", code="orchestration_unavailable")
     if case.scenario in {"invalid_artifact", "timeout_cancel"}:
         deadline = time.monotonic() + min(case.timeout_seconds, 120)
         while time.monotonic() < deadline:
@@ -91,10 +95,9 @@ def run_multi_agent(case: EvaluationCase) -> Result:
                 else [job for job in jobs if job.status == JobStatus.TIMED_OUT]
             )
             if expected:
-                scheduler = scheduler_from_env()
                 for job in jobs:
                     if job.status not in TERMINAL_JOB_STATUSES:
-                        scheduler.request_cancel(job.id)
+                        service.scheduler.request_cancel(job.id)
                 terminal = [repository.get_job(job.id).to_dict() for job in jobs]
                 return Result.success(
                     json.dumps({"fault": case.scenario, "terminal_jobs": terminal}, ensure_ascii=False),
@@ -107,7 +110,7 @@ def run_multi_agent(case: EvaluationCase) -> Result:
     final_jobs = []
     final_artifact_ids = []
     for job_id in planned.data["final_job_ids"]:
-        outcome = wait_for_job(repository, job_id, case.timeout_seconds)
+        outcome = service.await_graph([job_id], case.timeout_seconds)
         if not outcome.ok:
             if case.scenario == "integration_conflict":
                 jobs = repository.list_jobs(planned.data["root_task_id"])
@@ -119,13 +122,12 @@ def run_multi_agent(case: EvaluationCase) -> Result:
                         evaluation_worktree=str(Path.cwd()), recovery_outcome="integration_conflict_detected",
                     )
             return outcome
-        summaries.append(outcome.data["artifact"].content.get("summary", ""))
-        final_jobs.append(outcome.data["job"])
-        final_artifact_ids.append(outcome.data["artifact"].id)
+        completed = outcome.data[0]
+        summaries.append(completed["artifact"].content.get("summary", ""))
+        final_jobs.append(completed["job"])
+        final_artifact_ids.append(completed["artifact"].id)
     verification_command = list(case.commands[0].command) if case.commands else None
-    integration = finalize_dag(
-        repository, planned.data["root_task_id"], planned.data["final_job_ids"], verification_command,
-    )
+    integration = service.finalize(planned.data["root_task_id"], planned.data["final_job_ids"], verification_command)
     if not integration.ok:
         return integration
     evaluation_worktree = integration.data["worktree_path"]

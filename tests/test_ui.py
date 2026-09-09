@@ -1,6 +1,60 @@
 import pytest
+from unicodedata import east_asian_width
 
 from penhin.cli import ui
+
+
+def test_full_screen_transcript_keeps_structured_message_cards() -> None:
+    terminal = ui.Transcript()
+
+    terminal.add_message("user", "You", "Explain the change")
+    stream = terminal.start_stream("DeepSeek")
+    stream.write("I found the cause")
+    stream.write(" in the terminal renderer.")
+    stream.finish(tokens=42)
+    terminal.add_message("system", "System", "Target changed")
+
+    assert [(card.kind, card.name, card.content) for card in terminal.cards] == [
+        ("user", "You", "Explain the change"),
+        ("agent", "DeepSeek", "I found the cause in the terminal renderer."),
+        ("system", "System", "Target changed"),
+    ]
+    assert terminal.cards[1].tokens == 42
+    assert terminal.cards[1].color == "#3b82f6"
+
+
+def test_full_screen_transcript_uses_provider_identity_colours() -> None:
+    terminal = ui.Transcript()
+
+    assert terminal.message_color("ChatGPT") == "#f8fafc"
+    assert terminal.message_color("Claude Code") == "#f97316"
+    assert terminal.message_color("Custom Agent") == terminal.message_color("Custom Agent")
+
+
+def test_command_surface_filters_choices_without_mutating_transcript() -> None:
+    surface = ui.SelectionSurface(
+        "Choose a model",
+        (("openai/gpt-5.6", "OpenAI - GPT-5.6"), ("deepseek/deepseek-v4", "DeepSeek - V4")),
+        ui.Queue(maxsize=1),
+        scroll_position=7,
+    )
+
+    assert surface.matching_options("deep") == [("deepseek/deepseek-v4", "DeepSeek - V4")]
+    assert surface.scroll_position == 7
+
+
+def test_card_renderer_closes_a_rectangular_border() -> None:
+    transcript = ui.Transcript()
+    transcript.add_message("agent", "ChatGPT", "你好！有什么我可以帮你的吗？", tokens=2371)
+
+    rendered = "".join(text for _style, text in transcript.formatted())
+    lines = [line for line in rendered.splitlines() if line]
+
+    display_width = lambda line: sum(2 if east_asian_width(character) in {"F", "W"} else 1 for character in line)
+    assert len({display_width(line) for line in lines}) == 1
+    assert lines[0].startswith("╭") and lines[0].endswith("╮")
+    assert all(line.startswith("│") and line.endswith("│") for line in lines[1:-1])
+    assert lines[-1].startswith("╰") and lines[-1].endswith("╯")
 
 
 def test_secret_prompt_interruption_does_not_mask_later_input(monkeypatch) -> None:

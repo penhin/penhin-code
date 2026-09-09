@@ -4,6 +4,8 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from penhin.tools import CHILD_TOOLS, PARENT_TOOLS, TOOL_SPECS, ToolCategory
@@ -17,8 +19,16 @@ from penhin.tools.builtin.orchestration import (
 from penhin.tools.builtin.shell import command_escapes_workspace, command_is_dangerous, command_references_ignored_path, run_bash
 from penhin.orchestration.models import AgentJob, AgentRole, Artifact
 from penhin.result import Result
+from penhin.tools.task_state import TaskStatusManager
+from penhin.tools.builtin import tasks as task_tools
 
 from tests.helpers import run_spec_tool
+
+
+@pytest.fixture(autouse=True)
+def isolated_task_status(tmp_path, monkeypatch):
+    """Keep task-tool tests independent of any persisted local `.tasks` state."""
+    monkeypatch.setattr(task_tools, "task_status", TaskStatusManager(tmp_path / "tasks"))
 
 
 def test_agent_job_start_returns_persistent_uuid_and_preserves_root() -> None:
@@ -30,22 +40,23 @@ def test_agent_job_start_returns_persistent_uuid_and_preserves_root() -> None:
         subject="verify release",
         instruction="verify release",
     )
-    with patch("penhin.tools.builtin.orchestration.enqueue_subagent_job", return_value=job) as enqueue:
+    with patch("penhin.tools.builtin.orchestration.orchestration_service_from_env") as factory:
+        factory.return_value.start_job.return_value = job
         result = run_agent_job_start("verify release", "verification", "root-uuid")
 
     assert result.ok is True
     assert result.data["id"] == "job-uuid"
     assert result.data["root_task_id"] == "root-uuid"
-    enqueue.assert_called_once_with("verify release", agent_type="verification", root_task_id="root-uuid")
+    factory.return_value.start_job.assert_called_once_with("verify release", agent_type="verification", root_task_id="root-uuid")
 
 
 def test_agent_job_start_validates_role_before_scheduling() -> None:
-    with patch("penhin.tools.builtin.orchestration.enqueue_subagent_job") as enqueue:
+    with patch("penhin.tools.builtin.orchestration.orchestration_service_from_env") as factory:
         result = run_agent_job_start("inspect", "review")
 
     assert result.ok is False
     assert result.meta["code"] == "unknown_agent_type"
-    enqueue.assert_not_called()
+    factory.assert_not_called()
 
 
 def test_agent_job_query_wait_and_cancel_use_persistent_state() -> None:
@@ -59,12 +70,13 @@ def test_agent_job_query_wait_and_cancel_use_persistent_state() -> None:
         "list_jobs": lambda self, root, status: [job],
     })()
     scheduler = type("Scheduler", (), {"request_cancel": lambda self, _id: job})()
-    wait_result = Result.success("done", data={"job": job.to_dict(), "artifact": artifact})
+    wait_result = Result.success("done", data=[{"job": job.to_dict(), "artifact": artifact}])
     with (
         patch("penhin.tools.builtin.orchestration._repository_or_failure", return_value=(repository, None)),
-        patch("penhin.tools.builtin.orchestration.scheduler_from_env", return_value=scheduler),
-        patch("penhin.tools.builtin.orchestration.wait_for_job", return_value=wait_result),
+        patch("penhin.tools.builtin.orchestration.orchestration_service_from_env") as factory,
     ):
+        factory.return_value.scheduler = scheduler
+        factory.return_value.await_graph.return_value = wait_result
         shown = run_agent_job_show(job.id)
         listed = run_agent_job_list("root-uuid", "queued")
         waited = run_agent_job_wait(job.id, 5)
@@ -394,8 +406,8 @@ def test_tool_schemas_match_handlers() -> None:
     assert "task" in handler_names
     assert "task_start" in handler_names
     assert "task_show" in handler_names
-    assert "compact" not in handler_names
-    assert "snip" not in handler_names
+    assert "compact" in handler_names
+    assert "snip" in handler_names
 
 
 def test_tool_specs_have_one_category() -> None:
@@ -436,7 +448,7 @@ def test_compact_tool_is_parent_only() -> None:
 
     assert "compact" in parent_tool_names
     assert "compact" not in child_tool_names
-    assert TOOL_SPECS["compact"].handler is None
+    assert TOOL_SPECS["compact"].handler is not None
 
 
 def test_snip_tool_is_parent_only() -> None:
@@ -445,7 +457,7 @@ def test_snip_tool_is_parent_only() -> None:
 
     assert "snip" in parent_tool_names
     assert "snip" not in child_tool_names
-    assert TOOL_SPECS["snip"].handler is None
+    assert TOOL_SPECS["snip"].handler is not None
 
 
 def test_plan_mode_tools_are_registered() -> None:

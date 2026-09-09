@@ -5,18 +5,22 @@ import logging
 import os
 import sys
 import time
+from threading import Thread
 
 from penhin.agent.loop import agent_loop, run_once
 from penhin.cli.commands import handle_local_command, setup_command_completion
 from penhin.infrastructure.config import get_permission_mode, get_version
 from penhin.agent.context import RunContext
-from penhin.permissions import normalize_permission_mode
+from penhin.permissions import PERMISSION_CYCLE, normalize_permission_mode
 from penhin.runtime import AuthenticationRequired, runtime_manager
+from penhin.plugins.bootstrap import plugin_runtime_for_session
 from penhin.tools.execution import runtime_permission_setup
 from penhin.tools.registry import tool_names
 from penhin.tools.builtin.workspace import workspace_info
-from penhin.agent.session_store import sessions
-from penhin.cli.ui import print_error, print_info, print_user_message, print_welcome, prompt_input
+from penhin.agent.transcript import transcripts
+from penhin.cli import ui
+from penhin.cli.prompt_queue import PromptQueue
+from penhin.cli.ui import print_error, print_info, print_user_message, print_welcome
 from penhin.infrastructure.quality_gate import run_quality_gate
 
 
@@ -102,13 +106,11 @@ def main() -> None:
         return
     
     if args.new:
-        session_manager = sessions.new()
+        messages, session_path = transcripts.load_session(resume=False)
     elif args.resume:
-        session_manager = sessions.resume(args.resume)
+        messages, session_path = transcripts.load_session(resume=True, session_ref=args.resume)
     else:
-        session_manager = sessions.resume()
-    messages = session_manager.build_context()
-    session_path = session_manager.path
+        messages, session_path = transcripts.load_session(resume=True)
 
     command_completer = setup_command_completion()
     permission_mode = get_permission_mode()
@@ -124,45 +126,66 @@ def main() -> None:
         policy=policy,
         approval=approval,
         session_path=session_path,
-        session_manager=session_manager,
     )
+    context.plugin_runtime = plugin_runtime_for_session()
     workspace = workspace_info()
     provider = runtime_manager.configured_provider()
     api_label = {"anthropic": "Anthropic API", "openai": "OpenAI API", "openai-codex": "OpenAI ChatGPT Plus/Pro", "gemini": "Gemini API", "deepseek": "DeepSeek API"}.get(provider, provider or "Configured API")
+    pending = PromptQueue()
+
+    def run_pending_prompts() -> None:
+        while (prompt := pending.next()) is not None:
+            context.add_user_message(prompt)
+            try:
+                agent_loop(context)
+            except AuthenticationRequired as error:
+                print_error(str(error))
+            finally:
+                context.session_path = transcripts.save_session(context.session_path, context.messages)
+
+    terminal = None
+
+    def submit_input(user_input: str) -> None:
+        nonlocal terminal
+        if user_input in {"q", "quit", "exit"}:
+            if terminal is not None:
+                terminal.app.exit()
+            return
+        if user_input.startswith("/"):
+            def run_local_command() -> None:
+                print_info("")
+                handle_local_command(user_input, context)
+                print_info("")
+
+            Thread(target=run_local_command, name="penhin-command", daemon=True).start()
+            return
+        print_user_message(user_input)
+        pending.submit(user_input)
+
+    def cycle_permission() -> None:
+        current = get_permission_mode()
+        next_mode = PERMISSION_CYCLE[(PERMISSION_CYCLE.index(current) + 1) % len(PERMISSION_CYCLE)] if current in PERMISSION_CYCLE else PERMISSION_CYCLE[0]
+        handle_local_command(f"/permission {next_mode}", context)
+
+    terminal = ui.TerminalInterface(submit_input, completer=command_completer, cycle_permission=cycle_permission)
+    ui.restore_queued_prompts = pending.restore_all
+    ui.activate_terminal(terminal, context, pending)
     print_welcome(
         version=get_version(),
         api=api_label,
         model=runtime_manager.current().model if runtime_manager.available() else "not configured",
         workspace=str(workspace.get("cwd", ".")),
     )
-
-    while True:
-        try:
-            user_input = prompt_input(completer=command_completer).strip()
-            
-            if user_input.startswith("/"):
-                print_info("")
-                handled = handle_local_command(user_input, context)
-                if handled:
-                    print_info("")
-                    continue
-        except (EOFError, KeyboardInterrupt):
-            logger.info("")
-            break
-
-        if user_input in {"", "q", "quit", "exit"}:
-            break
-
-        context.add_user_message(user_input)
-        print_user_message(user_input)
-        try:
-            agent_loop(context)
-        except AuthenticationRequired as error:
-            print_error(str(error))
-            continue
-        assert context.session_manager is not None
-        context.session_manager.sync_messages(context.messages)
-        context.session_path = context.session_manager.path
+    worker = Thread(target=run_pending_prompts, name="penhin-agent", daemon=True)
+    worker.start()
+    try:
+        terminal.run()
+    finally:
+        pending.close()
+        worker.join(timeout=1)
+        ui.restore_queued_prompts = None
+        ui.deactivate_terminal()
+        context.plugin_runtime.close()
 
 
 def run_cli() -> int:
@@ -175,30 +198,30 @@ def run_cli() -> int:
 
 
 def print_session_list() -> None:
-    session_summaries = sorted(
-        sessions.list(),
+    sessions = sorted(
+        transcripts.list(),
         key=lambda session: session.updated_at,
         reverse=True
     )
-    if not session_summaries:
+    if not sessions:
         print("No sessions found.")
         return
 
-    latest_path = sessions.latest()
-    print("mark | id | updated | msgs | title")
-    for session in session_summaries:
+    latest_path = transcripts.latest()
+    print("mark | id | updated | msgs | request")
+    for session in sessions:
         updated = time.strftime(
             "%Y-%m-%d %H:%M:%S",
             time.localtime(session.updated_at),
         )
-        first_user = session.name or session.first_user or "-"
+        first_user = session.first_user or "-"
         mark = "*" if latest_path is not None and session.path == latest_path else " "
         print(f"{mark} | {session.id[:12]} | {updated} | {session.message_count} | {first_user}")
 
 
 def print_session_inspect(session_ref: str, event_limit: int = 8) -> None:
     try:
-        session = sessions.inspect(session_ref, event_limit=event_limit)
+        session = transcripts.inspect(session_ref, event_limit=event_limit)
     except Exception as error:
         print(f"Session inspect failed: {error}")
         sys.exit(1)

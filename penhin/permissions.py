@@ -14,6 +14,7 @@ class PermissionMode(str, Enum):
 
 
 PERMISSION_MODES = {m.value for m in PermissionMode}
+PERMISSION_CYCLE = tuple(mode.value for mode in PermissionMode)
 
 
 VALID_TRANSITIONS: dict[PermissionMode, set[PermissionMode]] = {

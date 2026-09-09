@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 from unittest.mock import patch
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -12,6 +13,13 @@ from penhin.agent.session_manager import SessionManager
 from penhin.providers.protocols import LLMUsage
 from penhin.result import Result
 from penhin.tools.execution import ApprovalFlow, PermissionPolicy, ToolRun
+from penhin.tools.catalog import ToolCatalog
+from penhin.tools.registry import DEFAULT_TOOL_CATALOG
+
+
+@pytest.fixture(autouse=True)
+def isolated_project_instructions(tmp_path, monkeypatch):
+    monkeypatch.setattr("penhin.agent.prompts.USER_PROMPT_PATH", tmp_path / "AGENTS.md")
 
 
 def empty_policy() -> PermissionPolicy:
@@ -128,6 +136,18 @@ def test_agent_loop_updates_run_context_messages(tmp_path: Path) -> None:
     ]
 
 
+def test_agent_loop_sends_project_instructions_once(tmp_path) -> None:
+    (tmp_path / "AGENTS.md").write_text("Run smoke tests.", encoding="utf-8")
+    context = RunContext([{"role": "user", "content": "hello"}], empty_policy(), ApprovalFlow())
+    runtime = RecordingRuntime()
+    with patch("penhin.agent.loop.runtime_manager.current", return_value=runtime), patch("penhin.agent.loop.log_usage"):
+        agent.agent_loop(context)
+        agent.agent_loop(context)
+    expected = {"role": "user", "content": "<project_instructions>\nRun smoke tests.\n</project_instructions>"}
+    assert runtime.kwargs["messages"][0] == expected
+    assert context.messages.count(expected) == 1
+
+
 def test_agent_loop_prepares_context_before_llm_call() -> None:
     context = RunContext(
         messages=[{"role": "user", "content": "hello"}],
@@ -195,6 +215,25 @@ def test_call_llm_uses_run_context_messages() -> None:
     assert runtime.kwargs["max_tokens"] == 123
     assert runtime.kwargs["tools"] is agent.PARENT_TOOLS
     assert isinstance(runtime.kwargs["system"], str)
+
+
+def test_agent_dependencies_read_a_fresh_catalog_before_each_model_turn() -> None:
+    context = RunContext(
+        messages=[{"role": "user", "content": "hello"}],
+        policy=empty_policy(),
+        approval=ApprovalFlow.require_confirmation(set()),
+    )
+    runtime = RecordingRuntime()
+    catalogs = [DEFAULT_TOOL_CATALOG, ToolCatalog(())]
+    deps = agent.build_agent_deps(runtime, catalog_provider=lambda: catalogs.pop(0))
+
+    deps.call_llm(context)
+    first_tools = runtime.kwargs["tools"]
+    deps.call_llm(context)
+    second_tools = runtime.kwargs["tools"]
+
+    assert first_tools is agent.PARENT_TOOLS
+    assert second_tools == []
 
 
 def test_record_llm_response_updates_context_and_logs_usage() -> None:
@@ -327,7 +366,7 @@ def test_execute_tool_uses_returns_tool_results() -> None:
     )
     response = FakeResponse([FakeToolBlock(name="workspace", block_id="tool-1")], stop_reason="tool_use")
 
-    with patch("penhin.agent.messages.run_tool", return_value=ToolRun(Result.success("ok"))):
+    with patch("penhin.tools.execution.invocation.ToolInvocation.invoke", return_value=ToolRun(Result.success("ok"))):
         tool_results, manual_compact = agent.execute_tool_uses(context, response)
 
     assert manual_compact is False
@@ -348,7 +387,7 @@ def test_execute_tool_uses_caches_large_tool_result() -> None:
     response = FakeResponse([FakeToolBlock(name="workspace", block_id="tool-1")], stop_reason="tool_use")
     large_result = Result.success("x" * 3000)
 
-    with patch("penhin.agent.messages.run_tool", return_value=ToolRun(large_result)):
+    with patch("penhin.tools.execution.invocation.ToolInvocation.invoke", return_value=ToolRun(large_result)):
         tool_results, _ = agent.execute_tool_uses(context, response)
 
     assert tool_results[0]["cache_control"] == {"type": "ephemeral"}
@@ -372,7 +411,7 @@ def test_record_tool_results_updates_context_and_compacts() -> None:
         },
     ]
     mocked_compact.assert_not_called()
-    assert context.pending_force_compact_hint == ""
+    assert context.pending_force_compact_hint is None
 
 
 def test_compact_context_for_llm_consumes_pending_force_compact() -> None:

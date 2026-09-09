@@ -13,7 +13,7 @@ import pytest
 from penhin.orchestration.models import AgentJob, AgentRole, Artifact, IntegrationItem, IntegrationItemStatus, IntegrationRun, IntegrationRunStatus, JobStatus
 from penhin.orchestration.repositories.postgres_repository import PostgresOrchestrationRepository
 from penhin.orchestration.planning import DAG_PROTOCOL_VERSION, fallback_dag_plan, normalize_dag_plan, parse_dag_plan
-from penhin.orchestration.service import create_isolated_agent_job, implementation_jobs_for_final_outputs, materialize_dag_plan
+from penhin.orchestration.service import _create_isolated_agent_job, _implementation_jobs_for_final_outputs, _materialize_dag_plan
 from penhin.orchestration.worker import prepare_dependency_context
 from penhin.orchestration.worktrees import AgentWorktree
 from penhin.orchestration.artifacts import build_handoff
@@ -73,7 +73,7 @@ def test_postgres_rejects_invalid_terminal_transition(repository: PostgresOrches
 
 
 def test_isolated_agent_job_gets_own_worktree_and_branch(repository: PostgresOrchestrationRepository) -> None:
-    job = create_isolated_agent_job(repository, "inspect service boundaries", "explore")
+    job = _create_isolated_agent_job(repository, "inspect service boundaries", "explore")
     worktree = Path(job.worktree_path)
     try:
         assert job.workspace_mode == "readonly"
@@ -248,7 +248,7 @@ def test_finalization_selects_only_leaf_implementation_jobs() -> None:
         def get_artifact(self, artifact_id: str):
             return artifacts.get(artifact_id)
 
-    selected = implementation_jobs_for_final_outputs(Repository(), ["verify"])
+    selected = _implementation_jobs_for_final_outputs(Repository(), ["verify"])
     assert [job.id for job in selected] == ["second"]
 
 
@@ -265,7 +265,7 @@ def test_finalization_ignores_general_jobs_with_empty_change_sets() -> None:
         def get_artifact(self, artifact_id: str):
             return Artifact("artifact", "general", "agent_handoff.v1", {"change_set": {"commits": []}})
 
-    assert implementation_jobs_for_final_outputs(Repository(), ["general"]) == []
+    assert _implementation_jobs_for_final_outputs(Repository(), ["general"]) == []
 
 
 def test_materialized_dag_uses_persistent_dependency_ids(
@@ -286,7 +286,7 @@ def test_materialized_dag_uses_persistent_dependency_ids(
         "final_job_keys": ["implement"],
     }
 
-    materialized = materialize_dag_plan(repository, planner.id, plan)
+    materialized = _materialize_dag_plan(repository, planner.id, plan)
     inspect = repository.get_job(materialized["job_ids"]["inspect"])
     implement = repository.get_job(materialized["job_ids"]["implement"])
 

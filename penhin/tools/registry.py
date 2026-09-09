@@ -2,6 +2,8 @@ import hashlib
 import json
 from typing import Any
 
+from penhin.result import Result
+
 from penhin.orchestration.service import agent_types
 from penhin.skills import load_skill
 from .builtin import tasks as task_tools
@@ -21,10 +23,35 @@ from .builtin.orchestration import (
     run_integration_start,
     run_integration_verify,
 )
-from .builtin.plan_mode import run_enter_plan, run_exit_plan
 from .builtin.shell import run_bash
-from .types import ApprovalKey, ToolApproval, ToolCategory, ToolSchema, ToolSpec, tool_schema
+from .types import ApprovalKey, ToolApproval, ToolCategory, ToolSchema, ToolSpec as _ToolSpec, tool_schema
+from .types import ToolEffect, ToolOutcome
 from .builtin.workspace import run_workspace
+from .catalog import ToolCatalog
+
+
+def result_handler(handler):
+    """Explicitly adapt a Result-producing implementation at registration time."""
+    return lambda **kwargs: ToolOutcome(handler(**kwargs))
+
+
+def ToolSpec(*args, handler=None, **kwargs):
+    """Registry factory: ToolSpec itself only receives ToolOutcome handlers."""
+    if handler is not None:
+        handler = handler if getattr(handler, "_returns_tool_outcome", False) else result_handler(handler)
+    return _ToolSpec(*args, handler=handler, **kwargs)
+
+
+def declared_effects(*effects: ToolEffect):
+    def handler(**_kwargs):
+        return ToolOutcome(Result.success(), effects)
+    handler._returns_tool_outcome = True
+    return handler
+
+
+def outcome_handler(handler):
+    handler._returns_tool_outcome = True
+    return handler
 
 
 def _short_digest(value: Any) -> str:
@@ -110,7 +137,10 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         description="Summarize large context into compact memory representations and append a checkpoint to the active session.",
         input_schema=object_schema(),
         category=ToolCategory.agent,
-        handler=None,
+        handler=outcome_handler(lambda **_kwargs: ToolOutcome(
+            Result.success("Compacting conversation history now"),
+            (ToolEffect("compact_context", {}),),
+        )),
         parallel_safe=False,
         available_to_child=False,
         available_to_parent=True,
@@ -131,7 +161,10 @@ TOOL_SPECS: dict[str, ToolSpec] = {
             ["selectors"],
         ),
         category=ToolCategory.agent,
-        handler=None,
+        handler=outcome_handler(lambda **kwargs: ToolOutcome(
+            Result.success(),
+            (ToolEffect("snip_turns", {"selectors": kwargs["selectors"]}),),
+        )),
         parallel_safe=False,
         available_to_child=False,
         available_to_parent=True,
@@ -145,7 +178,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         ),
         input_schema=object_schema(),
         category=ToolCategory.state,
-        handler=run_enter_plan,
+        handler=declared_effects(ToolEffect("enter_plan_mode", {})),
         parallel_safe=False,
         available_to_child=False,
         available_to_parent=True,
@@ -164,7 +197,10 @@ TOOL_SPECS: dict[str, ToolSpec] = {
             ["plan_content"],
         ),
         category=ToolCategory.state,
-        handler=run_exit_plan,
+        handler=outcome_handler(lambda **kwargs: ToolOutcome(
+            Result.success(),
+            (ToolEffect("save_plan_and_exit", {"plan_content": kwargs.get("plan_content")}),),
+        )),
         parallel_safe=False,
         available_to_child=False,
         available_to_parent=True,
@@ -523,6 +559,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
 
 CHILD_TOOLS = [tool_schema(spec) for spec in TOOL_SPECS.values() if spec.available_to_child]
 PARENT_TOOLS = [tool_schema(spec) for spec in TOOL_SPECS.values() if spec.available_to_parent]
+DEFAULT_TOOL_CATALOG = ToolCatalog(TOOL_SPECS)
 
 
 def tool_description_lines(tools: list[ToolSchema] = PARENT_TOOLS) -> list[str]:

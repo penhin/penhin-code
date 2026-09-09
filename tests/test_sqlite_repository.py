@@ -12,6 +12,8 @@ from penhin.orchestration.models import AgentJob, AgentRole, Artifact, Integrati
 from penhin.orchestration.scheduler import PersistentScheduler
 from penhin.orchestration.repositories import database_url_from_env, repository_from_database_url
 from penhin.orchestration.repositories.sqlite_repository import SqliteOrchestrationRepository, sqlite_database_url
+from penhin.orchestration.planning import DAG_PROTOCOL_VERSION
+from penhin.orchestration.service import OrchestrationService
 
 
 @pytest.fixture
@@ -19,6 +21,14 @@ def repository(tmp_path: Path) -> SqliteOrchestrationRepository:
     store = SqliteOrchestrationRepository(sqlite_database_url(tmp_path / "orchestration.sqlite3"))
     store.initialize()
     return store
+
+
+def test_test_database_is_created_in_pytest_temp_directory(tmp_path: Path) -> None:
+    store = repository_from_database_url(database_url_from_env())
+    expected = tmp_path / "orchestration.sqlite3"
+    assert store.path == expected.resolve()
+    store.initialize()
+    assert expected.is_file()
 
 
 def executable_job(repository: SqliteOrchestrationRepository, subject: str, **kwargs) -> AgentJob:
@@ -53,7 +63,7 @@ def test_agent_job_instruction_is_redacted_before_persistence(
         path=str(tmp_path), branch="penhin/test-redaction",
     ))
 
-    job = service.create_isolated_agent_job(repository, "inspect job-secret-sentinel", "explore")
+    job = service._create_isolated_agent_job(repository, "inspect job-secret-sentinel", "explore")
 
     assert job.instruction == "inspect <redacted>"
     assert job.subject == "inspect <redacted>"
@@ -81,6 +91,58 @@ def test_sqlite_claim_respects_dependencies_and_records_integration(repository: 
     repository.transition_integration_run(run.id, IntegrationRunStatus.APPLYING)
     repository.transition_integration_run(run.id, IntegrationRunStatus.INTEGRATED, result_commit="c" * 40)
     assert repository.get_integration_run(run.id).result_commit == "c" * 40
+
+
+def test_orchestration_service_submits_a_dag_through_its_interface(
+    repository: SqliteOrchestrationRepository, tmp_path: Path,
+) -> None:
+    class SchedulerSpy:
+        def __init__(self) -> None:
+            self.dispatches = 0
+
+        def dispatch(self) -> None:
+            self.dispatches += 1
+
+    scheduler = SchedulerSpy()
+    coordinator = OrchestrationService(
+        repository,
+        scheduler,
+        worktree_factory=lambda job_id: type("Worktree", (), {
+            "path": str(tmp_path / job_id), "branch": f"penhin/{job_id}",
+        })(),
+    )
+    planner = repository.create_root_job("plan", "plan", AgentRole.PLANNER)
+    plan = {
+        "protocol_version": DAG_PROTOCOL_VERSION,
+        "goal": "add coverage",
+        "jobs": [{
+            "key": "implement", "instruction": "implement coverage", "agent_type": "general",
+            "depends_on": [], "priority": 0,
+        }],
+        "final_job_keys": ["implement"],
+    }
+
+    submitted = coordinator.submit(planner.id, plan)
+
+    assert submitted["root_task_id"] == planner.id
+    assert list(submitted["job_ids"]) == ["implement"]
+    assert submitted["final_job_ids"] == [submitted["job_ids"]["implement"]]
+    assert scheduler.dispatches == 1
+
+
+def test_orchestration_service_awaits_every_final_job(
+    repository: SqliteOrchestrationRepository,
+) -> None:
+    coordinator = OrchestrationService(repository)
+    job = repository.create_root_job("final", "final", AgentRole.GENERAL)
+    attempt = repository.start_attempt(job.id)
+    artifact = Artifact(id=str(uuid4()), job_id=job.id, kind="agent_handoff.v1", content={"summary": "done"})
+    repository.finish_attempt(attempt.id, JobStatus.SUCCEEDED, artifact=artifact)
+
+    outcome = coordinator.await_graph([job.id], timeout_seconds=1)
+
+    assert outcome.ok is True
+    assert [item["job"]["id"] for item in outcome.data] == [job.id]
 
 
 class SchedulerForTest(PersistentScheduler):

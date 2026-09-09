@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import multiprocessing
+import os
 import stat
 import threading
 import time
@@ -52,8 +53,9 @@ def test_file_store_permissions_round_trip_and_delete(tmp_path: Path) -> None:
     credential = ApiKeyCredential(key="sentinel-secret")
     assert store.modify("anthropic", lambda _current: credential) == credential
     assert store.read("anthropic") == credential
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    assert stat.S_IMODE(lock.stat().st_mode) == 0o600
+    if os.name != "nt":
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+        assert stat.S_IMODE(lock.stat().st_mode) == 0o600
     payload = json.loads(path.read_text())
     assert payload["schema_version"] == "penhin.auth/v1"
     store.delete("anthropic")
@@ -66,7 +68,8 @@ def test_file_store_hardens_existing_permissions_and_rejects_symlink(tmp_path: P
     path.write_text(json.dumps(payload))
     path.chmod(0o644)
     assert FileCredentialStore(path, lock).read("openai") == ApiKeyCredential(key="existing-secret")
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    if os.name != "nt":
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
     symlink = tmp_path / "linked.json"
     symlink.symlink_to(path)
     with pytest.raises(CredentialStoreUnavailable):
@@ -161,6 +164,23 @@ def test_keyring_store_round_trip_with_fake_backend(tmp_path: Path) -> None:
     assert store.read("gemini") == credential
     store.delete("gemini")
     assert store.read("gemini") is None
+
+
+def test_keyring_native_windows_error_becomes_a_safe_storage_failure(tmp_path: Path) -> None:
+    class FailingKeyring:
+        def get_password(self, _service, _provider):
+            return None
+
+        def set_password(self, _service, _provider, _value):
+            raise OSError(1783, "bad credential data")
+
+    store = object.__new__(KeyringCredentialStore)
+    store.lock_path = tmp_path / "auth.lock"
+    store.keyring = FailingKeyring()
+    store.errors = (OSError,)
+
+    with pytest.raises(CredentialStoreUnavailable, match="could not be written"):
+        store.modify("openai", lambda _current: ApiKeyCredential(key="secret"))
 
 
 def test_keyring_unavailable_is_not_silently_downgraded(monkeypatch) -> None:
