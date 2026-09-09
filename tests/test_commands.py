@@ -358,6 +358,16 @@ def test_login_single_method_provider_skips_authentication_type_prompt() -> None
     login_api_key.assert_called_once_with("openai")
 
 
+def test_login_command_cancels_silently_when_account_flow_is_interrupted() -> None:
+    with (
+        patch("penhin.cli.commands._handlers._login_oauth", side_effect=KeyboardInterrupt),
+        patch("penhin.cli.commands._handlers.ui.print_error") as print_error,
+    ):
+        assert router.handle_local_command("/login openai-codex") is True
+
+    print_error.assert_not_called()
+
+
 def test_account_login_continues_to_selected_protocol_method() -> None:
     credential = SimpleNamespace(type="oauth")
     oauth = Mock()

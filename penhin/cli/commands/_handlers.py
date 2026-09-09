@@ -452,10 +452,14 @@ def handle_login_command(args: list[str], context: RunContext | None = None):
             ui.print_error(str(error))
         return
 
-    if auth_type == "api_key":
-        _login_api_key(provider)
-    else:
-        _login_oauth(provider)
+    try:
+        if auth_type == "api_key":
+            _login_api_key(provider)
+        else:
+            _login_oauth(provider)
+    except KeyboardInterrupt:
+        # A command surface cancellation must restore chat without an error card.
+        ui.clear_temporary_surface()
 
 
 def handle_logout_command(args: list[str], context: RunContext | None = None):
