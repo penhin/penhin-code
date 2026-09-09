@@ -85,10 +85,8 @@ def execute_tool(
 
     try:
         outcome = spec.handler(**tool_input)
-        if isinstance(outcome, ToolOutcome):
-            from .invocation import ToolInvocation
-            return ToolInvocation().apply_outcome(tool_name, outcome, context)
-        return ToolRun(outcome)
+        from .invocation import ToolInvocation
+        return ToolInvocation().apply_outcome(tool_name, outcome, context)
     except TypeError as error:
         return ToolRun(Result.failure(f"Invalid input for {tool_name}: {error}", code="invalid_tool_input"))
     except Exception as error:
