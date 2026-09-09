@@ -40,11 +40,12 @@ def get_prompt_session() -> PromptSession:
     return prompt_session
 
 
-def prompt_input(prompt: str = "› ", completer=None) -> str:
+def prompt_input(prompt: str = "❯ ", completer=None) -> str:
     return get_prompt_session().prompt(
-        FormattedText([("class:prompt", prompt), ("class:prompt-label", "  ask or /command  ")]),
+        FormattedText([("class:prompt", prompt)]),
         completer=completer,
         is_password=False,
+        placeholder=FormattedText([("class:prompt-label", "ask or /command")]),
     )
 
 
