@@ -40,7 +40,10 @@ active_terminal = None
 TERMINAL_STYLE = Style.from_dict({
     "prompt": "bold #67e8f9",
     "prompt-label": "#64748b",
-    "composer": "bg:#16181d #e2e8f0",
+    "card-content": "#e2e8f0",
+    "composer": "#e2e8f0",
+    "composer-frame": "",
+    "composer-frame.border": "#475569",
     "composer.border": "#475569",
     "bottom-toolbar": "bg:#16181d #94a3b8",
     "completion-menu": "bg:#111827 #cbd5e1",
@@ -79,6 +82,24 @@ def _fit_terminal_width(text: str, width: int) -> str:
         fitted.append(character)
         used += character_width
     return "".join(fitted) + " " * (width - used)
+
+
+def _wrap_terminal_width(text: str, width: int) -> list[str]:
+    """Soft-wrap text by terminal display width without discarding characters."""
+    if not text:
+        return [""]
+    lines: list[str] = []
+    current: list[str] = []
+    used = 0
+    for character in text:
+        character_width = _terminal_width(character)
+        if current and used + character_width > width:
+            lines.append("".join(current))
+            current, used = [], 0
+        current.append(character)
+        used += character_width
+    lines.append("".join(current))
+    return lines
 
 
 @dataclass
@@ -167,8 +188,9 @@ class Transcript:
                 (f"fg:{card.color} bold", " │\n"),
             ))
             for line in card.content.splitlines() or [""]:
-                content = _fit_terminal_width(line, outer_width - 4)
-                result.extend(((f"fg:{card.color} bold", "│ "), ("class:composer", content), (f"fg:{card.color} bold", " │\n")))
+                for wrapped_line in _wrap_terminal_width(line, outer_width - 4):
+                    content = _fit_terminal_width(wrapped_line, outer_width - 4)
+                    result.extend(((f"fg:{card.color} bold", "│ "), ("class:card-content", content), (f"fg:{card.color} bold", " │\n")))
             result.extend(((f"fg:{card.color} bold", "╰" + "─" * (outer_width - 2) + "╯\n\n"),))
         return result
 
@@ -358,7 +380,7 @@ class TerminalInterface:
             layout=Layout(
                 HSplit([
                     self.output,
-                    Frame(self.composer, style="class:composer", height=3),
+                    Frame(self.composer, style="class:composer-frame", height=3),
                     status,
                 ]),
                 focused_element=self.composer,

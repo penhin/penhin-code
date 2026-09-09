@@ -82,6 +82,23 @@ def test_card_renderer_closes_a_rectangular_border() -> None:
     assert lines[-1].startswith("╰") and lines[-1].endswith("╯")
 
 
+def test_card_renderer_wraps_long_reply_without_dropping_text() -> None:
+    transcript = ui.Transcript()
+    reply = "x" * 130
+    transcript.add_message("agent", "ChatGPT", reply)
+
+    fragments = transcript.formatted()
+    body_lines = [text.rstrip() for style, text in fragments if style == "class:card-content"]
+
+    assert len(body_lines) == 3
+    assert "".join(body_lines) == reply
+
+
+def test_transcript_and_composer_use_the_terminal_default_background() -> None:
+    assert ui.TERMINAL_STYLE.get_attrs_for_style_str("class:composer").bgcolor == ""
+    assert ui.TERMINAL_STYLE.get_attrs_for_style_str("class:card-content").bgcolor == ""
+
+
 def test_secret_prompt_interruption_does_not_mask_later_input(monkeypatch) -> None:
     calls = []
 
