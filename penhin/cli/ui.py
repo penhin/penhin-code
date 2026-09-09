@@ -255,11 +255,29 @@ class DraggableScrollbarMargin(ScrollbarMargin):
         self._dragging = False
 
     def create_margin(self, window_render_info, width: int, height: int):
-        fragments = super().create_margin(window_render_info, width, height)
-        return [
-            (style, text, self._mouse_handler) if text != "\n" else (style, text)
-            for style, text, *_ in fragments
-        ]
+        total_height, visible_height, scroll_offset = self._rendered_metrics(window_render_info)
+        track_height = max(0, height - 2)
+        maximum_offset = max(0, total_height - visible_height)
+        if maximum_offset == 0:
+            thumb_height, thumb_top = track_height, 0
+        else:
+            thumb_height = max(1, round(track_height * visible_height / total_height))
+            thumb_top = round((track_height - thumb_height) * scroll_offset / maximum_offset)
+
+        fragments = [("class:scrollbar.arrow", self.up_arrow_symbol), ("class:scrollbar", "\n")]
+        for row in range(track_height):
+            style = "class:scrollbar.button" if thumb_top <= row < thumb_top + thumb_height else "class:scrollbar.background"
+            fragments.extend(((style, " ", self._mouse_handler), ("", "\n")))
+        fragments.append(("class:scrollbar.arrow", self.down_arrow_symbol))
+        return fragments
+
+    def _rendered_metrics(self, info) -> tuple[int, int, int]:
+        line_heights = [info.get_height_for_line(line) for line in range(info.content_height)]
+        total_height = max(1, sum(line_heights))
+        visible_height = min(info.window_height, total_height)
+        preceding_height = sum(line_heights[:self.window.vertical_scroll])
+        scroll_offset = min(total_height - visible_height, preceding_height + self.window.vertical_scroll_2)
+        return total_height, visible_height, scroll_offset
 
     def _mouse_handler(self, event: MouseEvent):
         if event.event_type in {MouseEventType.SCROLL_UP, MouseEventType.SCROLL_DOWN}:
@@ -275,10 +293,19 @@ class DraggableScrollbarMargin(ScrollbarMargin):
         info = self.window.render_info
         if info is None:
             return NotImplemented
-        maximum = max(0, info.content_height - info.window_height)
+        total_height, visible_height, _scroll_offset = self._rendered_metrics(info)
+        maximum = max(0, total_height - visible_height)
         track_height = max(1, info.window_height - 2)
         track_row = min(track_height - 1, max(0, event.position.y - 1))
-        self.window.vertical_scroll = round(maximum * track_row / max(1, track_height - 1))
+        target_offset = round(maximum * track_row / max(1, track_height - 1))
+        remaining = target_offset
+        for line in range(info.content_height):
+            line_height = info.get_height_for_line(line)
+            if remaining < line_height:
+                self.window.vertical_scroll = line
+                self.window.vertical_scroll_2 = remaining
+                break
+            remaining -= line_height
         return None
 
 

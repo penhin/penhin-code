@@ -151,7 +151,7 @@ def test_terminal_keeps_a_manual_transcript_scroll_position() -> None:
 
 def test_transcript_scrollbar_click_moves_the_viewport() -> None:
     terminal = ui.TerminalInterface(lambda _message: None)
-    terminal.output.render_info = SimpleNamespace(content_height=34, window_height=10)
+    terminal.output.render_info = SimpleNamespace(content_height=34, window_height=10, get_height_for_line=lambda _line: 1)
     scrollbar = terminal.output.right_margins[0]
 
     scrollbar._mouse_handler(MouseEvent(Point(x=0, y=8), MouseEventType.MOUSE_DOWN, MouseButton.LEFT, frozenset()))
@@ -173,6 +173,26 @@ def test_transcript_scrollbar_forwards_wheel_events() -> None:
     scrollbar._mouse_handler(MouseEvent(Point(x=0, y=5), MouseEventType.SCROLL_DOWN, MouseButton.NONE, frozenset()))
 
     assert terminal.output.vertical_scroll == 15
+
+
+def test_transcript_scrollbar_uses_rendered_height_for_thumb_size() -> None:
+    terminal = ui.TerminalInterface(lambda _message: None)
+    scrollbar = terminal.output.right_margins[0]
+
+    class RenderInfo:
+        content_height = 40
+        window_height = 10
+        displayed_lines = list(range(10))
+        vertical_scroll = 10
+
+        @staticmethod
+        def get_height_for_line(_line: int) -> int:
+            return 3
+
+    fragments = scrollbar.create_margin(RenderInfo(), width=1, height=10)
+    thumb_rows = [index for index, (style, text, *_rest) in enumerate(fragments) if text == " " and "scrollbar.button" in style]
+
+    assert len(thumb_rows) == 1
 
 
 def test_down_arrow_moves_forward_through_composer_history() -> None:
