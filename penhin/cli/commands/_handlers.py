@@ -333,18 +333,22 @@ class TerminalAuthInteraction(AuthInteraction):
             ui.print_info(str(payload.get("message", "")))
 
 
+def _file_fallback(error: CredentialStoreUnavailable):
+    ui.print_info(
+        "The system keyring is unavailable. Penhin can use ~/.penhin/auth.json instead; "
+        "the file is not encrypted, but its directory and file are restricted to your user."
+    )
+    if not ui.prompt_confirm("Use the protected file credential store (mode 0600)?"):
+        raise CredentialStoreUnavailable("login cancelled: no credential storage backend was selected") from error
+    set_credential_backend("file")
+    return FileCredentialStore()
+
+
 def _writable_store():
     try:
         return credential_store()
     except CredentialStoreUnavailable as error:
-        ui.print_info(
-            "The system keyring is unavailable. Penhin can use ~/.penhin/auth.json instead; "
-            "the file is not encrypted, but its directory and file are restricted to your user."
-        )
-        if not ui.prompt_confirm("Use the protected file credential store (mode 0600)?"):
-            raise CredentialStoreUnavailable("login cancelled: no credential storage backend was selected") from error
-        set_credential_backend("file")
-        return FileCredentialStore()
+        return _file_fallback(error)
 
 
 def _apply_provider_selection(provider: str, model: str, thinking_level: str | None = None) -> None:
@@ -361,7 +365,13 @@ def _save_login(provider: str, credential, started: float | None = None, store=N
     from penhin.evaluation.observer import emit
     store = store or _writable_store()
     model = _select_provider_model(provider)
-    store.modify(provider, lambda _current: credential)
+    try:
+        store.modify(provider, lambda _current: credential)
+    except CredentialStoreUnavailable as error:
+        if store.backend_name != "keyring":
+            raise
+        store = _file_fallback(error)
+        store.modify(provider, lambda _current: credential)
     _apply_provider_selection(provider, model)
     emit(
         "auth_login_completed", provider=provider, auth_type=credential.type,

@@ -180,7 +180,9 @@ class KeyringCredentialStore(CredentialStore):
         except ImportError as error:
             raise CredentialStoreUnavailable("system keyring support is not installed") from error
         self.keyring = keyring
-        self.errors = (KeyringError, NoKeyringError)
+        # Windows Credential Manager can surface native ``OSError`` values
+        # (for example CredWrite error 1783) instead of keyring exceptions.
+        self.errors = (KeyringError, NoKeyringError, OSError)
         backend = keyring.get_keyring()
         backend_identity = f"{backend.__class__.__module__}.{backend.__class__.__name__}".lower()
         nested = [f"{item.__class__.__module__}.{item.__class__.__name__}".lower() for item in getattr(backend, "backends", ())]

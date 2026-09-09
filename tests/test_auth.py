@@ -166,6 +166,23 @@ def test_keyring_store_round_trip_with_fake_backend(tmp_path: Path) -> None:
     assert store.read("gemini") is None
 
 
+def test_keyring_native_windows_error_becomes_a_safe_storage_failure(tmp_path: Path) -> None:
+    class FailingKeyring:
+        def get_password(self, _service, _provider):
+            return None
+
+        def set_password(self, _service, _provider, _value):
+            raise OSError(1783, "bad credential data")
+
+    store = object.__new__(KeyringCredentialStore)
+    store.lock_path = tmp_path / "auth.lock"
+    store.keyring = FailingKeyring()
+    store.errors = (OSError,)
+
+    with pytest.raises(CredentialStoreUnavailable, match="could not be written"):
+        store.modify("openai", lambda _current: ApiKeyCredential(key="secret"))
+
+
 def test_keyring_unavailable_is_not_silently_downgraded(monkeypatch) -> None:
     import keyring
 
