@@ -153,9 +153,7 @@ def main() -> None:
             return
         if user_input.startswith("/"):
             def run_local_command() -> None:
-                print_info("")
                 handle_local_command(user_input, context)
-                print_info("")
 
             Thread(target=run_local_command, name="penhin-command", daemon=True).start()
             return

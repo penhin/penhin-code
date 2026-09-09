@@ -66,6 +66,8 @@ IDENTITY_COLORS = {
     "claude code": "#f97316",
     "claude": "#f97316",
     "system": "#94a3b8",
+    "error": "#f87171",
+    "warning": "#fbbf24",
     "you": "#67e8f9",
     "penhin": "#22c55e",
 }
@@ -896,20 +898,62 @@ def print_device_code(verification_uri: str, user_code: str) -> None:
 
 def print_info(message: str) -> None:
     from penhin.auth.secrets import redact_text
-    if _add_terminal("system", "System", redact_text(message)):
+    text = redact_text(message)
+    if not text.strip():
         return
-    console.print(Text(redact_text(message), style="cyan"))
+    if _add_terminal("system", "System", text):
+        return
+    console.print(Text(text, style="cyan"))
 
 
 def print_error(message: str) -> None:
     from penhin.auth.secrets import redact_text
-    if _add_terminal("system", "System", f"Error: {redact_text(message)}"):
+    text = redact_text(message)
+    if _add_terminal("error", "Error", text):
         return
-    console.print(Text(redact_text(message), style="red"))
+    console.print(Text(text, style="red"))
+
+
+def print_warning(message: str) -> None:
+    from penhin.auth.secrets import redact_text
+    text = redact_text(message)
+    if _add_terminal("warning", "Warning", text):
+        return
+    console.print(Text(text, style="yellow"))
+
+
+def format_terminal_data(data: object, *, indent: int = 0) -> str:
+    """Render structured command results as readable labels instead of JSON."""
+    prefix = " " * indent
+    if isinstance(data, dict):
+        lines: list[str] = []
+        for key, value in data.items():
+            if isinstance(value, (dict, list)):
+                lines.append(f"{prefix}{key}")
+                lines.append(format_terminal_data(value, indent=indent + 2))
+            else:
+                lines.append(f"{prefix}{key}: {format_terminal_data(value)}")
+        return "\n".join(lines)
+    if isinstance(data, list):
+        lines = []
+        for value in data:
+            if isinstance(value, (dict, list)):
+                lines.append(f"{prefix}-")
+                lines.append(format_terminal_data(value, indent=indent + 2))
+            else:
+                lines.append(f"{prefix}- {format_terminal_data(value)}")
+        return "\n".join(lines)
+    if data is True:
+        return "true"
+    if data is False:
+        return "false"
+    if data is None:
+        return "null"
+    return str(data)
 
 
 def print_json(data: object) -> None:
-    if _add_terminal("system", "System", json.dumps(data, ensure_ascii=False, indent=2)):
+    if _add_terminal("system", "System", format_terminal_data(data)):
         return
     console.print_json(json.dumps(data, ensure_ascii=False, indent=2))
     

@@ -116,6 +116,37 @@ def test_transcript_and_composer_use_the_terminal_default_background() -> None:
     assert ui.TERMINAL_STYLE.get_attrs_for_style_str("class:card-content").bgcolor == ""
 
 
+def test_empty_info_does_not_create_a_system_card(monkeypatch) -> None:
+    terminal = ui.TerminalInterface(lambda _message: None)
+    monkeypatch.setattr(ui, "active_terminal", terminal)
+
+    ui.print_info("")
+
+    assert terminal.cards == []
+
+
+def test_error_and_warning_use_distinct_diagnostic_cards(monkeypatch) -> None:
+    terminal = ui.TerminalInterface(lambda _message: None)
+    monkeypatch.setattr(ui, "active_terminal", terminal)
+
+    ui.print_error("request failed")
+    ui.print_warning("using cached result")
+
+    assert [(card.kind, card.name, card.color) for card in terminal.cards] == [
+        ("error", "Error", "#f87171"),
+        ("warning", "Warning", "#fbbf24"),
+    ]
+
+
+def test_terminal_structured_output_uses_indented_labels_without_json_braces(monkeypatch) -> None:
+    terminal = ui.TerminalInterface(lambda _message: None)
+    monkeypatch.setattr(ui, "active_terminal", terminal)
+
+    ui.print_json({"main": {"enabled": True, "retry_after": 12}})
+
+    assert terminal.cards[-1].content == "main\n  enabled: true\n  retry_after: 12"
+
+
 def test_terminal_follows_the_latest_transcript_content() -> None:
     terminal = ui.TerminalInterface(lambda _message: None)
     terminal.output.vertical_scroll = 0
