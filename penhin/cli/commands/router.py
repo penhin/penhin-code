@@ -51,6 +51,9 @@ class CommandRouter:
     def command_names(self) -> tuple[str, ...]:
         return tuple(self._commands)
 
+    def command_description(self, name: str) -> str:
+        return self._commands[name].description
+
     def dispatch(self, text: str, context: RunContext | None = None) -> bool:
         if not text.startswith("/"):
             return False
@@ -77,7 +80,12 @@ class LocalCommandCompleter(Completer):
             return
         for name in self._router.command_names:
             if name.startswith(text):
-                yield Completion(name, start_position=-len(text))
+                yield Completion(
+                    name,
+                    start_position=-len(text),
+                    display=f"{name:<18}",
+                    display_meta=self._router.command_description(name),
+                )
 
 
 _router = CommandRouter()

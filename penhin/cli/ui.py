@@ -2,7 +2,7 @@ import json
 from dataclasses import dataclass, field
 
 from prompt_toolkit import PromptSession
-from prompt_toolkit.formatted_text import ANSI
+from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.styles import Style
 from rich.columns import Columns
 from rich.console import Console, Group
@@ -22,14 +22,27 @@ def get_prompt_session() -> PromptSession:
     if prompt_session is None:
         prompt_session = PromptSession(
             bottom_toolbar=lambda: [("class:bottom-toolbar", f"  {cli_status_line()}  ")],
-            style=Style.from_dict({"bottom-toolbar": "bg:#262626 #b8c7d9"}),
+            reserve_space_for_menu=8,
+            complete_while_typing=True,
+            style=Style.from_dict({
+                "prompt": "bold #67e8f9",
+                "prompt-label": "#64748b",
+                "bottom-toolbar": "bg:#172033 #94a3b8",
+                "completion-menu": "bg:#111827 #cbd5e1",
+                "completion-menu.completion": "bg:#111827 #cbd5e1",
+                "completion-menu.completion.current": "bg:#0e7490 #ffffff bold",
+                "completion-menu.meta.completion": "bg:#111827 #64748b",
+                "completion-menu.meta.completion.current": "bg:#0e7490 #dbeafe",
+                "scrollbar.background": "bg:#111827",
+                "scrollbar.button": "bg:#334155",
+            }),
         )
     return prompt_session
 
 
-def prompt_input(prompt: str = "❯ ", completer=None) -> str:
+def prompt_input(prompt: str = "› ", completer=None) -> str:
     return get_prompt_session().prompt(
-        ANSI(f"\x1b[1;36m{prompt}\x1b[0m"),
+        FormattedText([("class:prompt", prompt), ("class:prompt-label", "  ask or /command  ")]),
         completer=completer,
         is_password=False,
     )
