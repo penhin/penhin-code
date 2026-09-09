@@ -120,6 +120,17 @@ def test_terminal_follows_the_latest_transcript_content() -> None:
     assert terminal.output.vertical_scroll == ui.LATEST_SCROLL
 
 
+def test_terminal_scrolls_to_the_latest_rendered_line() -> None:
+    terminal = ui.TerminalInterface(lambda _message: None)
+    terminal.add_message("agent", "ChatGPT", "\n".join(f"line {index}" for index in range(30)))
+
+    content = terminal.output.content.create_content(width=60, height=100)
+    terminal.output._scroll(content, width=60, height=10)
+
+    assert content.cursor_position.y == content.line_count - 1
+    assert terminal.output.vertical_scroll > 0
+
+
 def test_secret_prompt_interruption_does_not_mask_later_input(monkeypatch) -> None:
     calls = []
 

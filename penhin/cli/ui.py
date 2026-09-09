@@ -18,6 +18,7 @@ from prompt_toolkit.layout import HSplit, Layout
 from prompt_toolkit.layout.containers import Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.margins import ScrollbarMargin
+from prompt_toolkit.data_structures import Point
 from prompt_toolkit.styles import Style
 from prompt_toolkit.widgets import Frame, TextArea
 from rich.columns import Columns
@@ -256,9 +257,10 @@ class TerminalInterface:
         self._selection: SelectionSurface | None = None
         self._waiting: str | None = None
         self._waiting_cancelled = False
+        self._output_cursor_line = 0
         self.transcript = Transcript()
         self.output = Window(
-            FormattedTextControl(self._main_panel),
+            FormattedTextControl(self._main_panel, get_cursor_position=self._latest_output_cursor),
             wrap_lines=True,
             always_hide_cursor=True,
             right_margins=[ScrollbarMargin(display_arrows=True)],
@@ -427,24 +429,31 @@ class TerminalInterface:
         self.output.vertical_scroll = LATEST_SCROLL
         self.app.invalidate()
 
+    def _latest_output_cursor(self) -> Point:
+        """Anchor the transcript viewport to its final rendered line."""
+        return Point(x=0, y=self._output_cursor_line)
+
     def _main_panel(self) -> FormattedText:
         if self._waiting is not None:
-            return [("class:heading", self._waiting + "\n")]
-        if self._selection is None:
-            return self.transcript.formatted()
-        options = self._selection.matching_options(self.composer.text)
-        rows: FormattedText = [("class:heading", self._selection.title + "\n\n")]
-        if not options:
-            rows.append(("class:prompt-label", "No matching choices\n"))
-        last_provider = ""
-        for index, (value, label) in enumerate(options):
-            provider = value.partition("/")[0]
-            if provider and provider != last_provider:
-                rows.append(("class:prompt-label", f"\n{provider}\n"))
-                last_provider = provider
-            marker = "› " if index == self._selection.selected else "  "
-            style = "class:completion-menu.completion.current" if index == self._selection.selected else "class:composer"
-            rows.append((style, marker + label + "\n"))
+            rows: FormattedText = [("class:heading", self._waiting + "\n")]
+        elif self._selection is None:
+            rows = self.transcript.formatted()
+        else:
+            options = self._selection.matching_options(self.composer.text)
+            rows = [("class:heading", self._selection.title + "\n\n")]
+            if not options:
+                rows.append(("class:prompt-label", "No matching choices\n"))
+            last_provider = ""
+            for index, (value, label) in enumerate(options):
+                provider = value.partition("/")[0]
+                if provider and provider != last_provider:
+                    rows.append(("class:prompt-label", f"\n{provider}\n"))
+                    last_provider = provider
+                marker = "› " if index == self._selection.selected else "  "
+                style = "class:completion-menu.completion.current" if index == self._selection.selected else "class:composer"
+                rows.append((style, marker + label + "\n"))
+
+        self._output_cursor_line = max(0, sum(text.count("\n") for _style, text, *_ in rows))
         return rows
 
     def request_select(self, message: str, options: tuple[tuple[str, str], ...]) -> str:
