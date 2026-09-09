@@ -2,6 +2,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from queue import Queue
+from shutil import get_terminal_size
 from threading import Lock
 from typing import Callable
 from unicodedata import east_asian_width
@@ -172,6 +173,21 @@ class Transcript:
         return result
 
 
+@dataclass
+class SelectionSurface:
+    """A temporary, keyboard-first page displayed in place of the transcript."""
+
+    title: str
+    options: tuple[tuple[str, str], ...]
+    reply: Queue[str | None]
+    scroll_position: int
+    selected: int = 0
+
+    def matching_options(self, query: str) -> list[tuple[str, str]]:
+        normalized = query.casefold()
+        return [option for option in self.options if not normalized or normalized in option[0].casefold() or normalized in option[1].casefold()]
+
+
 def configure_status(context=None, queue=None) -> None:
     global status_context, status_queue
     status_context, status_queue = context, queue
@@ -182,12 +198,17 @@ def _status_line() -> str:
         return cli_status_line()
     from penhin.agent.compaction import BLOCKING_THRESHOLD, estimate_api_tokens
     used = estimate_api_tokens(status_context.messages, status_context.collapse_keep_recent)
-    queued = status_queue.size if status_queue is not None else 0
-    queue_label = f"  ·  {queued} queued" if queued else ""
-    return (
-        f"{used / BLOCKING_THRESHOLD:.1%} · {used / 1000:.1f}k / "
-        f"{BLOCKING_THRESHOLD / 1000:.0f}k (auto){queue_label}"
-    )
+    from penhin.infrastructure.config import get_permission_mode
+    from penhin.runtime import runtime_manager
+    provider = runtime_manager.configured_provider() or "not configured"
+    model = runtime_manager.status().model or "not configured"
+    left = f"{used / BLOCKING_THRESHOLD:.1%} · {used / 1000:.1f}k / {BLOCKING_THRESHOLD / 1000:.0f}k"
+    middle = get_permission_mode()
+    right = f"{provider}/{model}"
+    width = max(40, get_terminal_size((100, 24)).columns - 2)
+    middle_start = max(len(left) + 2, (width - len(middle)) // 2)
+    right_start = max(middle_start + len(middle) + 2, width - len(right))
+    return left + " " * (middle_start - len(left)) + middle + " " * (right_start - middle_start - len(middle)) + right
 
 
 class TerminalInterface:
@@ -199,9 +220,12 @@ class TerminalInterface:
         self._input_request: Queue[str] | None = None
         self._input_request_lock = Lock()
         self._output_lock = Lock()
+        self._selection: SelectionSurface | None = None
+        self._waiting: str | None = None
+        self._waiting_cancelled = False
         self.transcript = Transcript()
         self.output = Window(
-            FormattedTextControl(self.transcript.formatted),
+            FormattedTextControl(self._main_panel),
             wrap_lines=True,
             always_hide_cursor=True,
             right_margins=[ScrollbarMargin(display_arrows=True)],
@@ -221,8 +245,28 @@ class TerminalInterface:
         self.composer.buffer.input_processors = [self._placeholder_processor]
         bindings = KeyBindings()
 
+        def selection_options() -> list[tuple[str, str]]:
+            return self._selection.matching_options(self.composer.text) if self._selection else []
+
+        def finish_selection(value: str | None) -> None:
+            selection = self._selection
+            if selection is None:
+                return
+            self._selection = None
+            self.output.vertical_scroll = selection.scroll_position
+            self.composer.buffer.reset()
+            self.composer.prompt = FormattedText([("class:prompt", "❯ ")])
+            self.composer.buffer.input_processors = [self._placeholder_processor]
+            selection.reply.put(value)
+            self.app.invalidate()
+
         @bindings.add("enter")
         def submit_prompt(event) -> None:
+            if self._selection is not None:
+                options = selection_options()
+                if options:
+                    finish_selection(options[min(self._selection.selected, len(options) - 1)][0])
+                return
             value = self.composer.text.strip()
             if not value:
                 return
@@ -253,13 +297,43 @@ class TerminalInterface:
 
         @bindings.add("up")
         def recall_previous(event) -> None:
+            if self._selection is not None:
+                self._selection.selected = max(0, self._selection.selected - 1)
+                self.app.invalidate()
+                return
             event.current_buffer.history_backward()
 
+        @bindings.add("down")
+        @bindings.add("tab")
+        def select_next(event) -> None:
+            if self._selection is None:
+                return
+            options = selection_options()
+            if options:
+                self._selection.selected = (self._selection.selected + 1) % len(options)
+            self.app.invalidate()
+
         @bindings.add("s-tab")
-        def cycle_permission(_event) -> None:
+        def select_previous(event) -> None:
+            if self._selection is not None:
+                options = selection_options()
+                if options:
+                    self._selection.selected = (self._selection.selected - 1) % len(options)
+                self.app.invalidate()
+                return
             if self._cycle_permission is not None:
                 self._cycle_permission()
                 self.app.invalidate()
+
+        @bindings.add("escape")
+        def cancel_selection(event) -> None:
+            if self._selection is not None:
+                finish_selection(None)
+            elif self._waiting is not None:
+                self._waiting_cancelled = True
+                self.clear_temporary_surface()
+
+        self.composer.buffer.on_text_changed += lambda _buffer: self.app.invalidate()
 
         @bindings.add("pageup")
         def scroll_output_up(event) -> None:
@@ -319,6 +393,55 @@ class TerminalInterface:
     def _refresh_transcript(self) -> None:
         self.app.invalidate()
 
+    def _main_panel(self) -> FormattedText:
+        if self._waiting is not None:
+            return [("class:heading", self._waiting + "\n")]
+        if self._selection is None:
+            return self.transcript.formatted()
+        options = self._selection.matching_options(self.composer.text)
+        rows: FormattedText = [("class:heading", self._selection.title + "\n\n")]
+        if not options:
+            rows.append(("class:prompt-label", "No matching choices\n"))
+        last_provider = ""
+        for index, (value, label) in enumerate(options):
+            provider = value.partition("/")[0]
+            if provider and provider != last_provider:
+                rows.append(("class:prompt-label", f"\n{provider}\n"))
+                last_provider = provider
+            marker = "› " if index == self._selection.selected else "  "
+            style = "class:completion-menu.completion.current" if index == self._selection.selected else "class:composer"
+            rows.append((style, marker + label + "\n"))
+        return rows
+
+    def request_select(self, message: str, options: tuple[tuple[str, str], ...]) -> str:
+        """Present a temporary selection page and restore the transcript on exit."""
+        if not options:
+            raise ValueError("selection requires at least one option")
+        reply: Queue[str | None] = Queue(maxsize=1)
+        self._selection = SelectionSurface(message, options, reply, self.output.vertical_scroll)
+        self.composer.buffer.reset()
+        self.composer.prompt = FormattedText([("class:prompt", "Filter: ")])
+        self.composer.buffer.input_processors = []
+        self.app.invalidate()
+        value = reply.get()
+        if value is None:
+            raise KeyboardInterrupt
+        return value
+
+    def show_waiting(self, message: str) -> None:
+        """Keep browser-auth progress out of the transcript."""
+        self._waiting_cancelled = False
+        self._waiting = message
+        self.app.invalidate()
+
+    def clear_temporary_surface(self) -> None:
+        self._waiting = None
+        self.app.invalidate()
+
+    @property
+    def temporary_surface_cancelled(self) -> bool:
+        return self._waiting_cancelled
+
     def request_input(self, message: str, *, secret: bool = False) -> str:
         """Request a value through the pinned composer from a command worker."""
         with self._input_request_lock:
@@ -367,6 +490,15 @@ def _request_terminal_input(message: str, *, secret: bool = False) -> str | None
     if active_terminal is None:
         return None
     return active_terminal.request_input(message, secret=secret)
+
+
+def clear_temporary_surface() -> None:
+    if active_terminal is not None:
+        active_terminal.clear_temporary_surface()
+
+
+def temporary_surface_cancelled() -> bool:
+    return active_terminal is not None and active_terminal.temporary_surface_cancelled
 
 
 def get_prompt_session() -> PromptSession:
@@ -448,10 +580,7 @@ def prompt_confirm(message: str, default: bool = False) -> bool:
 
 def prompt_select(message: str, options: tuple[tuple[str, str], ...]) -> str:
     if active_terminal is not None:
-        _append_terminal("\n" + message + "\n")
-        for index, (_value, label) in enumerate(options, 1):
-            _append_terminal(f"  {index}. {label}\n")
-        answer = active_terminal.request_input("Choose (number or search)").strip()
+        return active_terminal.request_select(message, options)
     else:
         console.print(message, style="cyan")
         for index, (_value, label) in enumerate(options, 1):
@@ -575,6 +704,9 @@ def print_user_message(message: str) -> None:
 
 
 def print_auth_url(url: str, instructions: str = "") -> None:
+    if active_terminal is not None:
+        active_terminal.show_waiting("Waiting for browser authorization…\n\nBrowser opened. Press Esc to cancel.\n" + (instructions or "Complete authorization in your browser."))
+        return
     if _append_terminal(
         "\nOpen this link to continue authentication:\n"
         f"{url}\nCtrl/Cmd+click to open, or copy it into a browser.\n"
@@ -593,6 +725,9 @@ def print_auth_url(url: str, instructions: str = "") -> None:
 
 
 def print_device_code(verification_uri: str, user_code: str) -> None:
+    if active_terminal is not None:
+        active_terminal.show_waiting(f"Waiting for device authorization…\n\nCode: {user_code}")
+        return
     if _append_terminal(
         "\nOpen this link to continue authentication:\n"
         f"{verification_uri}\nEnter code: {user_code}\n"

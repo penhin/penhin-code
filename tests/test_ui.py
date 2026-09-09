@@ -31,6 +31,18 @@ def test_full_screen_transcript_uses_provider_identity_colours() -> None:
     assert terminal.message_color("Custom Agent") == terminal.message_color("Custom Agent")
 
 
+def test_command_surface_filters_choices_without_mutating_transcript() -> None:
+    surface = ui.SelectionSurface(
+        "Choose a model",
+        (("openai/gpt-5.6", "OpenAI - GPT-5.6"), ("deepseek/deepseek-v4", "DeepSeek - V4")),
+        ui.Queue(maxsize=1),
+        scroll_position=7,
+    )
+
+    assert surface.matching_options("deep") == [("deepseek/deepseek-v4", "DeepSeek - V4")]
+    assert surface.scroll_position == 7
+
+
 def test_card_renderer_closes_a_rectangular_border() -> None:
     transcript = ui.Transcript()
     transcript.add_message("agent", "ChatGPT", "你好！有什么我可以帮你的吗？", tokens=2371)

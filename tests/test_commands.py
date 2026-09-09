@@ -35,7 +35,7 @@ def test_handle_local_command_shows_help() -> None:
     mocked_print_info.assert_any_call("/help Show local commands")
     mocked_print_info.assert_any_call("/status Show session and runtime status")
     mocked_print_info.assert_any_call("/model Select a model")
-    mocked_print_info.assert_any_call("/provider Show or switch provider")
+    assert all("/provider" not in call.args[0] for call in mocked_print_info.call_args_list)
     mocked_print_info.assert_any_call("/circuit Show circuit breaker status")
     mocked_print_info.assert_any_call("/compact Compact current session, optionally with a hint")
     mocked_print_info.assert_any_call("/force-snip Mark selected history turns as snipped")
@@ -135,10 +135,12 @@ def test_removed_auth_compatibility_commands_are_unknown() -> None:
 def test_handle_permission_command_shows_current_mode() -> None:
     with (
         patch("penhin.cli.commands._handlers.get_permission_mode", return_value="auto-review"),
+        patch("penhin.cli.commands._handlers.ui.prompt_select", return_value="auto-review") as prompt_select,
         patch("penhin.cli.commands._handlers.ui.print_info") as mocked_print_info,
     ):
         assert router.handle_local_command("/permission") is True
 
+    assert prompt_select.call_args.args[0] == "Choose permission mode"
     mocked_print_info.assert_called_once_with("permission: auto-review")
 
 
@@ -398,47 +400,37 @@ def test_terminal_auth_always_shows_url_and_only_attempts_browser_launch() -> No
     print_info.assert_not_called()
 
 
-def test_handle_provider_command_switches_provider_and_model() -> None:
-    with (
-        patch.dict("penhin.cli.commands._handlers.os.environ", {"LLM_PROVIDER": "anthropic", "MODEL_ID": "claude-test", "OPENAI_API_KEY": "sk-openai"}, clear=True),
-        patch("penhin.cli.commands._handlers.runtime_manager.switch_provider") as mocked_set_runtime_provider,
-        patch("penhin.cli.commands._handlers.set_active_provider") as mocked_set_active_provider,
-        patch("penhin.cli.commands._handlers.set_provider_model") as mocked_set_provider_model,
-        patch("penhin.cli.commands._handlers.ui.print_info") as mocked_print_info,
-    ):
+def test_provider_is_not_a_user_facing_command() -> None:
+    with patch("penhin.cli.commands._handlers.ui.print_error") as print_error:
         assert router.handle_local_command("/provider openai gpt-4.1") is True
 
-    mocked_set_runtime_provider.assert_called_once_with("openai", "gpt-4.1")
-    mocked_set_active_provider.assert_called_once_with("openai")
-    mocked_set_provider_model.assert_called_once_with("openai", "gpt-4.1")
-    mocked_print_info.assert_called_once_with("provider: openai")
+    print_error.assert_called_once_with("Unknown command: /provider")
 
 
-def test_handle_provider_command_selects_model_when_provider_has_no_saved_model() -> None:
-    with (
-        patch("penhin.cli.commands._handlers.get_provider_model", return_value=""),
-        patch("penhin.cli.commands._handlers._select_provider_model", return_value="gpt-5.4") as select_model,
-        patch("penhin.cli.commands._handlers._apply_provider_selection") as apply_selection,
-        patch("penhin.cli.commands._handlers.ui.print_info"),
-    ):
-        assert router.handle_local_command("/provider openai") is True
-
-    select_model.assert_called_once_with("openai")
-    apply_selection.assert_called_once_with("openai", "gpt-5.4")
-
-
-def test_model_command_without_argument_opens_provider_model_selector() -> None:
+def test_model_command_without_argument_opens_unified_model_selector() -> None:
     with (
         patch("penhin.cli.commands._handlers.runtime_manager.configured_provider", return_value="anthropic"),
-        patch("penhin.cli.commands._handlers._select_model_provider", return_value="anthropic"),
-        patch("penhin.cli.commands._handlers._select_provider_model", return_value="claude-sonnet-5") as select_model,
+        patch("penhin.cli.commands._handlers._select_authenticated_model", return_value=("anthropic", "claude-sonnet-5")) as select_model,
         patch("penhin.cli.commands._handlers.runtime_manager.set_model"),
         patch("penhin.cli.commands._handlers.set_provider_model"),
         patch("penhin.cli.commands._handlers.ui.print_info"),
     ):
         assert router.handle_local_command("/model") is True
 
-    select_model.assert_called_once_with("anthropic")
+    select_model.assert_called_once_with()
+
+
+def test_unified_model_selector_only_includes_authenticated_providers() -> None:
+    statuses = {"anthropic": True, "openai": False, "openai-codex": True, "gemini": False, "deepseek": False}
+    with (
+        patch("penhin.cli.commands._handlers.runtime_manager.configured_provider", return_value="anthropic"),
+        patch("penhin.cli.commands._handlers.auth_resolver", return_value=SimpleNamespace(status=lambda provider: {"configured": statuses[provider]})),
+        patch("penhin.cli.commands._handlers.ui.prompt_select", return_value="openai-codex/gpt-5.6-sol") as select,
+    ):
+        assert commands._select_authenticated_model() == ("openai-codex", "gpt-5.6-sol")
+
+    options = select.call_args.args[1]
+    assert all(value.startswith(("anthropic/", "openai-codex/")) for value, _label in options)
 
 
 def test_handle_force_snip_lists_turns() -> None:

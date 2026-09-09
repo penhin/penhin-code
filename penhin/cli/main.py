@@ -11,7 +11,7 @@ from penhin.agent.loop import agent_loop, run_once
 from penhin.cli.commands import handle_local_command, setup_command_completion
 from penhin.infrastructure.config import get_permission_mode, get_version
 from penhin.agent.context import RunContext
-from penhin.permissions import normalize_permission_mode
+from penhin.permissions import PERMISSION_CYCLE, normalize_permission_mode
 from penhin.runtime import AuthenticationRequired, runtime_manager
 from penhin.plugins.bootstrap import plugin_runtime_for_session
 from penhin.tools.execution import runtime_permission_setup
@@ -162,7 +162,12 @@ def main() -> None:
         print_user_message(user_input)
         pending.submit(user_input)
 
-    terminal = ui.TerminalInterface(submit_input, completer=command_completer)
+    def cycle_permission() -> None:
+        current = get_permission_mode()
+        next_mode = PERMISSION_CYCLE[(PERMISSION_CYCLE.index(current) + 1) % len(PERMISSION_CYCLE)] if current in PERMISSION_CYCLE else PERMISSION_CYCLE[0]
+        handle_local_command(f"/permission {next_mode}", context)
+
+    terminal = ui.TerminalInterface(submit_input, completer=command_completer, cycle_permission=cycle_permission)
     ui.restore_queued_prompts = pending.restore_all
     ui.activate_terminal(terminal, context, pending)
     print_welcome(

@@ -14,7 +14,7 @@ from penhin.auth.browser import open_browser
 from penhin.auth.interaction import AuthInteraction
 from penhin.auth.storage import CredentialStoreUnavailable, FileCredentialStore
 from penhin.agent.context import RunContext, conversation_turn_ranges, parse_snip_selectors
-from penhin.permissions import PERMISSION_MODES, PermissionMode, transition_mode
+from penhin.permissions import PERMISSION_CYCLE, PERMISSION_MODES, PermissionMode, transition_mode
 from penhin.runtime import runtime_manager
 from penhin.providers.models import (
     model_options, model_thinking_levels, parse_model_reference, supports_custom_model, validate_model,
@@ -111,25 +111,23 @@ def _select_provider_model(provider: str) -> str:
     return selected
 
 
-def _select_model_provider() -> str:
-    current = runtime_manager.configured_provider()
-    configured: list[str] = []
+def _select_authenticated_model() -> tuple[str, str]:
+    """Choose one model from authenticated providers in a single command surface."""
+    choices: list[tuple[str, str]] = []
     for provider in provider_auth_ids():
         try:
-            if auth_resolver().status(provider).get("configured"):
-                configured.append(provider)
+            if not auth_resolver().status(provider).get("configured"):
+                continue
         except CredentialStoreUnavailable:
             continue
-    if current not in configured:
-        configured.insert(0, current)
-    else:
-        configured = [current, *(provider for provider in configured if provider != current)]
-    if len(configured) == 1:
-        return configured[0]
-    return ui.prompt_select(
-        "Choose a provider",
-        tuple((provider, provider_label(provider)) for provider in configured),
-    )
+        choices.extend(
+            (f"{provider}/{item.id}", f"{provider_label(provider)} - {item.name} ({item.id})")
+            for item in model_options(provider)
+        )
+    if not choices:
+        raise ValueError("No authenticated provider is available. Use /login first.")
+    provider, model = ui.prompt_select("Choose a model", tuple(choices)).split("/", 1)
+    return provider, model
 
 
 def _effective_thinking_level(provider: str, model: str, requested: str | None = None) -> str | None:
@@ -191,10 +189,15 @@ def handle_status_command(args: list[str], context: RunContext | None = None):
 
 def handle_permission_command(args: list[str], context: RunContext | None = None):
     if not args:
-        ui.print_info(f"permission: {get_permission_mode()}")
-        return
-
-    mode = args[0]
+        try:
+            mode = ui.prompt_select(
+                "Choose permission mode",
+                tuple((value, value + (" (current)" if value == get_permission_mode() else "")) for value in PERMISSION_CYCLE),
+            )
+        except KeyboardInterrupt:
+            return
+    else:
+        mode = args[0]
     if mode not in PERMISSION_MODES:
         ui.print_error(f"Unknown permission mode: {mode}")
         ui.print_info(f"Available modes: {', '.join(sorted(PERMISSION_MODES))}")
@@ -227,12 +230,12 @@ def handle_model_command(args: list[str], context: RunContext | None = None):
                 validate_model(current_provider, reference)
                 provider, model, requested_level = current_provider, reference, None
         else:
-            provider = _select_model_provider()
-            model = _select_provider_model(provider)
+            provider, model = _select_authenticated_model()
             requested_level = None
         thinking_level = _effective_thinking_level(provider, model, requested_level)
     except (ValueError, KeyboardInterrupt) as error:
-        ui.print_error("model selection cancelled" if isinstance(error, KeyboardInterrupt) else str(error))
+        if not isinstance(error, KeyboardInterrupt):
+            ui.print_error(str(error))
         return
 
     try:
@@ -271,41 +274,6 @@ def handle_thinking_command(args: list[str], context: RunContext | None = None):
     runtime_manager.set_thinking_level(level)
     set_provider_thinking_level(provider, level)
     ui.print_info(f"thinking: {level}")
-
-
-def handle_provider_command(args: list[str], context: RunContext | None = None):
-    if not args:
-        ui.print_info(f"provider: {runtime_manager.configured_provider()}")
-        return
-
-    provider = args[0].lower()
-    if provider not in provider_auth_ids():
-        ui.print_error(f"Unsupported provider: {provider}; choose anthropic, openai, openai-codex, gemini, or deepseek")
-        return
-    model = " ".join(args[1:]).strip()
-    if not model:
-        saved = get_provider_model(provider)
-        try:
-            if saved:
-                validate_model(provider, saved)
-                model = saved
-            else:
-                model = _select_provider_model(provider)
-        except (ValueError, KeyboardInterrupt) as error:
-            ui.print_error("model selection cancelled" if isinstance(error, KeyboardInterrupt) else str(error))
-            return
-    try:
-        validate_model(provider, model)
-    except ValueError:
-        ui.print_error(f"Model {model!r} is not compatible with {provider}. Use: /provider {provider} MODEL_ID")
-        return
-
-    try:
-        _apply_provider_selection(provider, model)
-    except Exception as error:
-        ui.print_error(str(error))
-        return
-    ui.print_info(f"provider: {provider}")
 
 
 class TerminalAuthInteraction(AuthInteraction):
@@ -377,6 +345,7 @@ def _save_login(provider: str, credential, started: float | None = None, store=N
         "auth_login_completed", provider=provider, auth_type=credential.type,
         backend=store.backend_name, duration_ms=(time.perf_counter() - started) * 1000 if started is not None else None,
     )
+    ui.clear_temporary_surface()
     ui.print_info(f"login: {provider} authenticated via {credential.type}")
 
 
@@ -394,7 +363,8 @@ def _login_api_key(provider: str) -> None:
         _save_login(provider, credential, started, store)
     except (Exception, KeyboardInterrupt) as error:
         emit("auth_login_failed", provider=provider, auth_type="api_key", error_type=type(error).__name__, duration_ms=(time.perf_counter() - started) * 1000)
-        ui.print_error("login cancelled" if isinstance(error, KeyboardInterrupt) else str(error))
+        if not isinstance(error, KeyboardInterrupt):
+            ui.print_error(str(error))
 
 
 _LOGIN_PROVIDER_LABELS = {
@@ -449,8 +419,11 @@ def _login_oauth(provider: str) -> None:
             )
         emit("auth_login_started", provider=provider, auth_type="oauth", method=method)
         credential = provider_auth(provider).login("oauth", interaction, oauth_method=method)
+        if ui.temporary_surface_cancelled():
+            raise KeyboardInterrupt
         _save_login(provider, credential, started, store)
     except (Exception, KeyboardInterrupt) as error:
+        ui.clear_temporary_surface()
         emit(
             "auth_login_failed",
             provider=provider,
@@ -458,7 +431,8 @@ def _login_oauth(provider: str) -> None:
             error_type=type(error).__name__,
             duration_ms=(time.perf_counter() - started) * 1000,
         )
-        ui.print_error("login cancelled" if isinstance(error, KeyboardInterrupt) else str(error))
+        if not isinstance(error, KeyboardInterrupt):
+            ui.print_error(str(error))
 
 
 def handle_login_command(args: list[str], context: RunContext | None = None):
@@ -474,7 +448,8 @@ def handle_login_command(args: list[str], context: RunContext | None = None):
         if not provider:
             provider = ui.prompt_select("Choose a provider", _login_provider_options(auth_type))
     except (ValueError, KeyboardInterrupt) as error:
-        ui.print_error("login cancelled" if isinstance(error, KeyboardInterrupt) else str(error))
+        if not isinstance(error, KeyboardInterrupt):
+            ui.print_error(str(error))
         return
 
     if auth_type == "api_key":
