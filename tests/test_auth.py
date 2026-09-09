@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import multiprocessing
+import os
 import stat
 import threading
 import time
@@ -52,8 +53,9 @@ def test_file_store_permissions_round_trip_and_delete(tmp_path: Path) -> None:
     credential = ApiKeyCredential(key="sentinel-secret")
     assert store.modify("anthropic", lambda _current: credential) == credential
     assert store.read("anthropic") == credential
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    assert stat.S_IMODE(lock.stat().st_mode) == 0o600
+    if os.name != "nt":
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+        assert stat.S_IMODE(lock.stat().st_mode) == 0o600
     payload = json.loads(path.read_text())
     assert payload["schema_version"] == "penhin.auth/v1"
     store.delete("anthropic")
@@ -66,7 +68,8 @@ def test_file_store_hardens_existing_permissions_and_rejects_symlink(tmp_path: P
     path.write_text(json.dumps(payload))
     path.chmod(0o644)
     assert FileCredentialStore(path, lock).read("openai") == ApiKeyCredential(key="existing-secret")
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    if os.name != "nt":
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
     symlink = tmp_path / "linked.json"
     symlink.symlink_to(path)
     with pytest.raises(CredentialStoreUnavailable):
