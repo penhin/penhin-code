@@ -7,8 +7,6 @@ import sys
 import time
 from threading import Thread
 
-from prompt_toolkit.patch_stdout import patch_stdout
-
 from penhin.agent.loop import agent_loop, run_once
 from penhin.cli.commands import handle_local_command, setup_command_completion
 from penhin.infrastructure.config import get_permission_mode, get_version
@@ -22,7 +20,7 @@ from penhin.tools.builtin.workspace import workspace_info
 from penhin.agent.transcript import transcripts
 from penhin.cli import ui
 from penhin.cli.prompt_queue import PromptQueue
-from penhin.cli.ui import print_error, print_info, print_user_message, print_welcome, prompt_input
+from penhin.cli.ui import print_error, print_info, print_user_message, print_welcome
 from penhin.infrastructure.quality_gate import run_quality_gate
 
 
@@ -133,13 +131,6 @@ def main() -> None:
     workspace = workspace_info()
     provider = runtime_manager.configured_provider()
     api_label = {"anthropic": "Anthropic API", "openai": "OpenAI API", "openai-codex": "OpenAI ChatGPT Plus/Pro", "gemini": "Gemini API", "deepseek": "DeepSeek API"}.get(provider, provider or "Configured API")
-    print_welcome(
-        version=get_version(),
-        api=api_label,
-        model=runtime_manager.current().model if runtime_manager.available() else "not configured",
-        workspace=str(workspace.get("cwd", ".")),
-    )
-
     pending = PromptQueue()
 
     def run_pending_prompts() -> None:
@@ -152,32 +143,43 @@ def main() -> None:
             finally:
                 context.session_path = transcripts.save_session(context.session_path, context.messages)
 
+    terminal = None
+
+    def submit_input(user_input: str) -> None:
+        nonlocal terminal
+        if user_input in {"q", "quit", "exit"}:
+            if terminal is not None:
+                terminal.app.exit()
+            return
+        if user_input.startswith("/"):
+            def run_local_command() -> None:
+                print_info("")
+                handle_local_command(user_input, context)
+                print_info("")
+
+            Thread(target=run_local_command, name="penhin-command", daemon=True).start()
+            return
+        print_user_message(user_input)
+        pending.submit(user_input)
+
+    terminal = ui.TerminalInterface(submit_input, completer=command_completer)
+    ui.restore_queued_prompts = pending.restore_all
+    ui.activate_terminal(terminal, context, pending)
+    print_welcome(
+        version=get_version(),
+        api=api_label,
+        model=runtime_manager.current().model if runtime_manager.available() else "not configured",
+        workspace=str(workspace.get("cwd", ".")),
+    )
     worker = Thread(target=run_pending_prompts, name="penhin-agent", daemon=True)
     worker.start()
-    ui.restore_queued_prompts = pending.restore_all
-    ui.configure_status(context, pending)
     try:
-        with patch_stdout(raw=True):
-            while True:
-                try:
-                    user_input = prompt_input(completer=command_completer).strip()
-                    if user_input.startswith("/"):
-                        print_info("")
-                        if handle_local_command(user_input, context):
-                            print_info("")
-                            continue
-                except (EOFError, KeyboardInterrupt):
-                    logger.info("")
-                    break
-                if user_input in {"", "q", "quit", "exit"}:
-                    break
-                print_user_message(user_input)
-                pending.submit(user_input)
+        terminal.run()
     finally:
         pending.close()
         worker.join(timeout=1)
         ui.restore_queued_prompts = None
-        ui.configure_status()
+        ui.deactivate_terminal()
         context.plugin_runtime.close()
 
 
