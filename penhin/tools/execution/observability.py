@@ -19,6 +19,7 @@ class ObservableToolRun(Protocol):
     result: Result
     manual_compact: bool
     approval_required: bool
+    effects: list[dict[str, str]]
 
 
 def short_hash(value: object) -> str:
@@ -55,7 +56,7 @@ def log_tool_start(tool_id: str, tool_name: str, tool_input: ToolInput) -> None:
 
 def log_tool_done(tool_id: str, tool_name: str, tool_run: ObservableToolRun, duration_ms: float) -> None:
     result = tool_run.result
-    flags = f"manual_compact={json.dumps(tool_run.manual_compact)} approval_required={json.dumps(tool_run.approval_required)}"
+    flags = f"manual_compact={json.dumps(tool_run.manual_compact)} approval_required={json.dumps(tool_run.approval_required)} effects={json.dumps(tool_run.effects)}"
     summary = _result_summary(result)
     if result.ok:
         logger.info(f"[tool] done call_id={tool_id} name={tool_name} status=ok duration_ms={duration_ms:.2f} {flags} {summary}")

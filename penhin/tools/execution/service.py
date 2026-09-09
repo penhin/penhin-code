@@ -4,13 +4,14 @@ import itertools
 import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from penhin.result import Result
 from penhin.tools.catalog import ToolCatalog
 from penhin.tools.registry import DEFAULT_TOOL_CATALOG
 from penhin.tools.types import ToolInput
+from penhin.tools.types import ToolOutcome
 from .approval import ApprovalFlow, PermissionPolicy, default_approval_flow, runtime_permission_setup
 from .observability import log_tool_blocked, log_tool_done, log_tool_start, short_hash
 from .validation import unknown_tool_input_fields, validate_tool_input
@@ -33,6 +34,7 @@ class ToolRun:
     result: Result
     manual_compact: bool = False
     approval_required: bool = False
+    effects: list[dict[str, str]] = field(default_factory=list)
 
 
 def check_tool_access(
@@ -79,50 +81,18 @@ def execute_tool(
         return ToolRun(invalid)
 
     if spec.handler is None:
-        if tool_name == "compact":
-            return ToolRun(
-                result=Result.success("Compacting conversation history now"),
-                manual_compact=True,
-            )
-        if tool_name == "snip":
-            return execute_snip_tool(tool_input, context)
         return ToolRun(Result.failure(f"Unknown tool handler: {tool_name}", code="unknown_tool_handler"))
 
     try:
-        if tool_name in {"enter_plan", "exit_plan"}:
-            return ToolRun(spec.handler(context=context, **tool_input))
-        return ToolRun(spec.handler(**tool_input))
+        outcome = spec.handler(**tool_input)
+        if isinstance(outcome, ToolOutcome):
+            from .invocation import ToolInvocation
+            return ToolInvocation().apply_outcome(tool_name, outcome, context)
+        return ToolRun(outcome)
     except TypeError as error:
         return ToolRun(Result.failure(f"Invalid input for {tool_name}: {error}", code="invalid_tool_input"))
     except Exception as error:
         return ToolRun(Result.failure(f"Tool {tool_name} failed: {error}", code="tool_error"))
-
-
-def execute_snip_tool(tool_input: ToolInput, context: RunContext | None) -> ToolRun:
-    if context is None:
-        return ToolRun(Result.failure("No active session to snip.", code="missing_context"))
-
-    selectors_input = tool_input.get("selectors")
-    if isinstance(selectors_input, str):
-        selector_texts = selectors_input.split()
-    elif isinstance(selectors_input, list):
-        selector_texts = [str(selector) for selector in selectors_input]
-    else:
-        return ToolRun(Result.failure("Invalid input: selectors must be an array", code="invalid_tool_input"))
-
-    try:
-        from penhin.agent.context import parse_snip_selectors
-        selectors = parse_snip_selectors(selector_texts)
-    except ValueError:
-        return ToolRun(
-            Result.failure(
-                "Invalid snip selector. Use turn numbers or ranges like 2 or 2-4.",
-                code="invalid_tool_input",
-            )
-        )
-
-    snipped = context.force_snip_turns(selectors)
-    return ToolRun(Result.success(f"Marked {snipped} messages as snipped.", snipped=snipped))
 
 
 def run_tool(
@@ -174,6 +144,7 @@ def run_tool(
         "tool_call_completed", tool_name=tool_name, input_digest=short_hash(tool_input),
         status="ok" if tool_run.result.ok else "error", duration_ms=duration_ms,
         code=tool_run.result.meta.get("code"), unknown_input_fields=unknown_fields,
+        effects=tool_run.effects,
     )
 
     return tool_run

@@ -18,6 +18,18 @@ ToolSchema = dict[str, Any]
 ApprovalKey = Callable[[ToolInput], str]
 
 
+@dataclass(frozen=True)
+class ToolEffect:
+    kind: str
+    payload: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ToolOutcome:
+    result: Result
+    effects: tuple[ToolEffect, ...] = ()
+
+
 @dataclass
 class ToolApproval:
     requires_approval: bool = False

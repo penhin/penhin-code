@@ -55,3 +55,15 @@ _Avoid_: System prompt content
 **Input Submission**:
 The immutable input text, ordered Context Supplements, and Plugin generations captured for one model-bound input.
 _Avoid_: Mutable prompt
+
+**Tool Invocation**:
+The governed execution of one or more model-requested tools for an agent turn, including their ordered results and controlled session effects.
+_Avoid_: Tool dispatch, message-level tool handling
+
+**Tool Outcome**:
+The result produced by a tool handler together with its declared Tool Effects, before Tool Invocation records their completion.
+_Avoid_: Raw handler result
+
+**Tool Effect**:
+A named, schema-validated requested state change that Tool Invocation alone may apply and observe.
+_Avoid_: Handler side effect, callback

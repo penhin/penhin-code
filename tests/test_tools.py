@@ -366,8 +366,8 @@ def test_tool_schemas_match_handlers() -> None:
     assert "task" in handler_names
     assert "task_start" in handler_names
     assert "task_show" in handler_names
-    assert "compact" not in handler_names
-    assert "snip" not in handler_names
+    assert "compact" in handler_names
+    assert "snip" in handler_names
 
 
 def test_tool_specs_have_one_category() -> None:
@@ -408,7 +408,7 @@ def test_compact_tool_is_parent_only() -> None:
 
     assert "compact" in parent_tool_names
     assert "compact" not in child_tool_names
-    assert TOOL_SPECS["compact"].handler is None
+    assert TOOL_SPECS["compact"].handler is not None
 
 
 def test_snip_tool_is_parent_only() -> None:
@@ -417,7 +417,7 @@ def test_snip_tool_is_parent_only() -> None:
 
     assert "snip" in parent_tool_names
     assert "snip" not in child_tool_names
-    assert TOOL_SPECS["snip"].handler is None
+    assert TOOL_SPECS["snip"].handler is not None
 
 
 def test_plan_mode_tools_are_registered() -> None:
