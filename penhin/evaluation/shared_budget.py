@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 from uuid import uuid4
+
+from filelock import FileLock
 
 from .budget import BudgetExceeded, ModelPrice
 
@@ -31,9 +32,10 @@ class SharedBudget:
 
     @contextmanager
     def _locked(self) -> Iterator[tuple[Any, dict[str, Any]]]:
-        with self.path.open("r+", encoding="utf-8") as stream:
-            fcntl.flock(stream, fcntl.LOCK_EX)
-            try:
+        # fcntl is Unix-only. A companion lock file preserves the same
+        # cross-process critical section on Windows and Unix.
+        with FileLock(f"{self.path}.lock"):
+            with self.path.open("r+", encoding="utf-8") as stream:
                 try:
                     state = json.load(stream)
                 except json.JSONDecodeError:
@@ -44,8 +46,6 @@ class SharedBudget:
                 stream.truncate()
                 stream.flush()
                 os.fsync(stream.fileno())
-            finally:
-                fcntl.flock(stream, fcntl.LOCK_UN)
 
     def reserve(self, estimated_input: int, max_output: int, price: ModelPrice, role: str, case_id: str = "", role_limit: int | None = None) -> str:
         reservation_id = str(uuid4())
@@ -98,7 +98,7 @@ class SharedBudget:
             for reservation_id, item in list(state["reservations"].items()):
                 try:
                     os.kill(int(item["pid"]), 0)
-                except (ProcessLookupError, ValueError):
+                except (ProcessLookupError, ValueError, OSError):
                     del state["reservations"][reservation_id]
                     removed += 1
                 except PermissionError:
