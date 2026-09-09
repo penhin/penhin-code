@@ -315,7 +315,7 @@ def test_execute_tool_uses_returns_tool_results() -> None:
     )
     response = FakeResponse([FakeToolBlock(name="workspace", block_id="tool-1")], stop_reason="tool_use")
 
-    with patch("penhin.agent.messages.run_tool", return_value=ToolRun(Result.success("ok"))):
+    with patch("penhin.tools.execution.invocation.ToolInvocation.invoke", return_value=ToolRun(Result.success("ok"))):
         tool_results, manual_compact = agent.execute_tool_uses(context, response)
 
     assert manual_compact is False
@@ -336,7 +336,7 @@ def test_execute_tool_uses_caches_large_tool_result() -> None:
     response = FakeResponse([FakeToolBlock(name="workspace", block_id="tool-1")], stop_reason="tool_use")
     large_result = Result.success("x" * 3000)
 
-    with patch("penhin.agent.messages.run_tool", return_value=ToolRun(large_result)):
+    with patch("penhin.tools.execution.invocation.ToolInvocation.invoke", return_value=ToolRun(large_result)):
         tool_results, _ = agent.execute_tool_uses(context, response)
 
     assert tool_results[0]["cache_control"] == {"type": "ephemeral"}
@@ -360,7 +360,7 @@ def test_record_tool_results_updates_context_and_compacts() -> None:
         },
     ]
     mocked_compact.assert_not_called()
-    assert context.pending_force_compact_hint == ""
+    assert context.pending_force_compact_hint is None
 
 
 def test_compact_context_for_llm_consumes_pending_force_compact() -> None:

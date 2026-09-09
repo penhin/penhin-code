@@ -2,7 +2,10 @@
 from __future__ import annotations
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from threading import Lock
+import itertools
+import time
 from typing import Any
 from penhin.result import Result
 from penhin.tools.catalog import ToolCatalog
@@ -11,6 +14,10 @@ from penhin.tools.types import ToolEffect, ToolInput, ToolOutcome
 from .approval import ApprovalFlow, PermissionPolicy, default_approval_flow
 from .service import ToolRun, check_tool_access
 from .validation import validate_tool_input
+from .validation import unknown_tool_input_fields
+from .observability import log_tool_blocked, log_tool_done, log_tool_start
+
+_CALL_IDS = itertools.count(1)
 
 EffectExecutor = Callable[[dict[str, Any], object], Result]
 EffectDefinition = tuple[dict[str, Any], EffectExecutor]
@@ -64,10 +71,13 @@ class ToolExecutionContext:
     max_tool_calls: int | None = None
     tool_calls_used: int = 0
     catalog: ToolCatalog = DEFAULT_TOOL_CATALOG
+    budget_lock: Lock = field(default_factory=Lock)
 
 def collect_tool_calls(content: Any) -> list[ToolCall]:
     if not isinstance(content, list): return []
-    return [ToolCall(index, str(block.get("name", "")), block.get("input", {}) or {}, str(block.get("id", ""))) for index, block in enumerate(content) if isinstance(block, dict) and block.get("type") == "tool_use"]
+    def value(block: Any, key: str, default: Any = None) -> Any:
+        return block.get(key, default) if isinstance(block, dict) else getattr(block, key, default)
+    return [ToolCall(index, str(value(block, "name", "")), value(block, "input", {}) or {}, str(value(block, "id", ""))) for index, block in enumerate(content) if value(block, "type") == "tool_use"]
 
 def tool_result_block(call: ToolCall, run: ToolRun) -> dict[str, Any]:
     return {"type": "tool_result", "tool_name": call.tool_name, "tool_use_id": call.tool_use_id, "content": run.result.to_json()}
@@ -79,10 +89,19 @@ class ToolInvocation:
 
     def invoke(self, tool_name: str, tool_input: ToolInput, policy: PermissionPolicy, approval: ApprovalFlow | None = None, context: object = None, catalog: ToolCatalog = DEFAULT_TOOL_CATALOG) -> ToolRun:
         approval = approval or default_approval_flow(policy, catalog)
+        call_id, start = f"tool-{next(_CALL_IDS)}", time.perf_counter()
         access = check_tool_access(tool_name, tool_input, policy, approval, catalog)
-        if access is not None: return access
+        if access is not None:
+            log_tool_blocked(call_id, tool_name, tool_input, access.result, (time.perf_counter() - start) * 1000, "approval_required" if access.approval_required else "blocked")
+            return access
         invalid = validate_tool_input(tool_name, tool_input, catalog)
         if invalid: return ToolRun(invalid)
+        unknown_fields = unknown_tool_input_fields(tool_name, tool_input, catalog)
+        if unknown_fields:
+            import logging
+            import json
+            logging.getLogger("penhin.tool_runtime").warning(f"[tool] unknown_input call_id={call_id} name={tool_name} fields={json.dumps(unknown_fields)}")
+        log_tool_start(call_id, tool_name, tool_input)
         spec = catalog.get(tool_name)
         if spec is None or spec.handler is None: return ToolRun(Result.failure(f"Unknown tool handler: {tool_name}", code="unknown_tool_handler"))
         try: outcome = spec.handler(**tool_input)
@@ -90,6 +109,7 @@ class ToolInvocation:
         except Exception as error: return ToolRun(Result.failure(f"Tool {tool_name} failed: {error}", code="tool_error"))
         if not isinstance(outcome, ToolOutcome): return ToolRun(Result.failure(f"Tool {tool_name} returned no ToolOutcome", code="invalid_tool_outcome"))
         run = self.apply_outcome(tool_name, outcome, context)
+        log_tool_done(call_id, tool_name, run, (time.perf_counter() - start) * 1000)
         self._observe_completion(tool_name, tool_input, run)
         return run
 
@@ -136,6 +156,7 @@ class ToolInvocation:
 
     @staticmethod
     def _validate_effect(effect: ToolEffect, schema: dict[str, Any]) -> str | None:
+        if not isinstance(effect.payload, dict): return f"Tool Effect {effect.kind}.payload must be an object"
         required = schema["required"]
         unknown = set(effect.payload) - set(required) - set(schema.get("optional", set()))
         if unknown: return f"Tool Effect {effect.kind} has unknown fields: {', '.join(sorted(unknown))}"
@@ -145,25 +166,28 @@ class ToolInvocation:
         return None
 
     def execute_blocks(self, content: Any, execution: ToolExecutionContext) -> tuple[list[dict[str, Any]], bool]:
-        calls, results, batch = collect_tool_calls(content), [], []
+        calls, results, batch, manual_compact = collect_tool_calls(content), [], [], False
         def flush() -> None:
-            nonlocal batch
+            nonlocal batch, manual_compact
             if not batch: return
             with ThreadPoolExecutor(max_workers=5) as executor: completed = list(executor.map(lambda call: self._run_call(call, execution), batch))
-            results.extend(block for _index, block, _compact in sorted(completed)); batch = []
+            results.extend(block for _index, block, _compact in sorted(completed)); manual_compact = manual_compact or any(compact for _index, _block, compact in completed); batch = []
         for call in calls:
             spec = execution.catalog.get(call.tool_name)
             if spec is not None and spec.parallel_safe and not spec.approval.requires_approval: batch.append(call)
             else:
-                flush(); _index, block, _compact = self._run_call(call, execution); results.append(block)
+                flush(); _index, block, compact = self._run_call(call, execution); results.append(block); manual_compact = manual_compact or compact
         flush()
-        return results, False
+        return results, manual_compact
 
     def _run_call(self, call: ToolCall, execution: ToolExecutionContext) -> tuple[int, dict[str, Any], bool]:
-        if execution.max_tool_calls is not None and execution.tool_calls_used >= execution.max_tool_calls:
+        with execution.budget_lock:
+            exhausted = execution.max_tool_calls is not None and execution.tool_calls_used >= execution.max_tool_calls
+            if not exhausted:
+                execution.tool_calls_used += 1
+        if exhausted:
             run = ToolRun(Result.failure(f"Tool budget exhausted before {call.tool_name}.", code="tool_budget_exhausted"))
         else:
-            execution.tool_calls_used += 1
             blocked = execution.run_context.post_delegation_tool_block(call.tool_name) if execution.run_context is not None else None
             run = ToolRun(blocked) if blocked else self.invoke(call.tool_name, call.tool_input, execution.policy, execution.approval, execution.run_context, execution.catalog)
         if run.approval_required and execution.approval_resolver is not None: run = execution.approval_resolver(call.tool_name, call.tool_input, execution.policy, execution.approval)

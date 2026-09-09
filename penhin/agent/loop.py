@@ -36,7 +36,7 @@ def run_with_one_time_approval(
     tool_input: dict[str, Any],
     policy: PermissionPolicy,
     approval: ApprovalFlow,
-    catalog: ToolCatalog = DEFAULT_TOOL_CATALOG,
+    catalog: ToolCatalog = DEFAULT_TOOL_CATALOG, context: RunContext | None = None,
 ):
     one_time_approval = approval.copy()
     one_time_approval.approve(tool_name, tool_input, catalog)
@@ -44,7 +44,7 @@ def run_with_one_time_approval(
         tool_name,
         tool_input,
         policy,
-        one_time_approval, catalog=catalog,
+        one_time_approval, context=context, catalog=catalog,
     )
 
 
@@ -53,7 +53,7 @@ def run_with_one_time_rejection(
     tool_input: dict[str, Any],
     policy: PermissionPolicy,
     approval: ApprovalFlow,
-    catalog: ToolCatalog = DEFAULT_TOOL_CATALOG,
+    catalog: ToolCatalog = DEFAULT_TOOL_CATALOG, context: RunContext | None = None,
 ):
     one_time_rejection = approval.copy()
     one_time_rejection.reject(tool_name, tool_input, catalog)
@@ -61,7 +61,7 @@ def run_with_one_time_rejection(
         tool_name,
         tool_input,
         policy,
-        one_time_rejection, catalog=catalog,
+        one_time_rejection, context=context, catalog=catalog,
     )
 
 
@@ -70,7 +70,7 @@ def resolve_approval(
     tool_input: dict[str, Any],
     policy: PermissionPolicy,
     approval: ApprovalFlow,
-    catalog: ToolCatalog = DEFAULT_TOOL_CATALOG,
+    catalog: ToolCatalog = DEFAULT_TOOL_CATALOG, context: RunContext | None = None,
 ):
     logger.info(f"[approval] tool: {tool_name}")
     logger.info(f"[approval] key: {approval_key(tool_name, tool_input, catalog)}")
@@ -97,7 +97,7 @@ def resolve_approval(
         logger.info("[approval] no input available; rejecting")
         reply = ""
     if reply in {"1", "y"}:
-        return run_with_one_time_approval(tool_name, tool_input, policy, approval, catalog)
+        return run_with_one_time_approval(tool_name, tool_input, policy, approval, catalog, context)
 
     if reply in {"2", "ys"}:
         approval.approve(tool_name, tool_input, catalog)
@@ -105,7 +105,7 @@ def resolve_approval(
             tool_name,
             tool_input,
             policy,
-            approval, catalog=catalog,
+            approval, context=context, catalog=catalog,
         )
 
     if reply in {"3", "yp"} and suggested_prefix:
@@ -114,10 +114,10 @@ def resolve_approval(
             tool_name,
             tool_input,
             policy,
-            approval, catalog=catalog,
+            approval, context=context, catalog=catalog,
         )
 
-    return run_with_one_time_rejection(tool_name, tool_input, policy, approval, catalog)
+    return run_with_one_time_rejection(tool_name, tool_input, policy, approval, catalog, context)
 
 
 def compact_context_for_llm(context: RunContext) -> None:
@@ -178,7 +178,7 @@ def execute_tool_uses(
             context.policy,
             context.approval,
             approval_resolver=lambda name, tool_input, policy, approval: resolve_approval(
-                name, tool_input, policy, approval, catalog,
+                name, tool_input, policy, approval, catalog, context,
             ),
             context=context,
             catalog=catalog,
