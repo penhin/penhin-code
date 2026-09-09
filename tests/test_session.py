@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from penhin.cli import main as main_module
 from penhin.agent import session_store
+from penhin.agent.transcript import TranscriptStore
 
 
 def test_parse_session_args() -> None:
@@ -103,24 +104,24 @@ def test_resume_uses_specific_session() -> None:
 
 
 def test_print_session_list_marks_latest() -> None:
-    original_sessions = main_module.sessions
+    original_transcripts = main_module.transcripts
     output = StringIO()
 
     with tempfile.TemporaryDirectory() as tmpdir:
         try:
-            store = session_store.SessionStore(Path(tmpdir))
-            store.new([{"role": "user", "content": "first"}])
-            latest = store.new([{"role": "user", "content": "latest"}])
-            latest_id = session_store.session_id_from_path(latest.path)[:12]
-            main_module.sessions = store
+            store = TranscriptStore(Path(tmpdir))
+            store.save([{"role": "user", "content": "first"}])
+            latest = store.save([{"role": "user", "content": "latest"}])
+            latest_id = latest.stem.removeprefix("transcript_")[:12]
+            main_module.transcripts = store
 
             with contextlib.redirect_stdout(output):
                 main_module.print_session_list()
         finally:
-            main_module.sessions = original_sessions
+            main_module.transcripts = original_transcripts
 
     lines = output.getvalue().splitlines()
-    assert lines[0] == "mark | id | updated | msgs | title"
+    assert lines[0] == "mark | id | updated | msgs | request"
     marked_lines = [line for line in lines[1:] if line.startswith("* | ")]
     assert len(marked_lines) == 1
     assert latest_id in marked_lines[0]

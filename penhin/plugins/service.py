@@ -17,7 +17,7 @@ from penhin.plugins.capabilities import PluginCapabilityBroker
 from penhin.plugins.installation import verify_plugin_artifact
 from penhin.tools.catalog import ToolCatalog
 from penhin.tools.execution import PermissionPolicy
-from penhin.tools.types import ToolApproval, ToolCategory, ToolSpec
+from penhin.tools.types import ToolApproval, ToolCategory, ToolOutcome, ToolSpec
 
 
 class PluginError(ValueError):
@@ -163,7 +163,9 @@ class LocalPlugin:
             ToolSpec(
                 name=f"{self.name}__{tool.name}", description=tool.description,
                 input_schema=tool.input_schema, category=ToolCategory.readonly,
-                handler=lambda _tool=tool, **kwargs: self.host.call(_tool.entrypoint, kwargs),
+                handler=lambda _tool=tool, **kwargs: ToolOutcome(
+                    self.host.call(_tool.entrypoint, kwargs),
+                ),
                 parallel_safe=False, available_to_child=False, available_to_parent=True,
                 approval=ToolApproval(),
             )

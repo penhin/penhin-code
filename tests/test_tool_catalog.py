@@ -3,11 +3,11 @@ from penhin.agent.loop import call_llm, execute_tool_uses
 from penhin.result import Result
 from penhin.tools.catalog import ToolCatalog
 from penhin.tools.execution import ApprovalFlow, PermissionPolicy, ToolExecutor, run_tool
-from penhin.tools.types import ToolCategory, ToolSpec
+from penhin.tools.types import ToolCategory, ToolOutcome, ToolSpec
 
 
-def echo(value: str) -> Result:
-    return Result.success(value)
+def echo(value: str) -> ToolOutcome:
+    return ToolOutcome(Result.success(value))
 
 
 def test_injected_catalog_limits_execution_to_its_own_specs() -> None:

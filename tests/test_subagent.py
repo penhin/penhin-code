@@ -324,7 +324,7 @@ def test_task_tool_handler_uses_general_subagent() -> None:
     with mocked_orchestration_service("ok") as mocked_run_subagent:
         result = handler(task="inspect work")
 
-    assert result.ok is True
+    assert result.result.ok is True
     mocked_run_subagent.assert_called_once_with("inspect work", agent_type="general")
 
 
@@ -335,7 +335,7 @@ def test_task_tool_handler_uses_requested_subagent_type() -> None:
     with mocked_orchestration_service("ok") as mocked_run_subagent:
         result = handler(task="inspect work", agent_type="explore")
 
-    assert result.ok is True
+    assert result.result.ok is True
     mocked_run_subagent.assert_called_once_with("inspect work", agent_type="explore")
 
 
@@ -365,7 +365,7 @@ def test_verify_tool_handler_uses_verification_subagent() -> None:
     with mocked_orchestration_service("verified") as mocked_run_subagent:
         result = handler(goal="finish work", test_hint="run smoke")
 
-    assert result.ok is True
+    assert result.result.ok is True
     assert "finish work" in mocked_run_subagent.call_args.args[0]
     assert mocked_run_subagent.call_args.kwargs["agent_type"] == "verification"
 
