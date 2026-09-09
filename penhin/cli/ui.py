@@ -1,12 +1,14 @@
 import json
 from dataclasses import dataclass, field
+from datetime import datetime
 from queue import Queue
 from threading import Lock
 from typing import Callable
+from unicodedata import east_asian_width
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.application import Application
-from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.filters import Condition
@@ -14,6 +16,7 @@ from prompt_toolkit.layout.processors import BeforeInput, ConditionalProcessor, 
 from prompt_toolkit.layout import HSplit, Layout
 from prompt_toolkit.layout.containers import Window
 from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.layout.margins import ScrollbarMargin
 from prompt_toolkit.styles import Style
 from prompt_toolkit.widgets import Frame, TextArea
 from rich.columns import Columns
@@ -49,6 +52,126 @@ TERMINAL_STYLE = Style.from_dict({
 })
 
 
+IDENTITY_COLORS = {
+    "chatgpt": "#f8fafc",
+    "openai": "#f8fafc",
+    "deepseek": "#3b82f6",
+    "claude code": "#f97316",
+    "claude": "#f97316",
+    "system": "#94a3b8",
+    "you": "#67e8f9",
+    "penhin": "#22c55e",
+}
+
+
+def _terminal_width(text: str) -> int:
+    return sum(2 if east_asian_width(character) in {"F", "W"} else 1 for character in text)
+
+
+def _fit_terminal_width(text: str, width: int) -> str:
+    fitted: list[str] = []
+    used = 0
+    for character in text:
+        character_width = _terminal_width(character)
+        if used + character_width > width:
+            break
+        fitted.append(character)
+        used += character_width
+    return "".join(fitted) + " " * (width - used)
+
+
+@dataclass
+class MessageCard:
+    """A user-visible terminal transcript event."""
+
+    kind: str
+    name: str
+    content: str
+    color: str
+    created_at: str = field(default_factory=lambda: datetime.now().strftime("%H:%M"))
+    tokens: int | None = None
+
+
+@dataclass
+class CardStream:
+    transcript: "Transcript"
+    card: MessageCard
+
+    def write(self, text: str) -> None:
+        with self.transcript._lock:
+            self.card.content += text
+
+    def finish(self, *, tokens: int | None = None) -> None:
+        with self.transcript._lock:
+            self.card.tokens = tokens
+
+
+@dataclass
+class Transcript:
+    """Structured transcript state owned by the Terminal UI Surface."""
+
+    cards: list[MessageCard] = field(default_factory=list)
+    _lock: Lock = field(default_factory=Lock, init=False, repr=False)
+
+    def message_color(self, name: str) -> str:
+        normalized = name.casefold()
+        for identity, color in IDENTITY_COLORS.items():
+            if identity in normalized:
+                return color
+        # A deterministic, readable fallback for custom Agents.
+        palette = ("#a78bfa", "#f59e0b", "#14b8a6", "#ec4899")
+        return palette[sum(ord(character) for character in normalized) % len(palette)]
+
+    def add_message(self, kind: str, name: str, content: str, *, tokens: int | None = None) -> MessageCard:
+        with self._lock:
+            card = MessageCard(kind, name, content, self.message_color(name), tokens=tokens)
+            self.cards.append(card)
+            return card
+
+    def start_stream(self, name: str) -> CardStream:
+        return CardStream(self, self.add_message("agent", name, ""))
+
+    def render(self) -> str:
+        rendered: list[str] = []
+        for card in self.cards:
+            usage = f"  {card.created_at}" + (f"  {card.tokens} tok" if card.tokens is not None else "")
+            width = max(24, min(100, max((len(line) for line in card.content.splitlines() or [""]), default=0) + 4))
+            rendered.extend((
+                f"╭─ {card.name}{' ' * max(1, width - len(card.name) - len(usage) - 3)}{usage} ─╮",
+                *[f"│ {line[:width - 4]:<{width - 4}} │" for line in (card.content.splitlines() or [""])],
+                "╰" + "─" * (width - 2) + "╯",
+                "",
+            ))
+        return "\n".join(rendered)
+
+    def formatted(self) -> FormattedText:
+        result = FormattedText()
+        with self._lock:
+            cards = tuple(self.cards)
+        outer_width = 60
+        for card in cards:
+            if card.kind == "startup":
+                lines = card.content.splitlines()
+                for index, line in enumerate(lines[:3]):
+                    result.append(("fg:#22d3ee bold" if index != 1 else "fg:#3b82f6 bold", line + "\n"))
+                result.extend((("class:heading", "\n".join(lines[3:]) + "\n\n"),))
+                continue
+            usage = f"{card.created_at}" + (f"  {card.tokens} tok" if card.tokens is not None else "")
+            result.extend((
+                (f"fg:{card.color} bold", "╭" + "─" * (outer_width - 2) + "╮\n"),
+                (f"fg:{card.color} bold", "│ "),
+                (f"fg:{card.color} bold", card.name),
+                ("class:composer", " " * max(1, outer_width - _terminal_width(card.name) - _terminal_width(usage) - 4)),
+                ("class:prompt-label", usage),
+                (f"fg:{card.color} bold", " │\n"),
+            ))
+            for line in card.content.splitlines() or [""]:
+                content = _fit_terminal_width(line, outer_width - 4)
+                result.extend(((f"fg:{card.color} bold", "│ "), ("class:composer", content), (f"fg:{card.color} bold", " │\n")))
+            result.extend(((f"fg:{card.color} bold", "╰" + "─" * (outer_width - 2) + "╯\n\n"),))
+        return result
+
+
 def configure_status(context=None, queue=None) -> None:
     global status_context, status_queue
     status_context, status_queue = context, queue
@@ -70,16 +193,24 @@ def _status_line() -> str:
 class TerminalInterface:
     """A full-screen terminal with a scrollable transcript and pinned composer."""
 
-    def __init__(self, submit: Callable[[str], None], completer=None) -> None:
+    def __init__(self, submit: Callable[[str], None], completer=None, cycle_permission: Callable[[], None] | None = None) -> None:
         self._submit = submit
+        self._cycle_permission = cycle_permission
         self._input_request: Queue[str] | None = None
         self._input_request_lock = Lock()
         self._output_lock = Lock()
-        self.output = TextArea(read_only=True, scrollbar=True, wrap_lines=True, focusable=False)
+        self.transcript = Transcript()
+        self.output = Window(
+            FormattedTextControl(self.transcript.formatted),
+            wrap_lines=True,
+            always_hide_cursor=True,
+            right_margins=[ScrollbarMargin(display_arrows=True)],
+        )
         self.composer = TextArea(
             multiline=False,
             completer=completer,
             complete_while_typing=True,
+            history=InMemoryHistory(),
             prompt=FormattedText([("class:prompt", "❯ ")]),
             style="class:composer",
         )
@@ -95,6 +226,7 @@ class TerminalInterface:
             value = self.composer.text.strip()
             if not value:
                 return
+            self.composer.buffer.history.append_string(value)
             self.composer.buffer.reset()
             if self._input_request is not None:
                 request, self._input_request = self._input_request, None
@@ -119,14 +251,24 @@ class TerminalInterface:
         def exit_terminal(event) -> None:
             self.app.exit()
 
+        @bindings.add("up")
+        def recall_previous(event) -> None:
+            event.current_buffer.history_backward()
+
+        @bindings.add("s-tab")
+        def cycle_permission(_event) -> None:
+            if self._cycle_permission is not None:
+                self._cycle_permission()
+                self.app.invalidate()
+
         @bindings.add("pageup")
         def scroll_output_up(event) -> None:
-            self.output.window.vertical_scroll = max(0, self.output.window.vertical_scroll - 10)
+            self.output.vertical_scroll = max(0, self.output.vertical_scroll - 10)
             self.app.invalidate()
 
         @bindings.add("pagedown")
         def scroll_output_down(event) -> None:
-            self.output.window.vertical_scroll += 10
+            self.output.vertical_scroll += 10
             self.app.invalidate()
 
         status = Window(
@@ -154,9 +296,27 @@ class TerminalInterface:
         self.app.run()
 
     def append(self, text: str) -> None:
+        self.add_message("system", "System", text.rstrip())
+
+    @property
+    def cards(self) -> list[MessageCard]:
+        return self.transcript.cards
+
+    def message_color(self, name: str) -> str:
+        return self.transcript.message_color(name)
+
+    def add_message(self, kind: str, name: str, content: str, *, tokens: int | None = None) -> MessageCard:
         with self._output_lock:
-            updated = self.output.text + text
-            self.output.buffer.set_document(Document(updated, cursor_position=len(updated)), bypass_readonly=True)
+            card = self.transcript.add_message(kind, name, content, tokens=tokens)
+        self.app.invalidate()
+        return card
+
+    def start_stream(self, name: str) -> CardStream:
+        stream = self.transcript.start_stream(name)
+        self._refresh_transcript()
+        return stream
+
+    def _refresh_transcript(self) -> None:
         self.app.invalidate()
 
     def request_input(self, message: str, *, secret: bool = False) -> str:
@@ -186,7 +346,20 @@ def deactivate_terminal() -> None:
 def _append_terminal(text: str) -> bool:
     if active_terminal is None:
         return False
+    if text.startswith("Penhin Code"):
+        active_terminal.add_message(
+            "startup", "Penhin",
+            "\n".join(("  ▄████▄", " ▐█ ◉ █▌", "  ▀█▁█▀", text.strip())),
+        )
+        return True
     active_terminal.append(text)
+    return True
+
+
+def _add_terminal(kind: str, name: str, text: str, *, tokens: int | None = None) -> bool:
+    if active_terminal is None:
+        return False
+    active_terminal.add_message(kind, name, text, tokens=tokens)
     return True
 
 
@@ -341,9 +514,17 @@ def _message_panel(title: str, text: str, color: str) -> Panel:
 class AssistantStream:
     chunks: list[str] = field(default_factory=list)
     live: Live | None = None
+    terminal_stream: CardStream | None = None
 
     def start(self) -> None:
-        if _append_terminal("\nPenhin\n"):
+        if active_terminal is not None:
+            from penhin.runtime import runtime_manager
+            provider = runtime_manager.configured_provider() if runtime_manager.available() else "penhin"
+            name = {
+                "openai": "ChatGPT", "openai-codex": "ChatGPT", "anthropic": "Claude Code",
+                "deepseek": "DeepSeek",
+            }.get(provider, provider.title())
+            self.terminal_stream = active_terminal.start_stream(name)
             return
         console.print()
         self.live = Live(_message_panel("Penhin", "", "green"), console=console, refresh_per_second=12, transient=False)
@@ -351,12 +532,20 @@ class AssistantStream:
 
     def write(self, text: str) -> None:
         self.chunks.append(text)
-        if _append_terminal(text):
+        if self.terminal_stream is not None:
+            self.terminal_stream.write(text)
+            if active_terminal is not None:
+                active_terminal._refresh_transcript()
             return
         if self.live is not None:
             self.live.update(_message_panel("Penhin", "".join(self.chunks), "green"))
 
-    def finish(self) -> None:
+    def finish(self, *, tokens: int | None = None) -> None:
+        if self.terminal_stream is not None:
+            self.terminal_stream.finish(tokens=tokens)
+            if active_terminal is not None:
+                active_terminal._refresh_transcript()
+            return
         if self.live is not None:
             self.live.stop()
             self.live = None
@@ -370,16 +559,16 @@ def start_assistant_message() -> AssistantStream:
     return stream
 
 
-def finish_stream(stream: AssistantStream | None = None) -> None:
+def finish_stream(stream: AssistantStream | None = None, *, tokens: int | None = None) -> None:
     if stream is not None:
-        stream.finish()
+        stream.finish(tokens=tokens)
         return
     if not _append_terminal("\n"):
         console.print()
 
 
 def print_user_message(message: str) -> None:
-    if _append_terminal(f"\nYou\n{message}\n"):
+    if _add_terminal("user", "You", message):
         return
     console.print()
     console.print(_message_panel("You", message, "cyan"))
@@ -420,20 +609,20 @@ def print_device_code(verification_uri: str, user_code: str) -> None:
 
 def print_info(message: str) -> None:
     from penhin.auth.secrets import redact_text
-    if _append_terminal(f"{redact_text(message)}\n"):
+    if _add_terminal("system", "System", redact_text(message)):
         return
     console.print(Text(redact_text(message), style="cyan"))
 
 
 def print_error(message: str) -> None:
     from penhin.auth.secrets import redact_text
-    if _append_terminal(f"Error: {redact_text(message)}\n"):
+    if _add_terminal("system", "System", f"Error: {redact_text(message)}"):
         return
     console.print(Text(redact_text(message), style="red"))
 
 
 def print_json(data: object) -> None:
-    if _append_terminal(json.dumps(data, ensure_ascii=False, indent=2) + "\n"):
+    if _add_terminal("system", "System", json.dumps(data, ensure_ascii=False, indent=2)):
         return
     console.print_json(json.dumps(data, ensure_ascii=False, indent=2))
     

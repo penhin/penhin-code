@@ -143,8 +143,9 @@ def call_llm(context: RunContext, runtime, catalog: ToolCatalog = DEFAULT_TOOL_C
         streamed = True
         stream.write(text)
 
+    response = None
     try:
-        return runtime.call_with_retry(
+        response = runtime.call_with_retry(
             system=build_main_system(),
             messages=messages_for_api(
                 context.messages,
@@ -154,9 +155,14 @@ def call_llm(context: RunContext, runtime, catalog: ToolCatalog = DEFAULT_TOOL_C
             max_tokens=runtime.max_tokens,
             stream_callback=on_stream_text,
         )
+        return response
     finally:
         if streamed:
-            ui.finish_stream(stream)
+            usage = getattr(response, "usage", None)
+            tokens = getattr(usage, "total_tokens", None)
+            if tokens is None and usage is not None:
+                tokens = sum(getattr(usage, field, 0) or 0 for field in ("input_tokens", "output_tokens")) or None
+            ui.finish_stream(stream, tokens=tokens)
 
 def record_llm_response(context: RunContext, response) -> None:
     context.add_assistant_message(response.content)
