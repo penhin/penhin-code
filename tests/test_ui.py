@@ -1,6 +1,11 @@
 import pytest
+from collections import deque
 from types import SimpleNamespace
 from unicodedata import east_asian_width
+
+from prompt_toolkit.keys import Keys
+from prompt_toolkit.mouse_events import MouseButton, MouseEvent, MouseEventType
+from prompt_toolkit.data_structures import Point
 
 from penhin.cli import ui
 
@@ -129,6 +134,58 @@ def test_terminal_scrolls_to_the_latest_rendered_line() -> None:
 
     assert content.cursor_position.y == content.line_count - 1
     assert terminal.output.vertical_scroll > 0
+
+
+def test_terminal_keeps_a_manual_transcript_scroll_position() -> None:
+    terminal = ui.TerminalInterface(lambda _message: None)
+    terminal.add_message("agent", "ChatGPT", "\n".join(f"line {index}" for index in range(30)))
+    initial = terminal.output.content.create_content(width=60, height=100)
+    terminal.output._scroll(initial, width=60, height=10)
+
+    terminal.output.vertical_scroll -= 10
+    after_manual_scroll = terminal.output.content.create_content(width=60, height=100)
+    terminal.output._scroll(after_manual_scroll, width=60, height=10)
+
+    assert terminal.output.vertical_scroll == 14
+
+
+def test_transcript_scrollbar_click_moves_the_viewport() -> None:
+    terminal = ui.TerminalInterface(lambda _message: None)
+    terminal.output.render_info = SimpleNamespace(content_height=34, window_height=10)
+    scrollbar = terminal.output.right_margins[0]
+
+    scrollbar._mouse_handler(MouseEvent(Point(x=0, y=8), MouseEventType.MOUSE_DOWN, MouseButton.LEFT, frozenset()))
+
+    assert terminal.output.vertical_scroll > 0
+
+
+def test_transcript_scrollbar_forwards_wheel_events() -> None:
+    terminal = ui.TerminalInterface(lambda _message: None)
+    terminal.output.vertical_scroll = 14
+    terminal.output.render_info = SimpleNamespace(
+        content_height=34,
+        window_height=10,
+        cursor_position=Point(x=0, y=14),
+        configured_scroll_offsets=SimpleNamespace(top=0, bottom=0),
+    )
+    scrollbar = terminal.output.right_margins[0]
+
+    scrollbar._mouse_handler(MouseEvent(Point(x=0, y=5), MouseEventType.SCROLL_DOWN, MouseButton.NONE, frozenset()))
+
+    assert terminal.output.vertical_scroll == 15
+
+
+def test_down_arrow_moves_forward_through_composer_history() -> None:
+    terminal = ui.TerminalInterface(lambda _message: None)
+    buffer = terminal.composer.buffer
+    buffer._working_lines = deque(["first", "second", ""])
+    buffer.working_index = 2
+    event = SimpleNamespace(current_buffer=buffer)
+
+    terminal.app.key_bindings.get_bindings_for_keys((Keys.Up,))[-1].handler(event)
+    terminal.app.key_bindings.get_bindings_for_keys((Keys.Down,))[-1].handler(event)
+
+    assert buffer.text == ""
 
 
 def test_secret_prompt_interruption_does_not_mask_later_input(monkeypatch) -> None:

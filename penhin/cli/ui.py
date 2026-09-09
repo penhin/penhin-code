@@ -17,8 +17,9 @@ from prompt_toolkit.layout.processors import BeforeInput, ConditionalProcessor, 
 from prompt_toolkit.layout import HSplit, Layout
 from prompt_toolkit.layout.containers import Window
 from prompt_toolkit.layout.controls import FormattedTextControl
-from prompt_toolkit.layout.margins import ScrollbarMargin
 from prompt_toolkit.data_structures import Point
+from prompt_toolkit.layout.margins import ScrollbarMargin
+from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
 from prompt_toolkit.styles import Style
 from prompt_toolkit.widgets import Frame, TextArea
 from rich.columns import Columns
@@ -53,8 +54,8 @@ TERMINAL_STYLE = Style.from_dict({
     "completion-menu.completion.current": "bg:#0e7490 #ffffff bold",
     "completion-menu.meta.completion": "bg:#111827 #64748b",
     "completion-menu.meta.completion.current": "bg:#0e7490 #dbeafe",
-    "scrollbar.background": "bg:#111827",
-    "scrollbar.button": "bg:#334155",
+    "scrollbar.background": "bg:#334155",
+    "scrollbar.button": "bg:#67e8f9 #0f172a",
 })
 
 
@@ -245,6 +246,74 @@ def _status_line() -> str:
     return left + " " * (middle_start - len(left)) + middle + " " * (right_start - middle_start - len(middle)) + right
 
 
+class DraggableScrollbarMargin(ScrollbarMargin):
+    """A high-contrast transcript scrollbar that supports clicking and dragging."""
+
+    def __init__(self, window: Window) -> None:
+        super().__init__(display_arrows=True)
+        self.window = window
+        self._dragging = False
+
+    def create_margin(self, window_render_info, width: int, height: int):
+        fragments = super().create_margin(window_render_info, width, height)
+        return [
+            (style, text, self._mouse_handler) if text != "\n" else (style, text)
+            for style, text, *_ in fragments
+        ]
+
+    def _mouse_handler(self, event: MouseEvent):
+        if event.event_type in {MouseEventType.SCROLL_UP, MouseEventType.SCROLL_DOWN}:
+            return self.window._mouse_handler(event)
+        if event.event_type == MouseEventType.MOUSE_DOWN:
+            self._dragging = True
+        elif event.event_type == MouseEventType.MOUSE_UP:
+            self._dragging = False
+            return None
+        elif event.event_type != MouseEventType.MOUSE_MOVE or not self._dragging:
+            return NotImplemented
+
+        info = self.window.render_info
+        if info is None:
+            return NotImplemented
+        maximum = max(0, info.content_height - info.window_height)
+        track_height = max(1, info.window_height - 2)
+        track_row = min(track_height - 1, max(0, event.position.y - 1))
+        self.window.vertical_scroll = round(maximum * track_row / max(1, track_height - 1))
+        return None
+
+
+class TranscriptWindow(Window):
+    """A transcript window that routes mouse events from its scrollbar margin."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.scrollbar = DraggableScrollbarMargin(self)
+        self.right_margins = [self.scrollbar]
+
+    def _write_to_screen_at_index(self, screen, mouse_handlers, write_position, parent_style, erase_bg) -> None:
+        super()._write_to_screen_at_index(screen, mouse_handlers, write_position, parent_style, erase_bg)
+
+        margin_x = write_position.xpos + write_position.width - 1
+
+        def handle_margin_event(event: MouseEvent):
+            return self.scrollbar._mouse_handler(
+                MouseEvent(
+                    position=Point(x=0, y=event.position.y - write_position.ypos),
+                    event_type=event.event_type,
+                    button=event.button,
+                    modifiers=event.modifiers,
+                )
+            )
+
+        mouse_handlers.set_mouse_handler_for_range(
+            x_min=margin_x,
+            x_max=margin_x + 1,
+            y_min=write_position.ypos,
+            y_max=write_position.ypos + write_position.height,
+            handler=handle_margin_event,
+        )
+
+
 class TerminalInterface:
     """A full-screen terminal with a scrollable transcript and pinned composer."""
 
@@ -258,12 +327,12 @@ class TerminalInterface:
         self._waiting: str | None = None
         self._waiting_cancelled = False
         self._output_cursor_line = 0
+        self._follow_latest = False
         self.transcript = Transcript()
-        self.output = Window(
+        self.output = TranscriptWindow(
             FormattedTextControl(self._main_panel, get_cursor_position=self._latest_output_cursor),
             wrap_lines=True,
             always_hide_cursor=True,
-            right_margins=[ScrollbarMargin(display_arrows=True)],
         )
         self.composer = TextArea(
             multiline=False,
@@ -339,8 +408,17 @@ class TerminalInterface:
             event.current_buffer.history_backward()
 
         @bindings.add("down")
-        @bindings.add("tab")
         def select_next(event) -> None:
+            if self._selection is None:
+                event.current_buffer.history_forward()
+                return
+            options = selection_options()
+            if options:
+                self._selection.selected = (self._selection.selected + 1) % len(options)
+            self.app.invalidate()
+
+        @bindings.add("tab")
+        def select_next_with_tab(event) -> None:
             if self._selection is None:
                 return
             options = selection_options()
@@ -426,12 +504,16 @@ class TerminalInterface:
         return stream
 
     def _refresh_transcript(self) -> None:
+        self._follow_latest = True
         self.output.vertical_scroll = LATEST_SCROLL
         self.app.invalidate()
 
     def _latest_output_cursor(self) -> Point:
         """Anchor the transcript viewport to its final rendered line."""
-        return Point(x=0, y=self._output_cursor_line)
+        if self._follow_latest:
+            self._follow_latest = False
+            return Point(x=0, y=self._output_cursor_line)
+        return Point(x=0, y=min(self._output_cursor_line, self.output.vertical_scroll))
 
     def _main_panel(self) -> FormattedText:
         if self._waiting is not None:
