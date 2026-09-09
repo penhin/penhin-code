@@ -82,6 +82,18 @@ def test_card_renderer_closes_a_rectangular_border() -> None:
     assert lines[-1].startswith("╰") and lines[-1].endswith("╯")
 
 
+def test_card_renderer_embeds_title_and_orders_token_before_time() -> None:
+    transcript = ui.Transcript()
+    card = transcript.add_message("agent", "ChatGPT", "Done", tokens=2371)
+    card.created_at = "12:34"
+
+    rendered = "".join(text for _style, text in transcript.formatted())
+    header = rendered.splitlines()[0]
+
+    assert "╴ ChatGPT ╶" in header
+    assert header.index("2371 tok") < header.index("12:34")
+
+
 def test_card_renderer_wraps_long_reply_without_dropping_text() -> None:
     transcript = ui.Transcript()
     reply = "x" * 130

@@ -102,6 +102,15 @@ def _wrap_terminal_width(text: str, width: int) -> list[str]:
     return lines
 
 
+def _card_header_parts(card: "MessageCard", width: int) -> tuple[str, str, str, str]:
+    """Build a fieldset-like header with the title breaking the top border."""
+    usage = " " + (f"{card.tokens} tok  " if card.tokens is not None else "") + card.created_at
+    prefix = f"╭──╴ {card.name} ╶"
+    suffix = " ─╮"
+    border = "─" * max(1, width - _terminal_width(prefix) - _terminal_width(usage) - _terminal_width(suffix))
+    return prefix, border, usage, suffix
+
+
 @dataclass
 class MessageCard:
     """A user-visible terminal transcript event."""
@@ -156,10 +165,10 @@ class Transcript:
     def render(self) -> str:
         rendered: list[str] = []
         for card in self.cards:
-            usage = f"  {card.created_at}" + (f"  {card.tokens} tok" if card.tokens is not None else "")
             width = max(24, min(100, max((len(line) for line in card.content.splitlines() or [""]), default=0) + 4))
+            prefix, border, usage, suffix = _card_header_parts(card, width)
             rendered.extend((
-                f"╭─ {card.name}{' ' * max(1, width - len(card.name) - len(usage) - 3)}{usage} ─╮",
+                prefix + border + usage + suffix,
                 *[f"│ {line[:width - 4]:<{width - 4}} │" for line in (card.content.splitlines() or [""])],
                 "╰" + "─" * (width - 2) + "╯",
                 "",
@@ -178,14 +187,11 @@ class Transcript:
                     result.append(("fg:#22d3ee bold" if index != 1 else "fg:#3b82f6 bold", line + "\n"))
                 result.extend((("class:heading", "\n".join(lines[3:]) + "\n\n"),))
                 continue
-            usage = f"{card.created_at}" + (f"  {card.tokens} tok" if card.tokens is not None else "")
+            prefix, border, usage, suffix = _card_header_parts(card, outer_width)
             result.extend((
-                (f"fg:{card.color} bold", "╭" + "─" * (outer_width - 2) + "╮\n"),
-                (f"fg:{card.color} bold", "│ "),
-                (f"fg:{card.color} bold", card.name),
-                ("class:composer", " " * max(1, outer_width - _terminal_width(card.name) - _terminal_width(usage) - 4)),
+                (f"fg:{card.color} bold", prefix + border),
                 ("class:prompt-label", usage),
-                (f"fg:{card.color} bold", " │\n"),
+                (f"fg:{card.color} bold", suffix + "\n"),
             ))
             for line in card.content.splitlines() or [""]:
                 for wrapped_line in _wrap_terminal_width(line, outer_width - 4):
