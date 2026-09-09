@@ -16,6 +16,7 @@ class ToolCategory(Enum):
 ToolInput = dict[str, Any]
 ToolSchema = dict[str, Any]
 ApprovalKey = Callable[[ToolInput], str]
+ToolHandler = Callable[..., "ToolOutcome"]
 
 
 @dataclass(frozen=True)
@@ -47,21 +48,11 @@ class ToolSpec:
     description: str
     input_schema: ToolSchema
     category: ToolCategory
-    handler: Callable[..., Result] | None
+    handler: ToolHandler | None
     parallel_safe: bool = False
     available_to_child: bool = True
     available_to_parent: bool = True
     approval: ToolApproval = field(default_factory=ToolApproval)
-
-    def __post_init__(self) -> None:
-        if self.handler is None:
-            return
-        handler = self.handler
-        def invoke(**kwargs):
-            value = handler(**kwargs)
-            return value if isinstance(value, ToolOutcome) else ToolOutcome(value)
-        self.handler = invoke
-
 
 def tool_schema(spec: ToolSpec) -> ToolSchema:
     return {

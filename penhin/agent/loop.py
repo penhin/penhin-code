@@ -189,9 +189,6 @@ def execute_tool_uses(
 def record_tool_results(context: RunContext, tool_results: ToolResults, manual_compact: bool) -> None:
     context.add_tool_results(tool_results)
 
-    if manual_compact:
-        context.request_force_compact()
-
 
 def handle_circuit_open(context: RunContext, error: CircuitBreakerOpen) -> None:
     logger.warning(f"[circuit] {API_UNAVAILABLE_MESSAGE} ({error})")

@@ -4,6 +4,8 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from penhin.tools import CHILD_TOOLS, PARENT_TOOLS, TOOL_SPECS, ToolCategory
@@ -17,8 +19,16 @@ from penhin.tools.builtin.orchestration import (
 from penhin.tools.builtin.shell import command_escapes_workspace, command_is_dangerous, command_references_ignored_path, run_bash
 from penhin.orchestration.models import AgentJob, AgentRole, Artifact
 from penhin.result import Result
+from penhin.tools.task_state import TaskStatusManager
+from penhin.tools.builtin import tasks as task_tools
 
 from tests.helpers import run_spec_tool
+
+
+@pytest.fixture(autouse=True)
+def isolated_task_status(tmp_path, monkeypatch):
+    """Keep task-tool tests independent of any persisted local `.tasks` state."""
+    monkeypatch.setattr(task_tools, "task_status", TaskStatusManager(tmp_path / "tasks"))
 
 
 def test_agent_job_start_returns_persistent_uuid_and_preserves_root() -> None:

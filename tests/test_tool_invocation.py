@@ -42,3 +42,17 @@ def test_effect_failure_stops_later_effects() -> None:
     assert not run.result.ok
     assert invoked == []
     assert run.effects == [{"kind": "fail", "status": "failed", "code": "effect_failed"}]
+
+
+def test_invocation_rejects_invalid_effect_payload_before_executor_mutates() -> None:
+    context = RunContext([], PermissionPolicy(allow={"demo"}), ApprovalFlow.preapproved({"demo"}))
+    mutated = []
+    invocation = ToolInvocation(effect_handlers={
+        "demo": ({"required": {"value": str}, "optional": set()}, lambda _payload, _context: mutated.append(True) or Result.success()),
+    })
+
+    run = invocation.apply_outcome("demo", ToolOutcome(Result.success(), (ToolEffect("demo", {"unexpected": True}),)), context)
+
+    assert not run.result.ok
+    assert run.result.meta["code"] == "invalid_tool_effect"
+    assert mutated == []

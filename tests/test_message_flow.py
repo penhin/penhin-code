@@ -91,10 +91,10 @@ def test_delegation_guard_blocks_broad_tools_and_limits_reads() -> None:
         {"type": "tool_use", "id": "read-4", "name": "read", "input": {"path": "d.py"}},
     ]
 
-    def fake_run_tool(tool_name, tool_input, policy, approval, context=None):
+    def fake_run_tool(_invocation, tool_name, tool_input, policy, approval, context=None, catalog=None):
         return ToolRun(Result.success(f"{tool_name} ok"))
 
-    with patch("penhin.agent.messages.run_tool", side_effect=fake_run_tool) as mocked_run_tool:
+    with patch("penhin.tools.execution.invocation.ToolInvocation.invoke", autospec=True, side_effect=fake_run_tool) as mocked_run_tool:
         tool_results, manual_compact = execute_tool_blocks(
             content,
             build_tool_execution_context(
@@ -105,7 +105,7 @@ def test_delegation_guard_blocks_broad_tools_and_limits_reads() -> None:
         )
 
     assert manual_compact is False
-    assert [call.args[0] for call in mocked_run_tool.call_args_list] == ["task", "read", "read", "read"]
+    assert [call.args[1] for call in mocked_run_tool.call_args_list] == ["task", "read", "read", "read"]
     assert '"code": "post_delegation_broad_tool_blocked"' in tool_results[1]["content"]
     assert '"code": "post_delegation_read_budget_exhausted"' in tool_results[5]["content"]
     assert context.post_delegation_read_budget == 0
@@ -123,10 +123,10 @@ def test_parallel_safe_tool_calls_preserve_result_order() -> None:
         {"type": "tool_use", "id": "read-2", "name": "read", "input": {"path": "b.py"}},
     ]
 
-    def fake_run_tool(tool_name, tool_input, policy, approval, context=None):
+    def fake_run_tool(_invocation, tool_name, tool_input, policy, approval, context=None, catalog=None):
         return ToolRun(Result.success(f"{tool_name}:{tool_input.get('path', '')}"))
 
-    with patch("penhin.agent.messages.run_tool", side_effect=fake_run_tool):
+    with patch("penhin.tools.execution.invocation.ToolInvocation.invoke", autospec=True, side_effect=fake_run_tool):
         tool_results, manual_compact = execute_tool_blocks(
             content,
             build_tool_execution_context(
@@ -155,7 +155,7 @@ def test_tool_execution_context_limits_total_tool_calls() -> None:
         {"type": "tool_use", "id": "read-3", "name": "read", "input": {"path": "c.py"}},
     ]
 
-    def fake_run_tool(tool_name, tool_input, policy, approval, context=None):
+    def fake_run_tool(_invocation, tool_name, tool_input, policy, approval, context=None, catalog=None):
         return ToolRun(Result.success(f"{tool_name}:{tool_input.get('path', '')}"))
 
     execution_context = build_tool_execution_context(
@@ -164,11 +164,11 @@ def test_tool_execution_context_limits_total_tool_calls() -> None:
         context=context,
         max_tool_calls=2,
     )
-    with patch("penhin.agent.messages.run_tool", side_effect=fake_run_tool) as mocked_run_tool:
+    with patch("penhin.tools.execution.invocation.ToolInvocation.invoke", autospec=True, side_effect=fake_run_tool) as mocked_run_tool:
         tool_results, manual_compact = execute_tool_blocks(content, execution_context)
 
     assert manual_compact is False
-    assert [call.args[1]["path"] for call in mocked_run_tool.call_args_list] == ["a.py", "b.py"]
+    assert [call.args[2]["path"] for call in mocked_run_tool.call_args_list] == ["a.py", "b.py"]
     assert [result["tool_use_id"] for result in tool_results] == ["read-1", "read-2", "read-3"]
     assert '"code": "tool_budget_exhausted"' in tool_results[2]["content"]
     assert execution_context.tool_calls_used == 2
@@ -186,10 +186,10 @@ def test_non_parallel_tool_splits_parallel_batches() -> None:
         {"type": "tool_use", "id": "read-2", "name": "read", "input": {"path": "b.py"}},
     ]
 
-    def fake_run_tool(tool_name, tool_input, policy, approval, context=None):
+    def fake_run_tool(_invocation, tool_name, tool_input, policy, approval, context=None, catalog=None):
         return ToolRun(Result.success(f"{tool_name} ok"))
 
-    with patch("penhin.agent.messages.run_tool", side_effect=fake_run_tool) as mocked_run_tool:
+    with patch("penhin.tools.execution.invocation.ToolInvocation.invoke", autospec=True, side_effect=fake_run_tool) as mocked_run_tool:
         tool_results, manual_compact = execute_tool_blocks(
             content,
             build_tool_execution_context(
@@ -200,7 +200,7 @@ def test_non_parallel_tool_splits_parallel_batches() -> None:
         )
 
     assert manual_compact is False
-    assert [call.args[0] for call in mocked_run_tool.call_args_list] == ["read", "task", "read"]
+    assert [call.args[1] for call in mocked_run_tool.call_args_list] == ["read", "task", "read"]
     assert [result["tool_use_id"] for result in tool_results] == ["read-1", "task-1", "read-2"]
 
 
