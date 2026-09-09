@@ -1,7 +1,32 @@
 import pytest
+from types import SimpleNamespace
 from unicodedata import east_asian_width
 
 from penhin.cli import ui
+
+
+def test_status_line_uses_the_active_runtime_context_window(monkeypatch) -> None:
+    from penhin.runtime import runtime_manager
+
+    monkeypatch.setattr(ui, "status_context", SimpleNamespace(messages=[]))
+    monkeypatch.setattr(runtime_manager, "current", lambda: SimpleNamespace(context_window=200_000))
+    monkeypatch.setattr(runtime_manager, "configured_provider", lambda: "openai")
+    monkeypatch.setattr(runtime_manager, "status", lambda: SimpleNamespace(model="gpt-test"))
+    monkeypatch.setattr("penhin.infrastructure.config.get_permission_mode", lambda: "default")
+
+    assert "0.0% · 0.0k / 200k" in ui._status_line()
+
+
+def test_status_line_allows_starting_before_runtime_authentication(monkeypatch) -> None:
+    from penhin.runtime import AuthenticationRequired, runtime_manager
+
+    monkeypatch.setattr(ui, "status_context", SimpleNamespace(messages=[]))
+    monkeypatch.setattr(runtime_manager, "current", lambda: (_ for _ in ()).throw(AuthenticationRequired("login required")))
+    monkeypatch.setattr(runtime_manager, "configured_provider", lambda: "not configured")
+    monkeypatch.setattr(runtime_manager, "status", lambda: SimpleNamespace(model="not configured"))
+    monkeypatch.setattr("penhin.infrastructure.config.get_permission_mode", lambda: "default")
+
+    assert "0.0% · 0.0k / 128k" in ui._status_line()
 
 
 def test_full_screen_transcript_keeps_structured_message_cards() -> None:

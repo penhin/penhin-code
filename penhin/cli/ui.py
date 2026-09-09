@@ -196,13 +196,17 @@ def configure_status(context=None, queue=None) -> None:
 def _status_line() -> str:
     if status_context is None:
         return cli_status_line()
-    from penhin.agent.compaction import BLOCKING_THRESHOLD, estimate_api_tokens
-    used = estimate_api_tokens(status_context.messages, status_context.collapse_keep_recent)
+    from penhin.agent.compaction import estimate_api_tokens
+    used = estimate_api_tokens(status_context.messages)
     from penhin.infrastructure.config import get_permission_mode
-    from penhin.runtime import runtime_manager
+    from penhin.runtime import AuthenticationRequired, runtime_manager
     provider = runtime_manager.configured_provider() or "not configured"
     model = runtime_manager.status().model or "not configured"
-    left = f"{used / BLOCKING_THRESHOLD:.1%} · {used / 1000:.1f}k / {BLOCKING_THRESHOLD / 1000:.0f}k"
+    try:
+        context_window = runtime_manager.current().context_window
+    except AuthenticationRequired:
+        context_window = 128_000
+    left = f"{used / context_window:.1%} · {used / 1000:.1f}k / {context_window / 1000:.0f}k"
     middle = get_permission_mode()
     right = f"{provider}/{model}"
     width = max(40, get_terminal_size((100, 24)).columns - 2)
