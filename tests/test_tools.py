@@ -96,7 +96,6 @@ def test_list_ignores_internal_files() -> None:
     assert not any(path == ".git" or path.startswith(".git/") for path in paths)
     assert not any("__pycache__" in Path(path).parts for path in paths)
     assert ".penhin_todos.json" not in paths
-    assert not any(path == ".transcripts" or path.startswith(".transcripts/") for path in paths)
     assert not any(path == ".tasks" or path.startswith(".tasks/") for path in paths)
     assert ".env" not in paths
 

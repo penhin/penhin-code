@@ -13,6 +13,8 @@ All notable changes to this project will be documented in this file. The format 
 ### Changed
 
 - Replaced the transcript persistence API with a single session store under `.penhin/sessions`; old message-only transcript files are no longer migrated or resumed.
+- Start a new session by default; resume is available only through `--resume <id>`, including for `--once` runs.
+- Removed the redundant `--new` flag and obsolete transcript persistence module.
 - Removed readers for obsolete persisted collapse metadata and legacy task-record shapes.
 
 ## [0.1.1] - 2026-08-02

@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from penhin.cli import main as main_module
 from penhin.agent import session_store
-from penhin.agent.transcript import TranscriptStore
+from penhin.agent import loop as loop_module
 
 
 def test_parse_session_args() -> None:
@@ -23,6 +23,8 @@ def test_parse_session_args() -> None:
     assert once_args.once == ["hello", "world"]
     assert main_module.parse_args(["--model", "gpt-4.1"]).model == "gpt-4.1"
     assert main_module.parse_args(["--provider", "openai"]).provider == "openai"
+    with pytest.raises(SystemExit):
+        main_module.parse_args(["--new"])
 
 
 @pytest.mark.parametrize("signal", [EOFError(), KeyboardInterrupt()])
@@ -103,22 +105,63 @@ def test_resume_uses_specific_session() -> None:
         assert resumed.build_context() == first_messages
 
 
+def test_default_start_creates_a_new_session_and_resume_is_explicit(monkeypatch) -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = session_store.SessionStore(Path(tmpdir))
+        monkeypatch.setattr(main_module, "sessions", store)
+
+        first = main_module._session_for_args(main_module.parse_args([]))
+        second = main_module._session_for_args(main_module.parse_args([]))
+        resumed = main_module._session_for_args(main_module.parse_args(["--resume", first.id]))
+
+        assert first.path != second.path
+        assert resumed.path == first.path
+
+
+def test_resume_of_a_missing_session_fails_clearly(monkeypatch) -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        monkeypatch.setattr(main_module, "sessions", session_store.SessionStore(Path(tmpdir)))
+
+        with pytest.raises(SystemExit, match="Session resume failed: Session not found"):
+            main_module._session_for_args(main_module.parse_args(["--resume", "missing"]))
+
+
+def test_once_appends_to_the_selected_session(monkeypatch) -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        manager = session_store.SessionStore(Path(tmpdir)).new([
+            {"role": "user", "content": "earlier"},
+        ])
+        monkeypatch.setattr(
+            loop_module,
+            "agent_loop",
+            lambda context: context.add_assistant_message("done"),
+        )
+
+        loop_module.run_once_prompt("continue", manager)
+
+        assert manager.build_context() == [
+            {"role": "user", "content": "earlier"},
+            {"role": "user", "content": "continue"},
+            {"role": "assistant", "content": "done"},
+        ]
+
+
 def test_print_session_list_marks_latest() -> None:
-    original_transcripts = main_module.transcripts
+    original_sessions = main_module.sessions
     output = StringIO()
 
     with tempfile.TemporaryDirectory() as tmpdir:
         try:
-            store = TranscriptStore(Path(tmpdir))
-            store.save([{"role": "user", "content": "first"}])
-            latest = store.save([{"role": "user", "content": "latest"}])
-            latest_id = latest.stem.removeprefix("transcript_")[:12]
-            main_module.transcripts = store
+            store = session_store.SessionStore(Path(tmpdir))
+            store.new([{"role": "user", "content": "first"}])
+            latest = store.new([{"role": "user", "content": "latest"}])
+            latest_id = session_store.session_id_from_path(latest.path)[:12]
+            main_module.sessions = store
 
             with contextlib.redirect_stdout(output):
                 main_module.print_session_list()
         finally:
-            main_module.transcripts = original_transcripts
+            main_module.sessions = original_sessions
 
     lines = output.getvalue().splitlines()
     assert lines[0] == "mark | id | updated | msgs | request"

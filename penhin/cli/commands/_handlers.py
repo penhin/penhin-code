@@ -606,14 +606,23 @@ def handle_tree_command(args: list[str], context: RunContext | None = None):
         if not lines:
             ui.print_info("tree: empty session")
             return
-        for line in lines:
-            ui.print_info(line)
-        return
-    if len(args) != 1:
-        ui.print_error("Usage: /tree [entry-id]")
-        return
+        options = tuple((line.split()[1], line) for line in lines)
+        try:
+            entry_id = ui.prompt_select(
+                "Session tree",
+                options,
+                initial_value=manager.leaf_id,
+                group_by_prefix=False,
+            )
+        except KeyboardInterrupt:
+            return
+    else:
+        if len(args) != 1:
+            ui.print_error("Usage: /tree [entry-id]")
+            return
+        entry_id = args[0]
     try:
-        entry_id = manager.resolve_entry_id(args[0])
+        entry_id = manager.resolve_entry_id(entry_id)
         context.messages[:] = manager.branch(entry_id)
     except (KeyError, ValueError) as error:
         ui.print_error(str(error))

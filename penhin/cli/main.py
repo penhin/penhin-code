@@ -7,7 +7,7 @@ import sys
 import time
 from threading import Thread
 
-from penhin.agent.loop import agent_loop, run_once
+from penhin.agent.loop import agent_loop, run_once_prompt
 from penhin.cli.commands import handle_local_command, setup_command_completion
 from penhin.infrastructure.config import get_permission_mode, get_version
 from penhin.agent.context import RunContext
@@ -17,7 +17,7 @@ from penhin.plugins.bootstrap import plugin_runtime_for_session
 from penhin.tools.execution import runtime_permission_setup
 from penhin.tools.registry import tool_names
 from penhin.tools.builtin.workspace import workspace_info
-from penhin.agent.transcript import transcripts
+from penhin.agent.session_store import sessions
 from penhin.cli import ui
 from penhin.cli.prompt_queue import PromptQueue
 from penhin.cli.ui import print_error, print_info, print_user_message, print_welcome
@@ -60,7 +60,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--version", action="version", version=f"%(prog)s {get_version()}")
     parser.add_argument("--once", "-o", nargs="+", metavar="TEXT", help="run one prompt and exit")
     parser.add_argument("--sessions", "-s", action="store_true", help="list saved sessions")
-    parser.add_argument("--new", "-n", action="store_true", help="start without resuming history")
     parser.add_argument("--inspect-session", "-i", metavar="ID", help="show details for a session")
     parser.add_argument("--events", "-e", type=non_negative_int, default=8, metavar="N", help="number of inspect events to show")
     parser.add_argument("--resume", "-r", metavar="ID", help="resume a specific session")
@@ -101,16 +100,13 @@ def main() -> None:
     logger.info(workspace_summary_line())
 
     if args.once:
+        session_manager = _session_for_args(args)
         print_user_message(" ".join(args.once))
-        run_once(" ".join(args.once))
+        run_once_prompt(" ".join(args.once), session_manager)
         return
-    
-    if args.new:
-        messages, session_path = transcripts.load_session(resume=False)
-    elif args.resume:
-        messages, session_path = transcripts.load_session(resume=True, session_ref=args.resume)
-    else:
-        messages, session_path = transcripts.load_session(resume=True)
+
+    session_manager = _session_for_args(args)
+    messages = session_manager.build_context()
 
     command_completer = setup_command_completion()
     permission_mode = get_permission_mode()
@@ -125,7 +121,8 @@ def main() -> None:
         messages=messages,
         policy=policy,
         approval=approval,
-        session_path=session_path,
+        session_path=session_manager.path,
+        session_manager=session_manager,
     )
     context.plugin_runtime = plugin_runtime_for_session()
     workspace = workspace_info()
@@ -135,13 +132,13 @@ def main() -> None:
 
     def run_pending_prompts() -> None:
         while (prompt := pending.next()) is not None:
-            context.add_user_message(prompt)
             try:
+                context.add_user_message(prompt)
                 agent_loop(context)
             except AuthenticationRequired as error:
                 print_error(str(error))
-            finally:
-                context.session_path = transcripts.save_session(context.session_path, context.messages)
+            except OSError as error:
+                print_error(f"Session persistence failed: {error}")
 
     terminal = None
 
@@ -196,18 +193,18 @@ def run_cli() -> int:
 
 
 def print_session_list() -> None:
-    sessions = sorted(
-        transcripts.list(),
+    stored_sessions = sorted(
+        sessions.list(),
         key=lambda session: session.updated_at,
         reverse=True
     )
-    if not sessions:
+    if not stored_sessions:
         print("No sessions found.")
         return
 
-    latest_path = transcripts.latest()
+    latest_path = sessions.latest()
     print("mark | id | updated | msgs | request")
-    for session in sessions:
+    for session in stored_sessions:
         updated = time.strftime(
             "%Y-%m-%d %H:%M:%S",
             time.localtime(session.updated_at),
@@ -219,7 +216,7 @@ def print_session_list() -> None:
 
 def print_session_inspect(session_ref: str, event_limit: int = 8) -> None:
     try:
-        session = transcripts.inspect(session_ref, event_limit=event_limit)
+        session = sessions.inspect(session_ref, event_limit=event_limit)
     except Exception as error:
         print(f"Session inspect failed: {error}")
         sys.exit(1)
@@ -240,6 +237,15 @@ def print_session_inspect(session_ref: str, event_limit: int = 8) -> None:
     print(f"events: {len(session.recent_events)} of {session.event_count}")
     for event in session.recent_events:
         print(f"- {event}")
+
+
+def _session_for_args(args: argparse.Namespace):
+    if not args.resume:
+        return sessions.new()
+    try:
+        return sessions.resume(args.resume)
+    except (FileNotFoundError, ValueError) as error:
+        raise SystemExit(f"Session resume failed: {error}") from error
 
 
 if __name__ == "__main__":

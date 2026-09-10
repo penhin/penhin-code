@@ -12,7 +12,6 @@ IGNORED_PATH_PARTS = [
     ".penhin",
     ".penhin_todos.json",
     ".tasks",
-    ".transcripts",
     ".venv",
     ".env",
     ".git-credentials",

@@ -22,6 +22,22 @@ def test_status_line_uses_the_active_runtime_context_window(monkeypatch) -> None
     assert "0.0% · 0.0k / 200k" in ui._status_line()
 
 
+def test_status_line_keeps_the_entire_model_name_within_the_toolbar(monkeypatch) -> None:
+    from penhin.runtime import runtime_manager
+
+    monkeypatch.setattr(ui, "status_context", SimpleNamespace(messages=[]))
+    monkeypatch.setattr(runtime_manager, "current", lambda: SimpleNamespace(context_window=200_000))
+    monkeypatch.setattr(runtime_manager, "configured_provider", lambda: "openai")
+    monkeypatch.setattr(runtime_manager, "status", lambda: SimpleNamespace(model="luna"))
+    monkeypatch.setattr("penhin.infrastructure.config.get_permission_mode", lambda: "default")
+    monkeypatch.setattr(ui, "get_terminal_size", lambda _fallback: SimpleNamespace(columns=100))
+
+    toolbar = f"  {ui._status_line()}  "
+
+    assert toolbar.endswith("openai/luna  ")
+    assert ui._terminal_width(toolbar) <= 100
+
+
 def test_status_line_allows_starting_before_runtime_authentication(monkeypatch) -> None:
     from penhin.runtime import AuthenticationRequired, runtime_manager
 
@@ -283,3 +299,15 @@ def test_select_rejects_an_ambiguous_search_term(monkeypatch) -> None:
             ("deepseek-v4-pro", "DeepSeek V4 Pro"),
             ("deepseek-v4-flash", "DeepSeek V4 Flash"),
         ))
+
+
+def test_selection_surface_replaces_status_with_keyboard_help() -> None:
+    terminal = object.__new__(ui.TerminalInterface)
+    terminal._selection = ui.SelectionSurface(
+        "Session tree",
+        (("entry", "entry"),),
+        ui.Queue(maxsize=1),
+        scroll_position=0,
+    )
+
+    assert "↑/↓ move · Enter confirm · Esc cancel · type to filter" in terminal._bottom_toolbar()[0][1]

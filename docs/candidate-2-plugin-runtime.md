@@ -50,7 +50,7 @@ runtime.close()                         # closes every active host
 2. Add deactivation. Write a contract test proving the next catalog excludes the Plugin immediately and the host is closed.
 3. Add effective configuration and Artifact lock validation. Test project-over-global precedence, digest mismatch, and failed Plugin isolation.
 4. Integrate runtime creation at the application composition root and pass `runtime.catalog()` into the agent loop before each model turn.
-5. Add explicit session commands for activation and deactivation. Record audit events in the transcript; do not mutate persistent configuration.
+5. Add explicit session commands for activation and deactivation. Record audit events in the session; do not mutate persistent configuration.
 6. Route commands, skills, and hooks through the same runtime lifecycle. Test capability-policy intersection and cleanup on normal and failed runs.
 
 ## Acceptance tests
@@ -62,7 +62,7 @@ runtime.close()                         # closes every active host
 - A project Plugin overrides a same-named global Plugin.
 - A Plugin cannot request a capability absent from either its manifest or the user policy.
 - Updating a Plugin does not change the Artifact used by an active run unless the user explicitly requests reload.
-- Session activation/deactivation appears in the transcript and does not alter persistent `enabled` configuration.
+- Session activation/deactivation appears in the session and does not alter persistent `enabled` configuration.
 
 ## Non-goals
 

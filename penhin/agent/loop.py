@@ -18,7 +18,6 @@ from penhin.runtime.manager import log_usage
 from penhin.tools.execution import ApprovalFlow, PermissionPolicy, approval_key, run_tool
 from penhin.tools.catalog import ToolCatalog
 from penhin.tools.registry import DEFAULT_TOOL_CATALOG, PARENT_TOOLS
-from penhin.agent.transcript import transcripts
 
 
 API_UNAVAILABLE_MESSAGE = "API is temporarily unavailable because the circuit breaker is open. Please try again later."
@@ -238,15 +237,21 @@ def agent_loop(context: RunContext, catalog: ToolCatalog = DEFAULT_TOOL_CATALOG)
     return run_agent_state_machine(context, build_agent_deps(runtime, catalog, catalog_provider))
 
 
-def run_once(query: str) -> None:
+def run_once(context: RunContext) -> AgentState:
+    return agent_loop(context)
+
+
+def run_once_prompt(query: str, session_manager) -> AgentState:
     from penhin.infrastructure.config import get_permission_mode
     from penhin.tools.execution import runtime_permission_setup
 
     policy, approval = runtime_permission_setup(get_permission_mode())
     context = RunContext(
-        messages=[{"role": "user", "content": query}],
+        messages=session_manager.build_context(),
         policy=policy,
         approval=approval,
+        session_path=session_manager.path,
+        session_manager=session_manager,
     )
-    agent_loop(context)
-    transcripts.save(context.messages)
+    context.add_user_message(query)
+    return agent_loop(context)

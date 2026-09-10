@@ -215,6 +215,7 @@ class SelectionSurface:
     reply: Queue[str | None]
     scroll_position: int
     selected: int = 0
+    group_by_prefix: bool = True
 
     def matching_options(self, query: str) -> list[tuple[str, str]]:
         normalized = query.casefold()
@@ -242,7 +243,7 @@ def _status_line() -> str:
     left = f"{used / context_window:.1%} · {used / 1000:.1f}k / {context_window / 1000:.0f}k"
     middle = get_permission_mode()
     right = f"{provider}/{model}"
-    width = max(40, get_terminal_size((100, 24)).columns - 2)
+    width = max(40, get_terminal_size((100, 24)).columns - 4)
     middle_start = max(len(left) + 2, (width - len(middle)) // 2)
     right_start = max(middle_start + len(middle) + 2, width - len(right))
     return left + " " * (middle_start - len(left)) + middle + " " * (right_start - middle_start - len(middle)) + right
@@ -488,7 +489,7 @@ class TerminalInterface:
             self.app.invalidate()
 
         status = Window(
-            FormattedTextControl(lambda: [("class:bottom-toolbar", f"  {_status_line()}  ")]),
+            FormattedTextControl(self._bottom_toolbar),
             height=1,
             style="class:bottom-toolbar",
         )
@@ -556,7 +557,7 @@ class TerminalInterface:
                 rows.append(("class:prompt-label", "No matching choices\n"))
             last_provider = ""
             for index, (value, label) in enumerate(options):
-                provider = value.partition("/")[0]
+                provider = value.partition("/")[0] if self._selection.group_by_prefix else ""
                 if provider and provider != last_provider:
                     rows.append(("class:prompt-label", f"\n{provider}\n"))
                     last_provider = provider
@@ -567,12 +568,32 @@ class TerminalInterface:
         self._output_cursor_line = max(0, sum(text.count("\n") for _style, text, *_ in rows))
         return rows
 
-    def request_select(self, message: str, options: tuple[tuple[str, str], ...]) -> str:
+    def _bottom_toolbar(self) -> FormattedText:
+        if self._selection is not None:
+            return [("class:bottom-toolbar", "  ↑/↓ move · Enter confirm · Esc cancel · type to filter  ")]
+        return [("class:bottom-toolbar", f"  {_status_line()}  ")]
+
+    def request_select(
+        self,
+        message: str,
+        options: tuple[tuple[str, str], ...],
+        *,
+        initial_value: str | None = None,
+        group_by_prefix: bool = True,
+    ) -> str:
         """Present a temporary selection page and restore the transcript on exit."""
         if not options:
             raise ValueError("selection requires at least one option")
         reply: Queue[str | None] = Queue(maxsize=1)
-        self._selection = SelectionSurface(message, options, reply, self.output.vertical_scroll)
+        selected = next((index for index, (value, _label) in enumerate(options) if value == initial_value), 0)
+        self._selection = SelectionSurface(
+            message,
+            options,
+            reply,
+            self.output.vertical_scroll,
+            selected=selected,
+            group_by_prefix=group_by_prefix,
+        )
         self.composer.buffer.reset()
         self.composer.prompt = FormattedText([("class:prompt", "Filter: ")])
         self.composer.buffer.input_processors = []
@@ -732,9 +753,20 @@ def prompt_confirm(message: str, default: bool = False) -> bool:
     return answer in ({"", "y", "yes"} if default else {"y", "yes"})
 
 
-def prompt_select(message: str, options: tuple[tuple[str, str], ...]) -> str:
+def prompt_select(
+    message: str,
+    options: tuple[tuple[str, str], ...],
+    *,
+    initial_value: str | None = None,
+    group_by_prefix: bool = True,
+) -> str:
     if active_terminal is not None:
-        return active_terminal.request_select(message, options)
+        return active_terminal.request_select(
+            message,
+            options,
+            initial_value=initial_value,
+            group_by_prefix=group_by_prefix,
+        )
     else:
         console.print(message, style="cyan")
         for index, (_value, label) in enumerate(options, 1):

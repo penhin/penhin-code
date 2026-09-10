@@ -50,7 +50,7 @@ python -m pip install --user -e .
 /help                  查看全部本地命令
 ```
 
-Penhin 默认会恢复最近的会话。使用 `penhin --new` 可开始新会话，使用 `penhin --sessions` 可查看已有会话。
+Penhin 默认创建新会话。使用 `penhin --resume <id>` 恢复指定会话，使用 `penhin --sessions` 可查看已有会话。
 
 ## 验证安装
 

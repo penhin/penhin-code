@@ -497,6 +497,29 @@ def test_tree_command_moves_leaf_and_next_append_creates_branch(tmp_path: Path) 
     assert {entry["id"] for entry in manager.children(root)} == {original, alternate}
 
 
+def test_tree_command_opens_a_branch_picker_when_no_entry_is_given(tmp_path: Path) -> None:
+    manager = SessionManager.create(tmp_path)
+    root = manager.append_message({"role": "user", "content": "question"})
+    alternate = manager.append_message({"role": "assistant", "content": "alternate"})
+    context = empty_context()
+    context.session_manager = manager
+    context.session_path = manager.path
+    context.messages = manager.build_context()
+
+    with (
+        patch("penhin.cli.commands._handlers.ui.prompt_select", return_value=root) as select,
+        patch("penhin.cli.commands._handlers.ui.print_info"),
+    ):
+        assert router.handle_local_command("/tree", context) is True
+
+    assert select.call_args.args[0] == "Session tree"
+    assert {value for value, _label in select.call_args.args[1]} == {root, alternate}
+    assert select.call_args.kwargs["initial_value"] == alternate
+    assert select.call_args.kwargs["group_by_prefix"] is False
+    assert manager.leaf_id == root
+    assert context.messages == [{"role": "user", "content": "question"}]
+
+
 def test_fork_and_rename_commands_replace_active_session(tmp_path: Path) -> None:
     store = SessionStore(tmp_path)
     manager = store.new([{"role": "user", "content": "question"}])
