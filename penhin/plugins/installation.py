@@ -7,6 +7,7 @@ import hmac
 import json
 import shutil
 import subprocess
+import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -26,6 +27,14 @@ class PluginArtifact:
     digest: str
     dependencies: tuple[str, ...] = ()
     publisher: str = ""
+
+
+@dataclass(frozen=True)
+class InstalledPluginArtifact:
+    """A verified Artifact materialised in a durable Plugin store."""
+
+    artifact: PluginArtifact
+    path: Path
 
 
 def _digest_tree(root: Path, *, exclude: set[str] | None = None) -> str:
@@ -108,6 +117,47 @@ def resolve_plugin_source(source: str, destination: Path, *, trust_roots: dict[s
     dependencies = tuple(sorted(item["metadata"]["name"] + "==" + item["metadata"]["version"] for item in data.get("install", [])))
     artifact = PluginArtifact(source, source, _digest_tree(target), dependencies)
     return verify_plugin_artifact(target, trust_roots) if trust_roots is not None else artifact
+
+
+def install_plugin_artifact(
+    name: str,
+    source: str,
+    installation_root: Path,
+    *,
+    trust_roots: dict[str, str],
+) -> InstalledPluginArtifact:
+    """Fetch, verify, and retain one immutable Artifact without activating it.
+
+    Artifact directories are content-addressed so an update cannot mutate the
+    files used by a running Plugin host.  The caller records the returned path
+    in PluginManager only after this function succeeds.
+    """
+    if not name or not name.replace("_", "").isalnum():
+        raise ValueError("Plugin name must be alphanumeric with optional underscores")
+    installation_root.mkdir(parents=True, exist_ok=True)
+    staging = installation_root / f".staging-{name}-{uuid.uuid4().hex}"
+    try:
+        resolved = resolve_plugin_source(source, staging)
+        staged_artifact = staging / "artifact"
+        verified = verify_plugin_artifact(staged_artifact, trust_roots)
+        target = installation_root / name / verified.digest
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            shutil.rmtree(staging)
+        else:
+            shutil.move(str(staged_artifact), str(target))
+            shutil.rmtree(staging, ignore_errors=True)
+        artifact = PluginArtifact(
+            source=source,
+            resolved=resolved.resolved,
+            digest=verified.digest,
+            dependencies=verified.dependencies,
+            publisher=verified.publisher,
+        )
+        return InstalledPluginArtifact(artifact, target)
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
 
 
 def update_project_lock(name: str, artifact: PluginArtifact, lock_file: Path = LOCK_FILE) -> dict:

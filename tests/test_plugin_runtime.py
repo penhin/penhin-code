@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 import pytest
 
@@ -281,6 +282,70 @@ def test_reload_command_delegates_to_runtime() -> None:
     with patch("penhin.cli.commands.plugins.ui.print_json") as printed:
         handle_plugin_command(["reload"], context)
     assert printed.called
+
+
+def test_install_command_materializes_then_registers_a_project_plugin(tmp_path: Path) -> None:
+    service = PluginManager(tmp_path / "global" / "plugins.json", tmp_path / "project" / "plugins.json")
+    receipt = SimpleNamespace(
+        path=tmp_path / "project" / "plugins" / "weather" / "digest",
+        artifact=SimpleNamespace(source="https://example/weather", resolved="revision", digest="digest"),
+    )
+    with (
+        patch("penhin.cli.commands.plugins.manager", return_value=service),
+        patch("penhin.cli.commands.plugins.install_plugin_artifact", return_value=receipt) as install,
+        patch("penhin.cli.commands.plugins.read_local_plugin_manifest"),
+        patch("penhin.cli.commands.plugins.update_project_lock") as lock,
+        patch("penhin.cli.commands.plugins.ui.print_info") as printed,
+    ):
+        handle_plugin_command(["install", "weather", "https://example/weather"])
+
+    install.assert_called_once()
+    assert service.effective()["weather"]["source"] == str(receipt.path)
+    lock.assert_called_once_with("weather", receipt.artifact, tmp_path / "project" / "plugins.lock.json")
+    assert "authorize it before activation" in printed.call_args.args[0]
+
+
+def test_short_authorize_command_uses_the_verified_installed_artifact(tmp_path: Path) -> None:
+    service = PluginManager(tmp_path / "global" / "plugins.json", tmp_path / "project" / "plugins.json")
+    installed = tmp_path / "project" / "plugins" / "weather" / "digest"
+    service.install("weather", str(installed))
+    artifact = SimpleNamespace(resolved=str(installed), digest="digest")
+    manifest = SimpleNamespace(capabilities={"network", "weather"})
+    with (
+        patch("penhin.cli.commands.plugins.manager", return_value=service),
+        patch("penhin.cli.commands.plugins.verify_plugin_artifact", return_value=artifact),
+        patch("penhin.cli.commands.plugins.read_local_plugin_manifest", return_value=manifest),
+        patch("penhin.cli.commands.plugins.ui.print_info"),
+    ):
+        handle_plugin_command(["authorize", "weather"])
+
+    assert service.authorization_for("weather", str(installed), "digest", ["network", "weather"]) == "approved"
+
+
+def test_add_command_installs_authorizes_reloads_and_activates(tmp_path: Path) -> None:
+    service = PluginManager(tmp_path / "global" / "plugins.json", tmp_path / "project" / "plugins.json")
+    installed = tmp_path / "project" / "plugins" / "weather" / "digest"
+    receipt = SimpleNamespace(path=installed, artifact=SimpleNamespace(source="source", resolved="revision", digest="digest"))
+    artifact = SimpleNamespace(resolved=str(installed), digest="digest")
+    manifest = SimpleNamespace(capabilities={"weather"})
+    runtime = MagicMock()
+    runtime.reload.return_value = Result.success()
+    runtime.activate.return_value = Result.success()
+    runtime.catalog.return_value = ToolCatalog([])
+    context = RunContext([], PermissionPolicy(set()), ApprovalFlow.require_confirmation(set()), plugin_runtime=runtime)
+    with (
+        patch("penhin.cli.commands.plugins.manager", return_value=service),
+        patch("penhin.cli.commands.plugins.install_plugin_artifact", return_value=receipt),
+        patch("penhin.cli.commands.plugins.read_local_plugin_manifest", return_value=manifest),
+        patch("penhin.cli.commands.plugins.verify_plugin_artifact", return_value=artifact),
+        patch("penhin.cli.commands.plugins.update_project_lock"),
+        patch("penhin.cli.commands.plugins.ui.print_info"),
+    ):
+        handle_plugin_command(["add", "weather", "https://example/weather"], context)
+
+    assert service.authorization_for("weather", str(installed), "digest", ["weather"]) == "approved"
+    runtime.reload.assert_called_once_with()
+    runtime.activate.assert_called_once_with("weather")
 
 
 def test_revocation_immediately_withdraws_an_active_plugin() -> None:

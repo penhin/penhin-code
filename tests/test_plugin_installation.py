@@ -7,10 +7,43 @@ import json
 import pytest
 
 from penhin.plugins.installation import (
+    OFFICIAL_PUBLISHER_TRUST_ROOTS,
+    install_plugin_artifact,
     resolve_plugin_source,
     update_project_lock,
     verify_plugin_artifact,
 )
+
+
+def _write_signed_artifact(root: Path, name: str = "sample") -> None:
+    root.mkdir()
+    (root / "penhin-plugin.yaml").write_text(f"api_version: 1\nname: {name}\ntools: []\n", encoding="utf-8")
+    (root / "deps.lock").write_text("locked", encoding="utf-8")
+    (root / "model.bin").write_text("locked", encoding="utf-8")
+    digest = hashlib.sha256()
+    for path in sorted(root.iterdir()):
+        if path.is_file() and path.name != "penhin-artifact.json":
+            digest.update(path.name.encode()); digest.update(path.read_bytes())
+    record = {
+        "publisher": "penhin-official", "tree_digest": digest.hexdigest(),
+        "dependencies": {"deps.lock": hashlib.sha256(b"locked").hexdigest()},
+        "model_assets": {"model.bin": hashlib.sha256(b"locked").hexdigest()},
+    }
+    record["signature"] = hmac.new(
+        b"penhin-official-v1", json.dumps(record, sort_keys=True, separators=(",", ":")).encode(), hashlib.sha256,
+    ).hexdigest()
+    (root / "penhin-artifact.json").write_text(json.dumps(record), encoding="utf-8")
+
+
+def test_install_materializes_a_verified_content_addressed_artifact(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    _write_signed_artifact(source)
+
+    receipt = install_plugin_artifact("sample", str(source), tmp_path / "plugins", trust_roots=OFFICIAL_PUBLISHER_TRUST_ROOTS)
+
+    assert receipt.path == tmp_path / "plugins" / "sample" / receipt.artifact.digest
+    assert (receipt.path / "penhin-plugin.yaml").is_file()
+    assert receipt.artifact.resolved == str(source.resolve())
 
 
 def test_local_source_is_hashed_and_project_lock_is_deterministic(tmp_path: Path) -> None:

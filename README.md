@@ -52,6 +52,24 @@ python -m pip install --user -e .
 
 Penhin 默认创建新会话。使用 `penhin --resume <id>` 恢复指定会话，使用 `penhin --sessions` 可查看已有会话。
 
+## 插件
+
+插件必须由用户显式安装，既不会随 Penhin 内置，也不会自动激活。安装已签名、已验证的 Artifact 后，再授权并在当前会话中激活：
+
+```text
+/plugin install <name> <source> [--project|--global]
+/plugin authorize <name>
+/plugin activate <name>
+```
+
+若要一步完成验证安装、授权并在当前会话启用，可使用：
+
+```text
+/plugin add <name> <source> [--project|--global]
+```
+
+`--project` 是默认值：Artifact 和 `plugins.lock.json` 写入当前项目的 `.penhin/`。`--global` 则写入 `~/.penhin/`。安装时会验证 Artifact 的发布者、签名、内容摘要、依赖锁和模型资产锁。更新也采用相同的验证安装流程；当前会话仅会在执行 `/plugin reload` 后切换到新 Artifact。
+
 ## 验证安装
 
 ```powershell
