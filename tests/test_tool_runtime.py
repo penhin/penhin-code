@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from penhin.tools.execution import service as tool_runtime
 from penhin.tools.execution.observability import input_summary
+from penhin.approval_rules import bash_command_operations, bash_prefix_matches, suggest_bash_prefix
 from penhin.agent.context import RunContext
 from penhin.result import Result
 from penhin.tools.execution import (
@@ -124,6 +125,15 @@ def test_bash_prefix_approval_allows_matching_commands() -> None:
     assert approval.is_approved("bash", {"command": "pytest -q"})
     assert not approval.is_approved("bash", {"command": "pytest -q && rm -rf ."})
     assert not approval.is_approved("bash", {"command": "python -m pytest -q"})
+
+
+def test_bash_prefix_rules_refuse_compound_or_ambiguous_shell_syntax() -> None:
+    assert bash_command_operations("pytest -q && rm -rf scratch") == [["pytest", "-q"], ["rm", "-rf", "scratch"]]
+    assert bash_command_operations("pytest -q > result.txt") is None
+    assert bash_command_operations("pytest $(echo hidden)") is None
+    assert suggest_bash_prefix("pytest -q && rm -rf scratch") is None
+    assert not bash_prefix_matches("pytest -q; rm -rf scratch", "pytest:*")
+    assert not bash_prefix_matches("pytest -q > result.txt", "pytest:*")
 
 
 def test_tool_runtime_input_summary_hides_sensitive_values() -> None:
