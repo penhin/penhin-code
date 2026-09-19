@@ -184,6 +184,17 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         available_to_parent=True,
         approval=ToolApproval(),
     ),
+    "plan": ToolSpec(
+        name="plan",
+        description="Enter planning mode before proposing implementation work.",
+        input_schema=object_schema(),
+        category=ToolCategory.state,
+        handler=declared_effects(ToolEffect("enter_plan_mode", {})),
+        parallel_safe=False,
+        available_to_child=False,
+        available_to_parent=True,
+        approval=ToolApproval(),
+    ),
     "exit_plan": ToolSpec(
         name="exit_plan",
         description=(
@@ -568,6 +579,8 @@ TOOL_SPECS: dict[str, ToolSpec] = {
 
 
 CHILD_TOOLS = [tool_schema(spec) for spec in TOOL_SPECS.values() if spec.available_to_child]
+MODEL_DEFAULT_TOOL_NAMES = ("read", "edit", "bash", "plan")
+MODEL_DEFAULT_TOOLS = [tool_schema(TOOL_SPECS[name]) for name in MODEL_DEFAULT_TOOL_NAMES]
 PARENT_TOOLS = [tool_schema(spec) for spec in TOOL_SPECS.values() if spec.available_to_parent]
 DEFAULT_TOOL_CATALOG = ToolCatalog(TOOL_SPECS)
 

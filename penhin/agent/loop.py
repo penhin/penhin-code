@@ -18,7 +18,10 @@ from penhin.runtime.manager import log_usage
 from penhin.tools.execution import ApprovalFlow, PermissionPolicy, approval_key, run_tool
 from penhin.tools.execution.invocation import collect_tool_calls
 from penhin.tools.catalog import ToolCatalog
-from penhin.tools.registry import DEFAULT_TOOL_CATALOG, PARENT_TOOLS
+from penhin.tools.registry import DEFAULT_TOOL_CATALOG, MODEL_DEFAULT_TOOLS
+
+# The main Agent's model-visible surface; internal tools remain in the registry.
+PARENT_TOOLS = MODEL_DEFAULT_TOOLS
 
 
 API_UNAVAILABLE_MESSAGE = "API is temporarily unavailable because the circuit breaker is open. Please try again later."
