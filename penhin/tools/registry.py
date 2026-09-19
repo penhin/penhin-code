@@ -409,19 +409,20 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     ),
     "read": ToolSpec(
         name="read",
-        description="Read a bounded file segment. Use next_offset as offset to continue a truncated read.",
+        description="Read a bounded file snapshot. Continue with next_offset and snapshot_id to preserve stable evidence after edits.",
         input_schema=object_schema(
             {
                 "path": {"type": "string"},
                 "limit": {"type": "integer", "minimum": 0},
                 "offset": {"type": "integer", "minimum": 1},
+                "snapshot_id": {"type": "string"},
                 "line_numbers": {"type": "boolean"},
             },
             ["path"],
         ),
         category=ToolCategory.readonly,
         handler=lambda **kwargs: run_read(
-            kwargs["path"], kwargs.get("limit"), kwargs.get("line_numbers", True), kwargs.get("offset", 1)
+            kwargs["path"], kwargs.get("limit"), kwargs.get("line_numbers", True), kwargs.get("offset", 1), kwargs.get("snapshot_id")
         ),
         parallel_safe=True,
         approval=ToolApproval(),

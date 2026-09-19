@@ -201,7 +201,7 @@ def test_prepare_compaction_records_recoverable_tool_result_references() -> None
     result_content = json.dumps({
         "ok": True,
         "message": "file contents",
-        "data": {"path": "src/app.py", "offset": 1, "next_offset": 201},
+        "data": {"path": "src/app.py", "offset": 1, "next_offset": 201, "snapshot_id": "snapshot-1", "evidence_ref": "read:snapshot-1:1-200"},
         "error": "",
         "meta": {"truncated": True},
     })
@@ -228,9 +228,11 @@ def test_prepare_compaction_records_recoverable_tool_result_references() -> None
         "path": "src/app.py",
         "offset": 1,
         "next_offset": 201,
+        "snapshot_id": "snapshot-1",
+        "evidence_ref": "read:snapshot-1:1-200",
     }
     assert prepared.artifact.snapshot["tool_result_refs"] == [
-        f"{reference['id']} | tool=read | path=src/app.py | offset=1 | next_offset=201"
+        f"{reference['id']} | tool=read | path=src/app.py | offset=1 | next_offset=201 | snapshot_id=snapshot-1 | evidence_ref=read:snapshot-1:1-200"
     ]
 
 

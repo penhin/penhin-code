@@ -128,9 +128,31 @@ def test_read_output_is_bounded_and_can_continue_by_offset() -> None:
         assert first.meta["truncated"] is True
         assert len(first.message.splitlines()) == 2000
         assert first.data["next_offset"] == 2001
-        second = run_read(str(path), line_numbers=False, offset=first.data["next_offset"])
+        assert first.data["covered_range"] == {"start": 1, "end": 2000}
+        assert first.data["omitted_ranges"] == [{"start": 2001, "end": 2500}]
+        second = run_read(str(path), line_numbers=False, offset=first.data["next_offset"], snapshot_id=first.data["snapshot_id"])
         assert second.message.startswith("line-2000")
         assert second.data["next_offset"] is None
+    finally:
+        tool_result_cache.clear()
+        path.unlink(missing_ok=True)
+
+
+def test_read_continuation_uses_original_snapshot_after_file_changes() -> None:
+    path = Path(".snapshot-read-test.txt")
+    try:
+        path.write_text("before-1\nbefore-2\nbefore-3", encoding="utf-8")
+        first = run_read(str(path), limit=1, line_numbers=False)
+        path.write_text("after-1\nafter-2", encoding="utf-8")
+
+        continued = run_read(str(path), limit=2, line_numbers=False, offset=2, snapshot_id=first.data["snapshot_id"])
+        fresh = run_read(str(path), limit=2, line_numbers=False)
+
+        assert continued.message == "before-2\nbefore-3"
+        assert continued.data["snapshot_id"] == first.data["snapshot_id"]
+        assert continued.data["evidence_ref"].startswith(f"read:{first.data['snapshot_id']}:")
+        assert fresh.message == "after-1\nafter-2"
+        assert fresh.data["snapshot_id"] != first.data["snapshot_id"]
     finally:
         tool_result_cache.clear()
         path.unlink(missing_ok=True)

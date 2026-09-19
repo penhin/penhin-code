@@ -1,4 +1,5 @@
 import concurrent.futures
+import hashlib
 import os
 import threading
 from pathlib import Path
@@ -13,6 +14,8 @@ from .workspace import IGNORED_PATH_PARTS, WORKDIR, is_ignored_path, iter_worksp
 
 
 FILE_LOCK = threading.RLock()
+READ_SNAPSHOTS: dict[str, tuple[Path, list[str], int]] = {}
+READ_SNAPSHOTS_LOCK = threading.RLock()
 
 
 def safe_path(path: str) -> Path:
@@ -39,44 +42,70 @@ def ignored_path_part(path: Path) -> str | None:
     return None
 
 
-def run_read(path: str, limit: int = None, line_numbers: bool = True, offset: int = 1) -> Result:
+def _read_snapshot(file_path: Path, snapshot_id: str | None) -> tuple[str, list[str], int]:
+    if snapshot_id is not None:
+        with READ_SNAPSHOTS_LOCK:
+            snapshot = READ_SNAPSHOTS.get(snapshot_id)
+        if snapshot is None or snapshot[0] != file_path:
+            raise ValueError("Read snapshot is unavailable for this path")
+        return snapshot_id, snapshot[1], snapshot[2]
+    raw = file_path.read_bytes()
+    identifier = hashlib.sha256(str(file_path).encode("utf-8") + b"\0" + raw).hexdigest()[:24]
+    lines = raw.decode("utf-8").splitlines()
+    with READ_SNAPSHOTS_LOCK:
+        READ_SNAPSHOTS[identifier] = (file_path, lines, len(raw))
+    return identifier, lines, len(raw)
+
+
+def run_read(path: str, limit: int = None, line_numbers: bool = True, offset: int = 1, snapshot_id: str | None = None) -> Result:
     try:
         if offset < 1:
             return Result.failure("Error: offset must be at least 1", code="invalid_offset")
         if limit is not None and limit < 0:
             return Result.failure("Error: limit cannot be negative", code="invalid_limit")
         file_path = safe_path(path)
-        key = ("read", str(file_path), limit, line_numbers, offset)
+        key = ("read", str(file_path), limit, line_numbers, offset, snapshot_id)
         cached = tool_result_cache.get(key)
         if cached is not None:
             return cached
 
-        signature = file_signature(file_path)
+        continuing_snapshot = snapshot_id is not None
+        snapshot_id, snapshot_lines, original_bytes = _read_snapshot(file_path, snapshot_id)
+        signature = file_signature(file_path) if not continuing_snapshot else None
         requested_lines = MAX_TOOL_OUTPUT_LINES if limit is None else min(max(limit, 0), MAX_TOOL_OUTPUT_LINES)
-        lines: list[str] = []
-        total_lines = 0
-        with file_path.open("r", encoding="utf-8") as handle:
-            for total_lines, line in enumerate(handle, start=1):
-                if total_lines < offset or len(lines) >= requested_lines:
-                    continue
-                lines.append(line.rstrip("\r\n"))
+        total_lines = len(snapshot_lines)
+        lines = snapshot_lines[offset - 1:offset - 1 + requested_lines]
         if line_numbers:
             lines = [f"{i}: {line}" for i, line in enumerate(lines, start=offset)]
         bounded = bound_text("\n".join(lines))
         returned_lines = len(bounded.text.splitlines())
-        next_offset = offset + returned_lines if offset - 1 + returned_lines < total_lines else None
+        end_offset = offset + returned_lines - 1
+        next_offset = end_offset + 1 if end_offset < total_lines else None
+        omitted_ranges = []
+        if offset > 1:
+            omitted_ranges.append({"start": 1, "end": offset - 1})
+        if next_offset is not None:
+            omitted_ranges.append({"start": next_offset, "end": total_lines})
         result = Result.success(
             bounded.text,
-            data={"path": path, "offset": offset, "next_offset": next_offset},
+            data={
+                "path": path,
+                "snapshot_id": snapshot_id,
+                "evidence_ref": f"read:{snapshot_id}:{offset}-{end_offset}",
+                "covered_range": {"start": offset, "end": end_offset},
+                "next_offset": next_offset,
+                "complete": next_offset is None,
+                "omitted_ranges": omitted_ranges,
+            },
             truncated=bounded.truncated or next_offset is not None,
-            original_bytes=file_path.stat().st_size,
+            original_bytes=original_bytes,
             original_lines=total_lines,
         )
         return tool_result_cache.set(
             key,
             result,
             description=f"read {path}",
-            is_valid=file_validator(file_path, signature),
+            is_valid=(lambda: True) if continuing_snapshot else file_validator(file_path, signature),
         )
     except Exception as error:
         return Result.failure(f"Error: {error}", code="read_error")

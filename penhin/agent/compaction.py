@@ -346,7 +346,7 @@ def _tool_result_references(
             if isinstance(result_data, dict):
                 data = result_data.get("data")
                 if isinstance(data, dict):
-                    for key in ("path", "offset", "next_offset", "query", "command"):
+                    for key in ("path", "offset", "next_offset", "snapshot_id", "evidence_ref", "query", "command"):
                         value = data.get(key)
                         if isinstance(value, (str, int)):
                             recovery[key] = value
@@ -372,7 +372,7 @@ def _tool_result_reference_label(reference: dict[str, Any]) -> str:
         parts.append(f"tool={tool_name}")
     recovery = reference.get("recovery")
     if isinstance(recovery, dict):
-        for key in ("path", "offset", "next_offset", "query"):
+        for key in ("path", "offset", "next_offset", "snapshot_id", "evidence_ref", "query"):
             if key in recovery:
                 parts.append(f"{key}={recovery[key]}")
     return " | ".join(parts)
