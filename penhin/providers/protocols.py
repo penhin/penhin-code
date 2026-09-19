@@ -26,6 +26,7 @@ class LLMRequest:
     max_tokens: int
     tools: list[dict[str, Any]] | None = None
     thinking_level: str | None = None
+    continuation: Any = None
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,7 @@ class LLMResponse:
     content: list[ContentBlock]
     stop_reason: str
     usage: LLMUsage
+    continuation: Any = None
 
 
 class LLMProvider(Protocol):

@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from penhin.runtime import manager as runtime
 from penhin.runtime import settings as runtime_settings
 from penhin.runtime.retry import CircuitBreaker, CircuitBreakerOpen
+from penhin.providers.protocols import LLMResponse, LLMUsage
 
 
 class ManualClock:
@@ -27,9 +28,11 @@ class FakeProvider:
         self.outcomes = list(outcomes)
         self.create_calls = 0
         self.stream_calls = 0
+        self.requests = []
 
     def create_message(self, request):
         self.create_calls += 1
+        self.requests.append(request)
         outcome = self.outcomes.pop(0)
         if isinstance(outcome, BaseException):
             raise outcome
@@ -49,6 +52,23 @@ class FakeStreamOutcome:
     def __init__(self, chunks, final_message) -> None:
         self.chunks = chunks
         self.final_message = final_message
+
+
+def test_runtime_reuses_only_its_opaque_provider_continuation() -> None:
+    provider = FakeProvider([
+        LLMResponse([], "end_turn", LLMUsage(), continuation={"provider_private": "first"}),
+        LLMResponse([], "end_turn", LLMUsage(), continuation={"provider_private": "second"}),
+    ])
+    active = runtime.Runtime(provider=provider, model="test", provider_id="provider")
+
+    active.call_with_retry(system="s", messages=[])
+    active.call_with_retry(system="s", messages=[])
+
+    assert provider.create_calls == 2
+    assert provider.requests[0].continuation is None
+    assert provider.requests[1].continuation == {"provider_private": "first"}
+    # The provider receives the opaque object, but it is owned only by this Runtime.
+    assert active.continuation == {"provider_private": "second"}
 
 
 def test_circuit_breaker_opens_after_threshold() -> None:

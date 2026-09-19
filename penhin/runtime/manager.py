@@ -71,6 +71,7 @@ class Runtime:
     retry_delays: tuple[int, ...] = (1, 2, 4)
     circuit_breaker: CircuitBreaker | None = None
     compact_circuit_breaker: CircuitBreaker | None = None
+    continuation: object | None = None
 
     def _call_with_retry(
         self,
@@ -111,6 +112,7 @@ class Runtime:
                     tools=tools,
                     max_tokens=max_tokens or self.max_tokens,
                     thinking_level=self.thinking_level,
+                    continuation=self.continuation,
                 )
                 from penhin.evaluation.observer import anonymous_id, emit
                 from penhin.evaluation.shared_budget import budget_from_env, estimate_tokens, price_from_env
@@ -149,6 +151,7 @@ class Runtime:
                 )
                 if breaker is not None:
                     breaker.record_success()
+                self.continuation = getattr(response, "continuation", None)
                 return response
             except retry_errors as error:
                 if budget is not None and reservation_id is not None:
