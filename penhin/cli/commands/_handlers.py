@@ -176,6 +176,13 @@ def build_status_lines(context: RunContext | None = None) -> list[str]:
         f"Permission mode: {get_permission_mode()}",
         f"Setting sources: {setting_sources()}",
     ])
+    if context is not None and context.runtime_envelope is not None:
+        envelope = context.runtime_envelope
+        lines.extend([
+            f"Runtime envelope: {envelope.lifecycle}",
+            f"Sandbox: {'on' if envelope.sandbox else 'off'}",
+            f"Capabilities: tools={len(envelope.tools)} roots={', '.join(envelope.writable_roots)} network={', '.join(envelope.network_destinations)}",
+        ])
     return lines
 
 

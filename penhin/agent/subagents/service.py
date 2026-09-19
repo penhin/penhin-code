@@ -27,8 +27,10 @@ from penhin.agent.prompts import (
 )
 from penhin.result import Result
 from penhin.runtime import runtime_manager
+from penhin.runtime.envelope import RuntimeBudget, RuntimeEnvelope, current_envelope
 from penhin.runtime.manager import log_usage
 from penhin.tools.execution import ApprovalFlow, PermissionPolicy
+from penhin.tools.catalog import ToolCatalog
 from penhin.tools.registry import TOOL_SPECS
 from penhin.tools.types import ToolSchema, tool_schema
 
@@ -315,10 +317,24 @@ def run_subagent(task: str, agent_type: str = "general") -> Result:
         config["approval"],
         max_tool_calls=config["max_tool_calls"],
     )
+    parent_envelope = current_envelope()
+    try:
+        envelope = parent_envelope.narrow(
+            tools=config["policy"].allow,
+            budget=RuntimeBudget(max_tokens=max_tokens, max_turns=max_turns, max_tool_calls=config["max_tool_calls"]),
+        ) if parent_envelope is not None else RuntimeEnvelope.root(runtime, config["policy"], ToolCatalog(TOOL_SPECS)).narrow(
+            tools=config["policy"].allow,
+            budget=RuntimeBudget(max_tokens=max_tokens, max_turns=max_turns, max_tool_calls=config["max_tool_calls"]),
+        )
+    except ValueError as error:
+        from penhin.evaluation.observer import emit
+        emit("runtime_envelope_widening_rejected", reason=str(error), agent_type=agent_type)
+        return Result.failure(str(error), code="runtime_envelope_widening_rejected")
     context = RunContext(
         messages=sub_messages,
         policy=config["policy"],
         approval=config["approval"],
+        runtime_envelope=envelope,
     )
     last_response: dict[str, Any] = {"value": None}
     budget_exhausted = {"value": False}

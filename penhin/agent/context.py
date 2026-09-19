@@ -58,6 +58,15 @@ class RunContext:
     pending_force_compact_hint: str | None = None
     pre_plan_mode: PermissionMode | None = None
     plugin_runtime: Any = None
+    runtime_envelope: Any = None
+    runtime_envelope_recorded: bool = False
+
+    def record_runtime_envelope(self) -> None:
+        if self.runtime_envelope is None or self.runtime_envelope_recorded:
+            return
+        if self.session_manager is not None:
+            self.session_manager.append_entry("runtime_envelope", envelope=self.runtime_envelope.receipt())
+        self.runtime_envelope_recorded = True
 
     def add_user_message(self, content: Any) -> None:
         if not is_tool_result_content(content):

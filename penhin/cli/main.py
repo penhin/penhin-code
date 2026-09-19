@@ -13,6 +13,7 @@ from penhin.infrastructure.config import get_permission_mode, get_version
 from penhin.agent.context import RunContext
 from penhin.permissions import PERMISSION_CYCLE, normalize_permission_mode
 from penhin.runtime import AuthenticationRequired, runtime_manager
+from penhin.runtime.envelope import resolve_envelope
 from penhin.plugins.bootstrap import plugin_runtime_for_session
 from penhin.tools.execution import runtime_permission_setup
 from penhin.tools.registry import tool_names
@@ -125,6 +126,7 @@ def main() -> None:
         session_manager=session_manager,
     )
     context.plugin_runtime = plugin_runtime_for_session()
+    resolve_envelope(context, runtime_manager.current(), context.plugin_runtime.catalog())
     workspace = workspace_info()
     provider = runtime_manager.configured_provider()
     api_label = {"anthropic": "Anthropic API", "openai": "OpenAI API", "openai-codex": "OpenAI ChatGPT Plus/Pro", "gemini": "Gemini API", "deepseek": "DeepSeek API"}.get(provider, provider or "Configured API")

@@ -14,6 +14,8 @@ from prompt_toolkit.document import Document
 from penhin.tools.execution import ApprovalFlow, PermissionPolicy
 from penhin.agent.session_manager import SessionManager
 from penhin.agent.session_store import SessionStore
+from penhin.runtime.envelope import RuntimeBudget, RuntimeEnvelope
+from penhin.tools.registry import DEFAULT_TOOL_CATALOG
 
 
 def empty_context() -> RunContext:
@@ -116,6 +118,25 @@ def test_status_uses_openai_compatible_base_url() -> None:
         "Authentication: not configured (-; not set)",
             "OpenAI base URL: https://api.deepseek.com/v1",
         ]
+
+
+def test_status_includes_runtime_envelope_receipt(monkeypatch) -> None:
+    class Runtime:
+        provider_id = "openai"
+        model = "gpt-test"
+        max_tokens = 1_000
+
+    context = empty_context()
+    context.runtime_envelope = RuntimeEnvelope.root(
+        Runtime(), PermissionPolicy(allow={"read"}), DEFAULT_TOOL_CATALOG,
+    ).narrow(budget=RuntimeBudget(max_tokens=200))
+
+    monkeypatch.setattr(commands, "workspace_info", lambda: {"cwd": "/tmp/project"})
+    lines = commands.build_status_lines(context)
+
+    assert "Runtime envelope: child-run" in lines
+    assert "Sandbox: off" in lines
+    assert any(line.startswith("Capabilities: tools=1 roots=") for line in lines)
 
 
 def test_handle_local_command_reports_unknown_command() -> None:

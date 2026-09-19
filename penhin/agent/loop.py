@@ -250,7 +250,10 @@ def agent_loop(context: RunContext, catalog: ToolCatalog = DEFAULT_TOOL_CATALOG)
     runtime = runtime_manager.current()
     plugin_runtime = context.plugin_runtime
     catalog_provider = plugin_runtime.catalog if plugin_runtime is not None else None
-    return run_agent_state_machine(context, build_agent_deps(runtime, catalog, catalog_provider))
+    effective_catalog = catalog_provider() if catalog_provider is not None else catalog
+    from penhin.runtime.envelope import resolve_envelope, using_envelope
+    with using_envelope(resolve_envelope(context, runtime, effective_catalog)):
+        return run_agent_state_machine(context, build_agent_deps(runtime, catalog, catalog_provider))
 
 
 def run_once(context: RunContext) -> AgentState:
