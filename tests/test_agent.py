@@ -117,6 +117,18 @@ def test_resolve_approval_rejects_when_input_is_unavailable() -> None:
     assert rejected_approval.is_rejected("write", tool_input)
 
 
+def test_auto_review_allows_static_bash_without_prompt() -> None:
+    approval = ApprovalFlow.require_confirmation({"bash"})
+    policy = PermissionPolicy(allow={"bash"}, mode="auto-review")
+    tool_input = {"command": "git status --short"}
+    with patch("builtins.input", side_effect=AssertionError("should not prompt")), patch("penhin.agent.loop.run_tool") as mocked_run_tool:
+        mocked_run_tool.return_value = ToolRun(Result.success("ok"))
+        tool_run = agent.resolve_approval("bash", tool_input, policy, approval)
+
+    assert tool_run.result.ok
+    assert mocked_run_tool.call_args.args[3].is_approved("bash", tool_input)
+
+
 def test_agent_loop_updates_run_context_messages(tmp_path: Path) -> None:
     context = RunContext(
         messages=[{"role": "user", "content": "hello"}],

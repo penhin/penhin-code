@@ -73,6 +73,18 @@ def resolve_approval(
     approval: ApprovalFlow,
     catalog: ToolCatalog = DEFAULT_TOOL_CATALOG, context: RunContext | None = None,
 ):
+    if policy.mode == "auto-review" and tool_name == "bash":
+        from penhin.evaluation.observer import emit
+        from penhin.tools.auto_review import ALLOW, review_bash
+        decision = review_bash(tool_input.get("command"))
+        emit(
+            "auto_review_decision",
+            tool_name=tool_name,
+            decision=decision.decision,
+            evidence=decision.evidence,
+        )
+        if decision.decision == ALLOW:
+            return run_with_one_time_approval(tool_name, tool_input, policy, approval, catalog, context)
     logger.info(f"[approval] tool: {tool_name}")
     logger.info(f"[approval] key: {approval_key(tool_name, tool_input, catalog)}")
     logger.info(format_tool_input(tool_input))

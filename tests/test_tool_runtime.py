@@ -109,7 +109,8 @@ def test_runtime_permission_setup_for_parent_modes() -> None:
     assert "read" in auto_policy.allow
     assert "task_show" in auto_policy.allow
     assert "write" in auto_policy.deny
-    assert "bash" in auto_policy.deny
+    assert "bash" in auto_policy.allow
+    assert not auto_approval.is_approved("bash", {"command": "git status"})
     assert not auto_approval.is_approved("write", {"path": "demo.txt", "content": "hello"})
 
     full_policy, full_approval = tool_runtime.runtime_permission_setup("full-access")

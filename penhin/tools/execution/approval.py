@@ -24,6 +24,7 @@ def approval_key(tool_name: str, tool_input: ToolInput, catalog: ToolCatalog = D
 class PermissionPolicy:
     allow: set[str]
     deny: set[str] = field(default_factory=set)
+    mode: str = "default"
 
 
 @dataclass
@@ -88,12 +89,14 @@ def policy_for_runtime_mode(mode: str, catalog: ToolCatalog = DEFAULT_TOOL_CATAL
         allow = tool_names_by_category({ToolCategory.readonly, ToolCategory.state}, catalog)
         if catalog.get("compact") is not None:
             allow.add("compact")
-        return PermissionPolicy(allow=allow, deny={"write", "edit", "bash", "task", "agent_job_start"})
-    return PermissionPolicy(allow=tool_names_for("parent", catalog))
+        if catalog.get("bash") is not None:
+            allow.add("bash")
+        return PermissionPolicy(allow=allow, deny={"write", "edit", "task", "agent_job_start"}, mode=mode)
+    return PermissionPolicy(allow=tool_names_for("parent", catalog), mode=mode)
 
 
 def approval_for_runtime_mode(mode: str, policy: PermissionPolicy, catalog: ToolCatalog = DEFAULT_TOOL_CATALOG) -> ApprovalFlow:
-    return ApprovalFlow.preapproved(policy.allow, catalog) if mode in {"auto-review", "full-access"} else ApprovalFlow.require_confirmation(policy.allow, catalog)
+    return ApprovalFlow.preapproved(policy.allow, catalog) if mode == "full-access" else ApprovalFlow.require_confirmation(policy.allow, catalog)
 
 
 def runtime_permission_setup(mode: str, catalog: ToolCatalog = DEFAULT_TOOL_CATALOG) -> tuple[PermissionPolicy, ApprovalFlow]:
