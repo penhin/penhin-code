@@ -22,6 +22,7 @@ from penhin.tools.execution import ApprovalFlow, PermissionPolicy
 logger = logging.getLogger("penhin.compact")
 
 if TYPE_CHECKING:
+    from penhin.runtime.envelope import RuntimeEnvelope
     from penhin.agent.session_manager import SessionManager
 
 
@@ -58,7 +59,7 @@ class RunContext:
     pending_force_compact_hint: str | None = None
     pre_plan_mode: PermissionMode | None = None
     plugin_runtime: Any = None
-    runtime_envelope: Any = None
+    runtime_envelope: RuntimeEnvelope | None = None
     runtime_envelope_recorded: bool = False
 
     def record_runtime_envelope(self) -> None:

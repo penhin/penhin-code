@@ -5,6 +5,7 @@ import pytest
 from penhin.agent.context import RunContext
 from penhin.agent.session_manager import SessionManager
 from penhin.runtime.envelope import RuntimeBudget, RuntimeEnvelope
+from penhin.evaluation.observer import EvaluationObserver, observing, read_events
 from penhin.tools.catalog import ToolCatalog
 from penhin.tools.execution import ApprovalFlow, PermissionPolicy
 from penhin.tools.registry import DEFAULT_TOOL_CATALOG
@@ -49,6 +50,16 @@ def test_child_envelope_can_only_narrow_parent_capabilities() -> None:
         child.narrow(tools={"read", "bash"})
     with pytest.raises(ValueError, match="max_tokens"):
         child.narrow(budget=RuntimeBudget(max_tokens=500))
+
+
+def test_widening_rejection_is_observable_from_the_envelope_boundary(tmp_path: Path) -> None:
+    with observing(EvaluationObserver(tmp_path, "run")):
+        with pytest.raises(ValueError, match="tools"):
+            envelope().narrow(tools={"read", "bash"})
+
+    events = read_events(tmp_path)
+    assert events[-1]["event_type"] == "runtime_envelope_widening_rejected"
+    assert "tools" in events[-1]["payload"]["reason"]
 
 
 def test_context_records_envelope_as_append_only_session_evidence(tmp_path: Path) -> None:

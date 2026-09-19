@@ -135,6 +135,9 @@ def test_bash_prefix_rules_refuse_compound_or_ambiguous_shell_syntax() -> None:
     assert suggest_bash_prefix("pytest -q && rm -rf scratch") is None
     assert not bash_prefix_matches("pytest -q; rm -rf scratch", "pytest:*")
     assert not bash_prefix_matches("pytest -q > result.txt", "pytest:*")
+    assert suggest_bash_prefix("pytest -q &> result.txt") is None
+    assert not bash_prefix_matches("pytest -q 2>&1", "pytest:*")
+    assert not bash_prefix_matches("pytest -q |& tee result.txt", "pytest:*")
 
 
 def test_tool_runtime_input_summary_hides_sensitive_values() -> None:

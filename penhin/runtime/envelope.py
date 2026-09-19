@@ -28,7 +28,7 @@ class RuntimeBudget:
     def narrowed(self, requested: "RuntimeBudget") -> "RuntimeBudget":
         def limit(parent: int | None, child: int | None, field: str) -> int | None:
             if parent is not None and (child is None or child > parent):
-                raise ValueError(f"Runtime envelope cannot widen {field}")
+                raise _widening_error(f"Runtime envelope cannot widen {field}")
             return child if child is not None else parent
         return RuntimeBudget(
             max_tokens=limit(self.max_tokens, requested.max_tokens, "max_tokens"),
@@ -85,13 +85,13 @@ class RuntimeEnvelope:
         child_roots = self.writable_roots if writable_roots is None else tuple(writable_roots)
         child_network = self.network_destinations if network_destinations is None else tuple(network_destinations)
         if not child_tools <= self.tools:
-            raise ValueError("Runtime envelope cannot widen tools")
+            raise _widening_error("Runtime envelope cannot widen tools")
         if not child_credentials <= self.credential_capabilities:
-            raise ValueError("Runtime envelope cannot widen credential capabilities")
+            raise _widening_error("Runtime envelope cannot widen credential capabilities")
         if not set(child_roots) <= set(self.writable_roots):
-            raise ValueError("Runtime envelope cannot widen writable roots")
+            raise _widening_error("Runtime envelope cannot widen writable roots")
         if self.network_destinations != ("*",) and not set(child_network) <= set(self.network_destinations):
-            raise ValueError("Runtime envelope cannot widen network destinations")
+            raise _widening_error("Runtime envelope cannot widen network destinations")
         return RuntimeEnvelope(
             provider=self.provider,
             model=self.model,
@@ -117,6 +117,12 @@ class RuntimeEnvelope:
 def _permission_mode(policy: PermissionPolicy) -> str:
     from penhin.infrastructure.config import get_permission_mode
     return get_permission_mode() if policy.deny == set() else "restricted"
+
+
+def _widening_error(message: str) -> ValueError:
+    from penhin.evaluation.observer import emit
+    emit("runtime_envelope_widening_rejected", reason=message)
+    return ValueError(message)
 
 
 def current_envelope() -> RuntimeEnvelope | None:

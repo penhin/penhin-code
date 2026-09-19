@@ -24,13 +24,6 @@ UNSAFE_SHELL_OPERATORS = {"&&", "||", ";", "|", "&"}
 SHELL_PUNCTUATION = ";|&<>"
 
 
-def bash_command_tokens(command: str) -> list[str]:
-    try:
-        return shlex.split(command, comments=False, posix=True)
-    except ValueError:
-        return []
-
-
 def bash_command_operations(command: str) -> list[list[str]] | None:
     """Parse simple shell operations without treating a compound command as one grant.
 
@@ -54,7 +47,7 @@ def bash_command_operations(command: str) -> list[list[str]] | None:
             if not operations[-1]:
                 return None
             operations.append([])
-        elif token in {"<", ">", "<<", ">>"}:
+        elif any(character in SHELL_PUNCTUATION for character in token):
             return None
         else:
             operations[-1].append(token)
