@@ -7,7 +7,7 @@ from penhin.result import Result
 from penhin.orchestration.service import agent_types
 from penhin.skills import load_skill
 from .builtin import tasks as task_tools
-from .builtin.files import run_edit, run_list, run_read, run_search, run_write
+from .builtin.files import run_edit, run_edit_batch, run_list, run_read, run_search, run_write
 from .builtin.glob import run_glob
 from .builtin.orchestration import (
     run_agent_artifact_show,
@@ -463,6 +463,15 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         handler=lambda **kwargs: run_edit(kwargs["path"], kwargs["old"], kwargs["new"]),
         parallel_safe=False,
         approval=ToolApproval(requires_approval=True, key=_input_value_key("path")),
+    ),
+    "edit_batch": ToolSpec(
+        name="edit_batch",
+        description="Atomically apply exact edits across files after validating their read snapshot IDs.",
+        input_schema=object_schema({"edits": {"type": "array"}}, ["edits"]),
+        category=ToolCategory.write,
+        handler=lambda **kwargs: run_edit_batch(kwargs["edits"]),
+        parallel_safe=False,
+        approval=ToolApproval(requires_approval=True, key=lambda tool_input: _short_digest(tool_input.get("edits", []))),
     ),
     "search": ToolSpec(
         name="search",

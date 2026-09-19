@@ -200,6 +200,52 @@ def run_edit(path: str, old: str, new: str) -> Result:
         return Result.failure(f"Error: {error}", code="edit_error")
 
 
+def run_edit_batch(edits: list[dict[str, str]]) -> Result:
+    """Apply exact replacements only when every cited read snapshot is current."""
+    if not write_is_allowed():
+        return Result.failure("Error: writes are disabled for this agent worktree", code="readonly_workspace")
+    if not edits:
+        return Result.failure("Error: edits are required", code="invalid_edit_batch")
+    try:
+        prepared: dict[Path, tuple[str, str, str]] = {}
+        bases: list[dict[str, str]] = []
+        with FILE_LOCK:
+            for edit in edits:
+                if not isinstance(edit, dict) or not all(isinstance(edit.get(key), str) for key in ("path", "snapshot_id", "old", "new")):
+                    raise ValueError("Each edit requires string path, snapshot_id, old, and new")
+                file_path = safe_path(edit["path"])
+                snapshot_id, snapshot_lines, _size = _read_snapshot(file_path, edit["snapshot_id"])
+                original, current, _snapshot = prepared.get(file_path, (file_path.read_text(encoding="utf-8"), file_path.read_text(encoding="utf-8"), snapshot_id))
+                if current.splitlines() != snapshot_lines:
+                    raise ValueError(f"Stale read snapshot for {edit['path']}")
+                count = current.count(edit["old"])
+                if count != 1:
+                    raise ValueError(f"Conflicting edit for {edit['path']}: expected one matching hunk, found {count}")
+                prepared[file_path] = (original, current.replace(edit["old"], edit["new"], 1), snapshot_id)
+                bases.append({"path": edit["path"], "snapshot_id": snapshot_id})
+            written: list[Path] = []
+            try:
+                for file_path, (_original, updated, _snapshot_id) in prepared.items():
+                    atomic_write_text(file_path, updated)
+                    written.append(file_path)
+            except Exception:
+                for file_path in written:
+                    atomic_write_text(file_path, prepared[file_path][0])
+                raise
+        tool_result_cache.clear()
+        return Result.success(
+            f"Applied {len(edits)} edits across {len(prepared)} files",
+            data={
+                "base_snapshots": bases,
+                "change_set": [{"path": str(path.relative_to(WORKDIR)), "replacements": sum(1 for edit in edits if safe_path(edit["path"]) == path)} for path in prepared],
+            },
+        )
+    except Exception as error:
+        return Result.failure(
+            f"Error: {error}", code="edit_batch_conflict", conflict={"reason": str(error)},
+        )
+
+
 def _search_file(query: str, file_path: Path, workdir: Path, limit: int) -> list[str]:
     """Search a single file. Extracted for ThreadPoolExecutor."""
     if limit <= 0:

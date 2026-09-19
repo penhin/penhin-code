@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from penhin.tools import CHILD_TOOLS, PARENT_TOOLS, TOOL_SPECS, ToolCategory
 from penhin.tools.builtin.cache import tool_result_cache
-from penhin.tools.builtin.files import run_list, run_read, run_search, run_write
+from penhin.tools.builtin.files import run_edit_batch, run_list, run_read, run_search, run_write
 from penhin.tools.builtin.glob import run_glob
 from penhin.tools.builtin.orchestration import (
     run_agent_job_cancel, run_agent_job_list, run_agent_job_show,
@@ -156,6 +156,51 @@ def test_read_continuation_uses_original_snapshot_after_file_changes() -> None:
     finally:
         tool_result_cache.clear()
         path.unlink(missing_ok=True)
+
+
+def test_edit_batch_applies_related_snapshot_validated_changes_atomically() -> None:
+    first, second = Path(".batch-first.txt"), Path(".batch-second.txt")
+    try:
+        first.write_text("one", encoding="utf-8")
+        second.write_text("two", encoding="utf-8")
+        first_read, second_read = run_read(str(first)), run_read(str(second))
+
+        result = run_edit_batch([
+            {"path": str(first), "snapshot_id": first_read.data["snapshot_id"], "old": "one", "new": "ONE"},
+            {"path": str(second), "snapshot_id": second_read.data["snapshot_id"], "old": "two", "new": "TWO"},
+        ])
+
+        assert result.ok
+        assert first.read_text() == "ONE"
+        assert second.read_text() == "TWO"
+        assert len(result.data["base_snapshots"]) == 2
+    finally:
+        tool_result_cache.clear()
+        first.unlink(missing_ok=True)
+        second.unlink(missing_ok=True)
+
+
+def test_edit_batch_rejects_a_stale_snapshot_without_changing_any_target() -> None:
+    first, second = Path(".batch-stale-first.txt"), Path(".batch-stale-second.txt")
+    try:
+        first.write_text("one", encoding="utf-8")
+        second.write_text("two", encoding="utf-8")
+        first_read, second_read = run_read(str(first)), run_read(str(second))
+        second.write_text("changed", encoding="utf-8")
+
+        result = run_edit_batch([
+            {"path": str(first), "snapshot_id": first_read.data["snapshot_id"], "old": "one", "new": "ONE"},
+            {"path": str(second), "snapshot_id": second_read.data["snapshot_id"], "old": "two", "new": "TWO"},
+        ])
+
+        assert not result.ok
+        assert first.read_text() == "one"
+        assert second.read_text() == "changed"
+        assert result.meta["code"] == "edit_batch_conflict"
+    finally:
+        tool_result_cache.clear()
+        first.unlink(missing_ok=True)
+        second.unlink(missing_ok=True)
 
 
 def test_bash_preserves_tail_without_duplicating_output_in_data() -> None:
@@ -421,9 +466,10 @@ def test_tool_schemas_match_handlers() -> None:
         "agent_job_start",
         "bash",
         "integration_verify",
-        "write",
-        "edit",
-    }
+            "write",
+            "edit",
+            "edit_batch",
+        }
     assert "task" in handler_names
     assert "task_start" in handler_names
     assert "task_show" in handler_names
