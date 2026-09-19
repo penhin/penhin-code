@@ -38,6 +38,7 @@ status_context = None
 status_queue = None
 active_terminal = None
 LATEST_SCROLL = 1_000_000
+MAX_TOOL_CARD_CHARS = 1_200
 
 
 TERMINAL_STYLE = Style.from_dict({
@@ -107,6 +108,19 @@ def _wrap_terminal_width(text: str, width: int) -> list[str]:
     return lines
 
 
+def _tool_card_content(tool_input: object) -> str:
+    """Return a bounded, redacted diagnostic view that can never break a tool call."""
+    try:
+        from penhin.auth.secrets import redact_text, safe_value
+
+        content = redact_text(format_terminal_data(safe_value(tool_input))) or "(no input)"
+    except Exception:
+        content = "(input unavailable)"
+    if len(content) > MAX_TOOL_CARD_CHARS:
+        return content[:MAX_TOOL_CARD_CHARS - 1].rstrip() + "…"
+    return content
+
+
 def _card_header_parts(card: "MessageCard", width: int) -> tuple[str, str, str, str]:
     """Build a fieldset-like header with the title breaking the top border."""
     usage = " " + (f"{card.tokens} tok  " if card.tokens is not None else "") + card.created_at
@@ -126,6 +140,7 @@ class MessageCard:
     color: str
     created_at: str = field(default_factory=lambda: datetime.now().strftime("%H:%M"))
     tokens: int | None = None
+    status: str | None = None
 
 
 @dataclass
@@ -167,9 +182,30 @@ class Transcript:
     def start_stream(self, name: str) -> CardStream:
         return CardStream(self, self.add_message("agent", name, ""))
 
+    def add_tool_call(self, name: str, tool_input: dict[str, object]) -> MessageCard:
+        content = _tool_card_content(tool_input)
+        with self._lock:
+            card = MessageCard("tool", name, content, "#94a3b8", status="running")
+            self.cards.append(card)
+            return card
+
+    def finish_tool_call(self, card: MessageCard, *, ok: bool) -> None:
+        with self._lock:
+            card.status = "done" if ok else "failed"
+            card.color = "#22c55e" if ok else "#f87171"
+
     def render(self) -> str:
         rendered: list[str] = []
         for card in self.cards:
+            if card.kind == "tool":
+                status = {"running": "… running", "done": "✓ done", "failed": "✗ failed"}.get(card.status, card.status or "")
+                rendered.extend((
+                    f"╭─ tool · {card.name}",
+                    *[f"│ {line}" for line in (card.content.splitlines() or [""])],
+                    f"╰─ {status}",
+                    "",
+                ))
+                continue
             width = max(24, min(100, max((len(line) for line in card.content.splitlines() or [""]), default=0) + 4))
             prefix, border, usage, suffix = _card_header_parts(card, width)
             rendered.extend((
@@ -186,6 +222,14 @@ class Transcript:
             cards = tuple(self.cards)
         outer_width = 60
         for card in cards:
+            if card.kind == "tool":
+                status = {"running": "… running", "done": "✓ done", "failed": "✗ failed"}.get(card.status, card.status or "")
+                result.extend((("class:prompt-label", f"╭─ tool · {card.name}\n"),))
+                for line in card.content.splitlines() or [""]:
+                    for wrapped_line in _wrap_terminal_width(line, outer_width - 2):
+                        result.extend((("class:prompt-label", "│ "), ("class:card-content", wrapped_line + "\n")))
+                result.extend(((f"fg:{card.color}", f"╰─ {status}\n\n"),))
+                continue
             if card.kind == "startup":
                 lines = card.content.splitlines()
                 for index, line in enumerate(lines[:3]):
@@ -241,12 +285,31 @@ def _status_line() -> str:
     except AuthenticationRequired:
         context_window = 128_000
     left = f"{used / context_window:.1%} · {used / 1000:.1f}k / {context_window / 1000:.0f}k"
-    middle = get_permission_mode()
-    right = f"{provider}/{model}"
+    # Penhin does not yet have an OS-enforced command sandbox. Keep the status
+    # honest until that execution boundary exists instead of exposing a UI-only toggle.
+    middle = f"permissions:{get_permission_mode()}  sandbox:off"
+    right = _runtime_identity(provider, model)
     width = max(40, get_terminal_size((100, 24)).columns - 4)
+    available_right = max(8, width - len(left) - len(middle) - 4)
+    if _terminal_width(right) > available_right:
+        right = _fit_terminal_width(right, max(1, available_right - 1)).rstrip() + "…"
     middle_start = max(len(left) + 2, (width - len(middle)) // 2)
     right_start = max(middle_start + len(middle) + 2, width - len(right))
     return left + " " * (middle_start - len(left)) + middle + " " * (right_start - middle_start - len(middle)) + right
+
+
+def _runtime_identity(provider: str, model: str) -> str:
+    """Keep the provider explicit while removing a redundant provider model prefix."""
+    if provider == "not configured" and model == "not configured":
+        return "not configured"
+    short_model = model
+    slash_prefix = f"{provider}/"
+    if short_model.startswith(slash_prefix):
+        short_model = short_model[len(slash_prefix):]
+    dash_prefix = f"{provider}-"
+    if short_model.startswith(dash_prefix):
+        short_model = short_model[len(dash_prefix):]
+    return f"{provider}/{short_model}"
 
 
 class DraggableScrollbarMargin(ScrollbarMargin):
@@ -533,6 +596,17 @@ class TerminalInterface:
         self._refresh_transcript()
         return stream
 
+    def add_tool_call(self, name: str, tool_input: dict[str, object]) -> MessageCard:
+        with self._output_lock:
+            card = self.transcript.add_tool_call(name, tool_input)
+        self._refresh_transcript()
+        return card
+
+    def finish_tool_call(self, card: MessageCard, *, ok: bool) -> None:
+        with self._output_lock:
+            self.transcript.finish_tool_call(card, ok=ok)
+        self._refresh_transcript()
+
     def _refresh_transcript(self) -> None:
         self._follow_latest = True
         self.output.vertical_scroll = LATEST_SCROLL
@@ -540,12 +614,15 @@ class TerminalInterface:
 
     def _latest_output_cursor(self) -> Point:
         """Anchor the transcript viewport to its final rendered line."""
+        if self._selection is not None:
+            return Point(x=0, y=self._output_cursor_line)
         if self._follow_latest:
             self._follow_latest = False
             return Point(x=0, y=self._output_cursor_line)
         return Point(x=0, y=min(self._output_cursor_line, self.output.vertical_scroll))
 
     def _main_panel(self) -> FormattedText:
+        selected_cursor_line: int | None = None
         if self._waiting is not None:
             rows: FormattedText = [("class:heading", self._waiting + "\n")]
         elif self._selection is None:
@@ -563,9 +640,14 @@ class TerminalInterface:
                     last_provider = provider
                 marker = "› " if index == self._selection.selected else "  "
                 style = "class:completion-menu.completion.current" if index == self._selection.selected else "class:composer"
+                if index == self._selection.selected:
+                    selected_cursor_line = sum(text.count("\n") for _style, text, *_ in rows)
                 rows.append((style, marker + label + "\n"))
 
-        self._output_cursor_line = max(0, sum(text.count("\n") for _style, text, *_ in rows))
+        self._output_cursor_line = max(
+            0,
+            selected_cursor_line if selected_cursor_line is not None else sum(text.count("\n") for _style, text, *_ in rows),
+        )
         return rows
 
     def _bottom_toolbar(self) -> FormattedText:
@@ -659,6 +741,31 @@ def _add_terminal(kind: str, name: str, text: str, *, tokens: int | None = None)
         return False
     active_terminal.add_message(kind, name, text, tokens=tokens)
     return True
+
+
+def start_tool_call(name: str, tool_input: dict[str, object]) -> MessageCard | None:
+    terminal = active_terminal
+    if terminal is None:
+        console.print(Text(f"tool · {name}", style="bold cyan"))
+        content = _tool_card_content(tool_input)
+        if content and content != "(no input)":
+            console.print(Text(content, style="dim"))
+        return None
+    try:
+        return terminal.add_tool_call(name, tool_input)
+    except Exception:
+        # Transcript rendering is observability only; tool execution must continue.
+        return None
+
+
+def finish_tool_call(card: MessageCard | None, *, ok: bool) -> None:
+    terminal = active_terminal
+    if card is not None and terminal is not None:
+        try:
+            terminal.finish_tool_call(card, ok=ok)
+        except Exception:
+            # A late background completion can race terminal teardown.
+            return
 
 
 def _request_terminal_input(message: str, *, secret: bool = False) -> str | None:

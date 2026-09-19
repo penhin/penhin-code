@@ -6,6 +6,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from penhin.agent import loop as agent
+from penhin.cli import ui
 from penhin.agent.state import AgentDeps, AgentPhase, AgentState, TerminalReason, step_agent
 from penhin.runtime.retry import CircuitBreakerOpen
 from penhin.agent.context import RunContext
@@ -376,6 +377,24 @@ def test_execute_tool_uses_returns_tool_results() -> None:
     assert tool_results[0]["tool_use_id"] == "tool-1"
     assert '"ok": true' in tool_results[0]["content"]
     assert "cache_control" not in tool_results[0]
+
+
+def test_execute_tool_uses_renders_the_model_tool_call(monkeypatch) -> None:
+    context = RunContext(
+        messages=[],
+        policy=PermissionPolicy(allow={"workspace"}, deny=set()),
+        approval=ApprovalFlow.require_confirmation(set()),
+    )
+    response = FakeResponse([FakeToolBlock(name="workspace", block_id="tool-1")], stop_reason="tool_use")
+    terminal = ui.TerminalInterface(lambda _message: None)
+    monkeypatch.setattr(ui, "active_terminal", terminal)
+
+    with patch("penhin.tools.execution.invocation.ToolInvocation.invoke", return_value=ToolRun(Result.success("ok"))):
+        agent.execute_tool_uses(context, response)
+
+    assert [(card.kind, card.name, card.status) for card in terminal.cards] == [
+        ("tool", "workspace", "done"),
+    ]
 
 
 def test_execute_tool_uses_caches_large_tool_result() -> None:

@@ -22,19 +22,21 @@ def test_status_line_uses_the_active_runtime_context_window(monkeypatch) -> None
     assert "0.0% · 0.0k / 200k" in ui._status_line()
 
 
-def test_status_line_keeps_the_entire_model_name_within_the_toolbar(monkeypatch) -> None:
+def test_status_line_keeps_runtime_identity_rightmost_and_within_the_toolbar(monkeypatch) -> None:
     from penhin.runtime import runtime_manager
 
     monkeypatch.setattr(ui, "status_context", SimpleNamespace(messages=[]))
     monkeypatch.setattr(runtime_manager, "current", lambda: SimpleNamespace(context_window=200_000))
-    monkeypatch.setattr(runtime_manager, "configured_provider", lambda: "openai")
-    monkeypatch.setattr(runtime_manager, "status", lambda: SimpleNamespace(model="luna"))
+    monkeypatch.setattr(runtime_manager, "configured_provider", lambda: "deepseek")
+    monkeypatch.setattr(runtime_manager, "status", lambda: SimpleNamespace(model="deepseek-v4-flash"))
     monkeypatch.setattr("penhin.infrastructure.config.get_permission_mode", lambda: "default")
     monkeypatch.setattr(ui, "get_terminal_size", lambda _fallback: SimpleNamespace(columns=100))
 
     toolbar = f"  {ui._status_line()}  "
 
-    assert toolbar.endswith("openai/luna  ")
+    assert "permissions:default" in toolbar
+    assert "sandbox:off" in toolbar
+    assert toolbar.endswith("deepseek/v4-flash  ")
     assert ui._terminal_width(toolbar) <= 100
 
 
@@ -75,6 +77,39 @@ def test_full_screen_transcript_uses_provider_identity_colours() -> None:
     assert terminal.message_color("ChatGPT") == "#f8fafc"
     assert terminal.message_color("Claude Code") == "#f97316"
     assert terminal.message_color("Custom Agent") == terminal.message_color("Custom Agent")
+
+
+def test_tool_call_card_uses_compact_tool_language() -> None:
+    transcript = ui.Transcript()
+
+    card = transcript.add_tool_call("read", {"path": "penhin/cli/ui.py"})
+    transcript.finish_tool_call(card, ok=True)
+
+    rendered = "".join(text for _style, text in transcript.formatted())
+    assert "╭─ tool · read" in rendered
+    assert "│ path: penhin/cli/ui.py" in rendered
+    assert "╰─ ✓ done" in rendered
+
+
+def test_tool_call_card_redacts_sensitive_input_and_bounds_oversized_values() -> None:
+    transcript = ui.Transcript()
+
+    card = transcript.add_tool_call("bash", {"api_key": "do-not-show", "command": "x" * 2_000})
+
+    assert "do-not-show" not in card.content
+    assert "<redacted>" in card.content
+    assert len(card.content) <= ui.MAX_TOOL_CARD_CHARS
+    assert card.content.endswith("…")
+
+
+def test_tool_call_card_degrades_for_unrenderable_input() -> None:
+    class BrokenString:
+        def __str__(self):
+            raise RuntimeError("no representation")
+
+    card = ui.Transcript().add_tool_call("read", {"path": BrokenString()})
+
+    assert card.content == "(input unavailable)"
 
 
 def test_command_surface_filters_choices_without_mutating_transcript() -> None:
@@ -255,6 +290,16 @@ def test_down_arrow_moves_forward_through_composer_history() -> None:
     assert buffer.text == ""
 
 
+def test_shift_tab_cycles_permissions_outside_selection_pages() -> None:
+    calls = []
+    terminal = ui.TerminalInterface(lambda _message: None, cycle_permission=lambda: calls.append("cycle"))
+    event = SimpleNamespace(current_buffer=terminal.composer.buffer)
+
+    terminal.app.key_bindings.get_bindings_for_keys((Keys.BackTab,))[-1].handler(event)
+
+    assert calls == ["cycle"]
+
+
 def test_secret_prompt_interruption_does_not_mask_later_input(monkeypatch) -> None:
     calls = []
 
@@ -311,3 +356,40 @@ def test_selection_surface_replaces_status_with_keyboard_help() -> None:
     )
 
     assert "↑/↓ move · Enter confirm · Esc cancel · type to filter" in terminal._bottom_toolbar()[0][1]
+
+
+def test_selection_viewport_follows_the_selected_option() -> None:
+    terminal = ui.TerminalInterface(lambda _message: None)
+    options = tuple((f"model-{index}", f"Model {index}") for index in range(30))
+    terminal._selection = ui.SelectionSurface(
+        "Choose a model",
+        options,
+        ui.Queue(maxsize=1),
+        scroll_position=0,
+        group_by_prefix=False,
+    )
+
+    terminal._selection.selected = 25
+    content = terminal.output.content.create_content(width=60, height=100)
+    terminal.output._scroll(content, width=60, height=10)
+
+    assert terminal.output.vertical_scroll > 0
+    assert content.cursor_position.y == 27
+
+    scrolled_position = terminal.output.vertical_scroll
+    terminal = ui.TerminalInterface(lambda _message: None)
+    terminal._selection = ui.SelectionSurface(
+        "Choose a model",
+        options,
+        ui.Queue(maxsize=1),
+        scroll_position=0,
+        selected=0,
+        group_by_prefix=False,
+    )
+    terminal.output.vertical_scroll = scrolled_position
+    top_content = terminal.output.content.create_content(width=60, height=100)
+    terminal.output._scroll(top_content, width=60, height=10)
+
+    assert top_content.cursor_position.y == 2
+    assert terminal.output.vertical_scroll <= top_content.cursor_position.y
+    assert top_content.cursor_position.y < terminal.output.vertical_scroll + 10

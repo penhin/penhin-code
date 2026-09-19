@@ -16,6 +16,7 @@ from penhin.agent.prompts import build_main_system, ensure_project_instructions_
 from penhin.runtime import runtime_manager
 from penhin.runtime.manager import log_usage
 from penhin.tools.execution import ApprovalFlow, PermissionPolicy, approval_key, run_tool
+from penhin.tools.execution.invocation import collect_tool_calls
 from penhin.tools.catalog import ToolCatalog
 from penhin.tools.registry import DEFAULT_TOOL_CATALOG, PARENT_TOOLS
 
@@ -177,18 +178,33 @@ def execute_tool_uses(
     response,
     catalog: ToolCatalog = DEFAULT_TOOL_CATALOG,
 ) -> tuple[ToolResults, bool]:
-    return execute_tool_blocks(
-        response.content,
-        build_tool_execution_context(
-            context.policy,
-            context.approval,
-            approval_resolver=lambda name, tool_input, policy, approval: resolve_approval(
-                name, tool_input, policy, approval, catalog, context,
+    calls = collect_tool_calls(response.content)
+    cards = [ui.start_tool_call(call.tool_name, call.tool_input) for call in calls]
+    try:
+        results = execute_tool_blocks(
+            response.content,
+            build_tool_execution_context(
+                context.policy,
+                context.approval,
+                approval_resolver=lambda name, tool_input, policy, approval: resolve_approval(
+                    name, tool_input, policy, approval, catalog, context,
+                ),
+                context=context,
+                catalog=catalog,
             ),
-            context=context,
-            catalog=catalog,
-        ),
-    )
+        )
+    except Exception:
+        for card in cards:
+            ui.finish_tool_call(card, ok=False)
+        raise
+    tool_results, manual_compact = results
+    for card, block in zip(cards, tool_results):
+        try:
+            ok = bool(json.loads(str(block.get("content", "{}"))).get("ok"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            ok = False
+        ui.finish_tool_call(card, ok=ok)
+    return tool_results, manual_compact
 
 
 def record_tool_results(context: RunContext, tool_results: ToolResults, manual_compact: bool) -> None:
