@@ -226,7 +226,7 @@ def test_call_llm_uses_run_context_messages() -> None:
     assert runtime.kwargs["messages"] == context.messages
     assert runtime.kwargs["messages"] is not context.messages
     assert runtime.kwargs["max_tokens"] == 123
-    assert {tool["name"] for tool in runtime.kwargs["tools"]} == {"read", "edit", "bash", "plan"}
+    assert {tool["name"] for tool in runtime.kwargs["tools"]} == {"read", "edit", "bash"}
     assert isinstance(runtime.kwargs["system"], str)
 
 
@@ -245,7 +245,7 @@ def test_agent_dependencies_read_a_fresh_catalog_before_each_model_turn() -> Non
     deps.call_llm(context)
     second_tools = runtime.kwargs["tools"]
 
-    assert {tool["name"] for tool in first_tools} == {"read", "edit", "bash", "plan"}
+    assert {tool["name"] for tool in first_tools} == {"read", "edit", "bash"}
     assert second_tools == []
 
 

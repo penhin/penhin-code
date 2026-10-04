@@ -153,6 +153,8 @@ def call_llm(context: RunContext, runtime, catalog: ToolCatalog = MODEL_TOOL_CAT
 
     def on_stream_text(text: str) -> None:
         nonlocal streamed, stream
+        if context.planning.active:
+            return  # Planning responses are rendered as host-owned questions or proposals.
         if not streamed:
             stream = ui.start_assistant_message()
         streamed = True

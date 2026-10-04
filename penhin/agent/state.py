@@ -102,6 +102,12 @@ def step_agent(context: RunContext, state: AgentState, deps: AgentDeps) -> Agent
             last_stop_reason=getattr(response, "stop_reason", None),
         )
         if not deps.should_continue_with_tools(response):
+            if context.planning.active:
+                from penhin.agent.planning import handle_planning_response
+                result = handle_planning_response(context, response.content)
+                if not result.ok:
+                    return finish(next_state, TerminalReason.ERROR, phase=AgentPhase.FAILED, error=result.message)
+                return replace(next_state, phase=AgentPhase.COMPACT_CONTEXT, response=None)
             return finish(next_state, TerminalReason.END_TURN)
         return replace(next_state, phase=AgentPhase.EXECUTE_TOOLS)
 

@@ -5,6 +5,7 @@ from .types import CommandSpec
 
 
 COMMANDS = (
+    CommandSpec("/plan", "Enter planning mode for the next request", _handlers.handle_plan_command),
     CommandSpec("/session", "Show current session and tree leaf", _handlers.handle_session_command),
     CommandSpec("/tree", "Show the session tree or branch from an entry", _handlers.handle_tree_command),
     CommandSpec("/fork", "Fork the session from an entry", _handlers.handle_fork_command),

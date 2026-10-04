@@ -566,3 +566,25 @@ def test_setup_command_completion_returns_completer() -> None:
     completer = router.setup_command_completion()
     completions = list(completer.get_completions(Document("/wo"), None))
     assert [completion.text for completion in completions] == ["/workspace"]
+
+
+def test_plan_is_an_explicit_local_command_in_help_and_completion(tmp_path):
+    context = empty_context()
+    context.session_manager = SessionManager.create(tmp_path / "sessions")
+    with patch("penhin.cli.ui.print_info") as output:
+        assert router.handle_local_command("/help", context)
+        assert any(call.args[0].startswith("/plan ") for call in output.call_args_list)
+        assert router.handle_local_command("/plan", context)
+    assert context.planning.active
+    assert not context.planning.approved
+    completion = router.setup_command_completion()
+    assert "/plan" in [item.text for item in completion.get_completions(Document("/pl"), None)]
+    restored = RunContext(messages=[], policy=context.policy, approval=context.approval,
+                          session_manager=SessionManager.open(context.session_manager.path))
+    assert restored.planning.active
+
+
+def test_workspace_lists_only_current_model_tools():
+    with patch("penhin.cli.commands._handlers.workspace_info", return_value={}) as workspace, patch("penhin.cli.ui.print_json"):
+        router.handle_local_command("/workspace", empty_context())
+    workspace.assert_called_once_with(["read", "edit", "bash"])

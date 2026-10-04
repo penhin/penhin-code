@@ -16,7 +16,7 @@ from penhin.runtime import AuthenticationRequired, runtime_manager
 from penhin.runtime.envelope import resolve_envelope
 from penhin.plugins.bootstrap import plugin_runtime_for_session
 from penhin.tools.execution import runtime_permission_setup
-from penhin.tools.registry import tool_names
+from penhin.tools.registry import MODEL_DEFAULT_TOOLS, tool_names
 from penhin.tools.builtin.workspace import workspace_info
 from penhin.agent.session_store import sessions
 from penhin.cli import ui
@@ -36,7 +36,7 @@ def non_negative_int(value: str) -> int:
 
 
 def workspace_summary_line(info: dict[str, object] | None = None) -> str:
-    info = workspace_info(tool_names()) if info is None else info
+    info = workspace_info(tool_names(MODEL_DEFAULT_TOOLS)) if info is None else info
     dirty = info.get("dirty_files_count")
     if dirty is None:
         dirty = "unknown"
@@ -135,6 +135,9 @@ def main() -> None:
     def run_pending_prompts() -> None:
         while (prompt := pending.next()) is not None:
             try:
+                if prompt.split()[0] == "/plan":
+                    handle_local_command(prompt, context)
+                    continue
                 context.add_user_message(prompt)
                 agent_loop(context)
             except AuthenticationRequired as error:
@@ -149,6 +152,9 @@ def main() -> None:
         if user_input in {"q", "quit", "exit"}:
             if terminal is not None:
                 terminal.app.exit()
+            return
+        if user_input.split()[0] == "/plan":
+            pending.submit(user_input)
             return
         if user_input.startswith("/"):
             def run_local_command() -> None:

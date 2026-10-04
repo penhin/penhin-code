@@ -20,13 +20,14 @@ from penhin.providers.models import (
     model_options, model_thinking_levels, parse_model_reference, supports_custom_model, validate_model,
 )
 from penhin.tools.execution import runtime_permission_setup
-from penhin.tools.registry import tool_names
+from penhin.tools.registry import MODEL_TOOL_CATALOG, tool_names
 from penhin.tools.builtin.workspace import workspace_info
 from penhin.agent.session_store import session_id_from_path, sessions
 
 
 def handle_workspace_command(args: list[str], context: RunContext | None = None):
-    ui.print_json(workspace_info(tool_names()))
+    catalog = context.plugin_runtime.catalog() if context is not None and context.plugin_runtime is not None else MODEL_TOOL_CATALOG
+    ui.print_json(workspace_info(tool_names(catalog.schemas("parent"))))
 
 
 def provider_label(provider: str) -> str:
@@ -543,6 +544,19 @@ def circuit_status(breaker):
     status = {"enabled": True}
     status.update(breaker.snapshot())
     return status
+
+
+def handle_plan_command(args: list[str], context: RunContext | None = None):
+    if args:
+        ui.print_error("Usage: /plan — then describe your request")
+        return
+    if context is None:
+        ui.print_error("No active session for planning.")
+        return
+    from penhin.agent.planning import PlanningState, save_planning
+    if not context.planning.active:
+        save_planning(context, PlanningState(active=True))
+    ui.print_info("规划模式已开启，请输入你的需求。最终批准前不会实施修改。")
 
 
 def handle_compact_command(args: list[str], context: RunContext | None = None):

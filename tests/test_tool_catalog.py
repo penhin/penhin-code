@@ -26,12 +26,15 @@ def test_default_session_catalog_hides_and_rejects_retired_model_tools(tmp_path,
     provider = Provider()
     try:
         call_llm(context, provider, runtime.catalog())
-        assert {tool["name"] for tool in provider.request["tools"]} == {"read", "edit", "bash", "plan"}
+        assert {tool["name"] for tool in provider.request["tools"]} == {"read", "edit", "bash"}
         response = type("Response", (), {"content": [
             {"type": "tool_use", "id": "retired", "name": "compact", "input": {}},
+            {"type": "tool_use", "id": "plan", "name": "plan", "input": {}},
         ]})()
         results, _ = execute_tool_uses(context, response, runtime.catalog())
         assert json.loads(results[0]["content"])["meta"]["code"] == "unknown_tool"
+        assert json.loads(results[1]["content"])["meta"]["code"] == "unknown_tool"
+        assert not context.planning.active
         assert context.pending_force_compact_hint is None
     finally:
         runtime.close()

@@ -1,11 +1,12 @@
 """Persisted planning dialogue, independent of the tool permission policy."""
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass, field, replace
 from typing import TYPE_CHECKING, Literal
 
 from penhin.result import Result
-from penhin.tools.builtin.planning import PlanningQuestion, valid_plan_input
+from penhin.agent.planning_protocol import PlanningQuestion, parse_response
 
 if TYPE_CHECKING:
     from penhin.agent.context import RunContext
@@ -82,22 +83,28 @@ def collect_replies(context: RunContext) -> Result:
         return Result.success("Planning paused awaiting user input. Do not implement.", data={"awaiting_input": True})
     if context.planning.approved:
         return Result.success("User approved the final plan. Continue implementation under the existing permission policy.", data=asdict(context.planning))
-    return Result.success("Use the answers and feedback to continue planning. Ask more questions if needed, then present one complete plan using content. Do not implement before final approval.", data=asdict(context.planning))
+    return Result.success("Use the answers and feedback to continue planning. Ask more questions if needed, then submit one complete plan in a content response. Do not implement before final approval.", data=asdict(context.planning))
 
 
-def present_plan(context: RunContext | None, questions: list[PlanningQuestion] | None, content: str | None) -> Result:
-    if context is None:
-        return Result.failure("No active session for planning.", code="no_context")
-    if not valid_plan_input(questions, content):
-        return Result.failure("Invalid planning questions or content.", code="invalid_tool_input")
-    if context.planning.awaiting:
-        return Result.success("Waiting for the user's pending planning response.", data={"awaiting_input": True})
-    state = context.planning if context.planning.active else PlanningState(active=True)
+def handle_planning_response(context: RunContext, blocks: list[dict]) -> Result:
+    """Consume structured assistant output only after the user enters /plan."""
+    if not context.planning.active:
+        return Result.failure("Planning is not active.", code="planning_inactive")
+    try:
+        questions, content = parse_response(blocks)
+    except (ValueError, TypeError):
+        from penhin.cli import ui
+        ui.print_error("规划响应格式无效，尚未批准任何修改。请重试。")
+        return Result.failure("Invalid planning response. Submit questions or content using the required JSON format.", code="invalid_planning_response")
     save_planning(context, replace(
-        state, active=True, approved=False, questions=questions or [],
-        content=content if content is not None else state.content,
-        awaiting="question" if questions else "approval" if content else "",
+        context.planning, questions=questions or [],
+        content=content if content is not None else context.planning.content,
+        awaiting="question" if questions else "approval",
     ))
-    if questions is None and content is None:
-        return Result.success("Planning started. Inspect with read, ask questions as needed, then submit one complete plan for final approval.")
-    return collect_replies(context)
+    result = collect_replies(context)
+    # Host feedback is context for the next model turn, not another user decision.
+    message = {"role": "user", "content": result.message + "\n" + json.dumps(result.data, ensure_ascii=False)}
+    if context.session_manager is not None:
+        context.session_manager.append_message(message)
+    context.messages.append(message)
+    return result

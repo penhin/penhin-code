@@ -38,10 +38,18 @@ def call(name, **arguments):
     return {"type": "tool_use", "id": name, "name": name, "input": arguments}
 
 
-def context_for(tmp_path):
+def context_for(tmp_path, *, planning=True):
     policy, approval = runtime_permission_setup("full-access")
-    return RunContext(messages=[], policy=policy, approval=approval,
-                      session_manager=SessionManager.create(tmp_path / "sessions"))
+    context = RunContext(messages=[], policy=policy, approval=approval,
+                         session_manager=SessionManager.create(tmp_path / "sessions"))
+    if planning:
+        from penhin.cli.commands import handle_local_command
+        handle_local_command("/plan", context)
+    return context
+
+
+def proposal(**payload):
+    return {"type": "text", "text": json.dumps(payload, ensure_ascii=False)}
 
 
 def test_questions_collect_answers_but_only_final_approval_allows_writes(tmp_path, monkeypatch):
@@ -57,8 +65,9 @@ def test_questions_collect_answers_but_only_final_approval_allows_writes(tmp_pat
     monkeypatch.setattr("penhin.cli.ui.prompt_text", lambda message: "保留公共 API" if message == "" else pytest.fail(message))
     context = context_for(tmp_path)
     provider = ScriptedProvider(
-        [call("plan", questions=QUESTIONS), call("bash", command="touch premature")],
-        [call("plan", content=PLAN)],
+        [proposal(questions=QUESTIONS)],
+        [call("bash", command="touch premature")],
+        [proposal(content=PLAN)],
         [call("bash", command="touch implemented")],
         [{"type": "text", "text": "Done"}],
     )
@@ -87,8 +96,9 @@ def test_feedback_requires_revised_plan_and_fresh_approval(tmp_path, monkeypatch
     monkeypatch.setattr("penhin.cli.ui.prompt_text", lambda message: "增加兼容性验证")
     context = context_for(tmp_path)
     provider = ScriptedProvider(
-        [call("plan", content=PLAN), call("bash", command="touch premature")],
-        [call("plan", content=PLAN + "\n增加兼容性验证")],
+        [proposal(content=PLAN)],
+        [call("bash", command="touch premature")],
+        [proposal(content=PLAN + "\n增加兼容性验证")],
         [call("bash", command="touch approved")],
         [{"type": "text", "text": "Done"}],
     )
@@ -102,7 +112,7 @@ def test_cancelled_other_input_recovers_as_text_and_continues_remaining_question
     monkeypatch.setattr("penhin.cli.ui.prompt_plan_choice", lambda *args: "4", raising=False)
     monkeypatch.setattr("penhin.cli.ui.prompt_text", lambda *args: (_ for _ in ()).throw(EOFError()))
     context = context_for(tmp_path)
-    provider = ScriptedProvider([call("plan", questions=QUESTIONS)])
+    provider = ScriptedProvider([proposal(questions=QUESTIONS)])
     state = run_agent_state_machine(context, build_agent_deps(provider))
     assert state.terminal_reason == TerminalReason.PLAN_SELECTION_REQUIRED
     session = SessionManager.open(context.session_manager.path)
@@ -113,9 +123,11 @@ def test_cancelled_other_input_recovers_as_text_and_continues_remaining_question
     assert not restored.planning.approved
     assert restored.planning.answers[0]["answer"] == "1"
     assert restored.planning.answers[1]["answer"] == "Python 3.13"
-    followup = ScriptedProvider([{"type": "text", "text": "继续规划"}])
+    monkeypatch.setattr("penhin.cli.ui.prompt_plan_choice", lambda *args: "1")
+    followup = ScriptedProvider([proposal(content=PLAN)], [{"type": "text", "text": "Starting"}])
     run_agent_state_machine(restored, build_agent_deps(followup))
-    assert len(followup.requests) == 1
+    assert restored.planning.approved
+    assert len(followup.requests) == 2
 
 
 @pytest.mark.parametrize("arguments", [
@@ -127,14 +139,13 @@ def test_cancelled_other_input_recovers_as_text_and_continues_remaining_question
     {"content": PLAN, "questions": QUESTIONS},
 ])
 def test_invalid_planning_input_never_reaches_user(tmp_path, monkeypatch, arguments):
-    from penhin.tools.execution import run_tool
-    from penhin.tools.registry import MODEL_TOOL_CATALOG
-
     monkeypatch.setattr("penhin.cli.ui.prompt_plan_choice", lambda *args: pytest.fail("invalid menu"))
     context = context_for(tmp_path)
-    result = run_tool("plan", arguments, context.policy, context.approval, context, MODEL_TOOL_CATALOG).result
-    assert not result.ok
-    assert result.meta["code"] == "invalid_tool_input"
+    state = run_agent_state_machine(context, build_agent_deps(ScriptedProvider([proposal(**arguments)])))
+    assert state.terminal_reason == TerminalReason.ERROR
+    assert context.planning.active
+    assert not context.planning.approved
+
 
 
 @pytest.mark.parametrize("choice, awaiting", [(None, "approval"), ("2", "feedback")])
@@ -147,7 +158,7 @@ def test_cancelled_final_review_preserves_approval_boundary(tmp_path, monkeypatc
     monkeypatch.setattr("penhin.cli.ui.prompt_plan_choice", select)
     monkeypatch.setattr("penhin.cli.ui.prompt_text", lambda *args: (_ for _ in ()).throw(EOFError()))
     context = context_for(tmp_path)
-    state = run_agent_state_machine(context, build_agent_deps(ScriptedProvider([call("plan", content=PLAN)])))
+    state = run_agent_state_machine(context, build_agent_deps(ScriptedProvider([proposal(content=PLAN)])))
     assert state.terminal_reason == TerminalReason.PLAN_SELECTION_REQUIRED
     session = SessionManager.open(context.session_manager.path)
     restored = RunContext(messages=session.build_context(), policy=context.policy, approval=context.approval, session_manager=session)
@@ -162,7 +173,7 @@ def test_cancelled_final_review_preserves_approval_boundary(tmp_path, monkeypatc
 def test_approval_persistence_failure_keeps_writes_blocked(tmp_path, monkeypatch):
     monkeypatch.setattr("penhin.cli.ui.prompt_plan_choice", lambda *args: (_ for _ in ()).throw(EOFError()))
     context = context_for(tmp_path)
-    run_agent_state_machine(context, build_agent_deps(ScriptedProvider([call("plan", content=PLAN)])))
+    run_agent_state_machine(context, build_agent_deps(ScriptedProvider([proposal(content=PLAN)])))
     context.session_manager.path.chmod(0o400)
     try:
         with pytest.raises(PermissionError):
@@ -187,10 +198,11 @@ def test_branch_and_fork_restore_pending_questions_and_answers(tmp_path, monkeyp
         return value
 
     monkeypatch.setattr("penhin.cli.ui.prompt_plan_choice", select)
-    context = context_for(tmp_path)
+    context = context_for(tmp_path, planning=False)
     context.add_user_message("Plan a parser change")
     before_plan = context.session_manager.leaf_id
-    run_agent_state_machine(context, build_agent_deps(ScriptedProvider([call("plan", questions=QUESTIONS)])))
+    handle_local_command("/plan", context)
+    run_agent_state_machine(context, build_agent_deps(ScriptedProvider([proposal(questions=QUESTIONS)])))
     pending = context.session_manager.leaf_id
     handle_local_command(f"/tree {before_plan}", context)
     assert not context.planning.active
@@ -207,7 +219,7 @@ def test_branch_and_fork_restore_pending_questions_and_answers(tmp_path, monkeyp
 def test_simple_task_uses_bash_without_planning(tmp_path, monkeypatch):
     monkeypatch.setattr("penhin.tools.builtin.shell.WORKDIR", tmp_path)
     monkeypatch.setattr("penhin.cli.ui.prompt_plan_choice", lambda *args: pytest.fail("simple task prompted"))
-    context = context_for(tmp_path)
+    context = context_for(tmp_path, planning=False)
     provider = ScriptedProvider([call("bash", command="echo hello > greeting.txt")], [{"type": "text", "text": "Done"}])
     run_agent_state_machine(context, build_agent_deps(provider))
     assert (tmp_path / "greeting.txt").read_text().strip() == "hello"
@@ -220,7 +232,6 @@ def test_begin_planning_blocks_writes_before_questions(tmp_path, monkeypatch):
 
     monkeypatch.setattr("penhin.tools.builtin.shell.WORKDIR", tmp_path)
     context = context_for(tmp_path)
-    assert run_tool("plan", {}, context.policy, context.approval, context, MODEL_TOOL_CATALOG).result.ok
     blocked = run_tool("bash", {"command": "touch premature"}, context.policy, context.approval, context, MODEL_TOOL_CATALOG)
     assert blocked.result.meta["code"] == "plan_selection_required"
     assert not (tmp_path / "premature").exists()
@@ -232,3 +243,35 @@ def test_legacy_planning_checkpoint_requires_fresh_approval(tmp_path):
     restored = RunContext(messages=[], policy=context.policy, approval=context.approval, session_manager=context.session_manager)
     assert restored.planning.active
     assert not restored.planning.approved
+
+
+def test_model_cannot_enter_planning_through_tools_or_structured_text(tmp_path, monkeypatch):
+    monkeypatch.setattr("penhin.cli.ui.prompt_plan_choice", lambda *args: pytest.fail("model opened planning"))
+    context = context_for(tmp_path, planning=False)
+    provider = ScriptedProvider(
+        [call("plan", content=PLAN)],
+        [proposal(content=PLAN)],
+    )
+    state = run_agent_state_machine(context, build_agent_deps(provider))
+    assert state.terminal_reason == TerminalReason.END_TURN
+    assert not context.planning.active
+    assert not context.planning.approved
+    assert {tool["name"] for tool in provider.requests[0]["tools"]} == {"read", "edit", "bash"}
+    result = json.loads(context.messages[-2]["content"][0]["content"])
+    assert result["meta"]["code"] == "unknown_tool"
+
+
+def test_planning_protocol_does_not_stream_raw_json_into_transcript(tmp_path, monkeypatch):
+    monkeypatch.setattr("penhin.cli.ui.start_assistant_message", lambda: pytest.fail("raw planning JSON streamed"))
+    monkeypatch.setattr("penhin.cli.ui.prompt_plan_choice", lambda *args: (_ for _ in ()).throw(EOFError()))
+    context = context_for(tmp_path)
+
+    class StreamingProvider(ScriptedProvider):
+        def call_with_retry(self, **kwargs):
+            kwargs["stream_callback"]('{"content":')
+            kwargs["stream_callback"]('"A plan"}')
+            return super().call_with_retry(**kwargs)
+
+    state = run_agent_state_machine(context, build_agent_deps(StreamingProvider([proposal(content=PLAN)])))
+    assert state.terminal_reason == TerminalReason.PLAN_SELECTION_REQUIRED
+    assert context.planning.content == PLAN

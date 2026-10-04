@@ -30,8 +30,8 @@ def test_main_system_sections_use_xml_tags() -> None:
     assert "<task_workflow>" in system
     assert "</task_workflow>" in system
     assert "<planning_workflow>" not in system
-    assert "exactly three" in system
-    assert "explicitly asks for planning" in system
+    assert "local /plan command" in system
+    assert "Do not try to invoke plan" in system
     assert "Simple explicit edits" in system
     for retired in ("agent_plan_create", "agent_dag_show", "task_start", "task_complete", "exit_plan", "load_skill"):
         assert retired not in system

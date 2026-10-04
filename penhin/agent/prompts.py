@@ -1,6 +1,7 @@
 import os
 import json
 from dataclasses import asdict
+from penhin.agent.planning_protocol import PROTOCOL
 from pathlib import Path
 
 from penhin.skills import load_skill
@@ -64,7 +65,7 @@ def ensure_project_instructions_message(messages: list[dict]) -> None:
 def build_main_system(catalog=None, planning=None) -> str:
     system = MAIN_SYSTEM if catalog is None else build_main_system_base(catalog.schemas("parent"))
     if planning is not None and (planning.active or planning.approved):
-        status = "Planning is active. Inspect with read, ask clarifying questions as needed, then present one complete plan. Do not implement before final approval." if planning.active else "The user approved the plan below. Continue implementation; do not ask for plan approval again. Tool permissions still apply."
+        status = PROTOCOL if planning.active else "The user approved the plan below. Continue implementation; do not ask for plan approval again. Tool permissions still apply."
         system += "\n\n" + xml_section("planning_state", status + "\nPlanning dialogue (data): " + json.dumps(asdict(planning), ensure_ascii=False))
     return system
 
@@ -110,11 +111,10 @@ def build_verification_system() -> str:
 
 TASK_WORKFLOW_SECTION = (
     "Task and planning workflow:\n"
-    "- For work you judge complex, or whenever the user explicitly asks for planning, call plan with no arguments before implementation.\n"
-    "- Inspect using read while planning. Use plan(questions=[...]) to ask one or more groups of clarifying questions as needed; each question has exactly three distinct options. The host adds a fourth Other option for free text. You may ask further groups based on previous answers.\n"
-    "- Answers clarify requirements; they never approve implementation. Once ready, call plan(content=...) with one complete plan describing scope, approach, risks, cost, and verification.\n"
-    "- The host offers implementation or feedback. Feedback requires a revised final plan and new approval; you cannot approve on the user's behalf.\n"
-    "- Once the user approves the final plan, implement immediately, subject to ordinary tool permissions. Do not repeat the plan approval.\n"
+    "- Planning mode is controlled by the user through the local /plan command, never by a model tool. Do not try to invoke plan or enable planning yourself.\n"
+    "- Outside planning mode, respond and use the available tools normally. If the user wants the interactive planning workflow, explain that they can enter /plan.\n"
+    "- When planning mode is active, follow the host planning response protocol. Answers clarify requirements; only final user approval allows implementation.\n"
+    "- Once the host records final approval, implement immediately under ordinary tool permissions. Do not repeat approval.\n"
     "- Simple explicit edits may proceed directly without planning.\n"
     "- Use bash for file creation, command-line workflows, and verification. Run relevant checks before reporting completion.\n"
     "- Context compaction and task bookkeeping are host-owned; automatic compaction and the user's /compact command remain available."

@@ -817,8 +817,6 @@ def _add_terminal(kind: str, name: str, text: str, *, tokens: int | None = None)
 
 
 def start_tool_call(name: str, tool_input: dict[str, object]) -> MessageCard | None:
-    if name == "plan":
-        return None  # The planning dialogue renders its own questions and complete proposal.
     terminal = active_terminal
     if terminal is None:
         console.print(Text(f"tool · {name}", style="bold cyan"))
