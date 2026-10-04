@@ -50,10 +50,10 @@ def _save_plan_and_exit(payload: dict[str, Any], context: object) -> Result:
 
 def _present_plan(payload, context) -> Result:
     from penhin.agent.planning import present_plan
-    return present_plan(context, payload["alternatives"])
+    return present_plan(context, payload["questions"], payload["content"])
 
 DEFAULT_EFFECTS: dict[str, EffectDefinition] = {
-    "present_plan": ({"required": {"alternatives": (list, type(None))}, "optional": set()}, _present_plan),
+    "present_plan": ({"required": {"questions": (list, type(None)), "content": (str, type(None))}, "optional": set()}, _present_plan),
     "compact_context": ({"required": {}, "optional": set()}, _compact),
     "snip_turns": ({"required": {"selectors": (str, list)}, "optional": set()}, _snip),
     "enter_plan_mode": ({"required": {}, "optional": set()}, _enter_plan),
@@ -98,7 +98,7 @@ class ToolInvocation:
         spec = catalog.get(tool_name)
         planning = getattr(context, "planning", None)
         if planning is not None and planning.active and spec is not None and tool_name != "plan" and spec.category != ToolCategory.readonly:
-            return ToolRun(Result.failure("Implementation waits for user plan selection. Use read to inspect and plan to present three alternatives.", code="plan_selection_required"))
+            return ToolRun(Result.failure("Implementation waits for final user approval. Use read to inspect, and plan for questions or a complete proposal.", code="plan_selection_required"))
         access = check_tool_access(tool_name, tool_input, policy, approval, catalog)
         if access is not None:
             log_tool_blocked(call_id, tool_name, tool_input, access.result, (time.perf_counter() - start) * 1000, "approval_required" if access.approval_required else "blocked")

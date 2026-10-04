@@ -187,7 +187,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     ),
     "plan": ToolSpec(
         name="plan",
-        description="Start read-only planning with no arguments, or present exactly three materially different alternatives for user selection. Each option describes scope, risks, cost, and verification. Only the user can select; a custom suggestion requires three revised alternatives.",
+        description="Start read-only planning with no arguments. Ask one or more questions, each with exactly three options (the host adds Other), or submit one complete final plan in content. Question answers never approve implementation; only final user approval does. Feedback requires revision and fresh approval.",
         input_schema=PLAN_SCHEMA,
         category=ToolCategory.state,
         handler=outcome_handler(plan_outcome),

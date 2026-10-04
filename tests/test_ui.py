@@ -347,7 +347,7 @@ def test_select_rejects_an_ambiguous_search_term(monkeypatch) -> None:
 
 
 def test_selection_surface_replaces_status_with_keyboard_help() -> None:
-    terminal = object.__new__(ui.TerminalInterface)
+    terminal = ui.TerminalInterface(lambda _message: None)
     terminal._selection = ui.SelectionSurface(
         "Session tree",
         (("entry", "entry"),),
@@ -393,3 +393,92 @@ def test_selection_viewport_follows_the_selected_option() -> None:
     assert top_content.cursor_position.y == 2
     assert terminal.output.vertical_scroll <= top_content.cursor_position.y
     assert top_content.cursor_position.y < terminal.output.vertical_scroll + 10
+
+
+def test_planning_choice_switches_to_blank_composer_and_returns_free_text(monkeypatch):
+    import asyncio
+    from io import StringIO
+    from prompt_toolkit.application import create_app_session
+    from prompt_toolkit.input import create_pipe_input
+    from prompt_toolkit.output.vt100 import Vt100_Output
+    from prompt_toolkit.data_structures import Size
+
+    async def exercise(pipe, output):
+        terminal = ui.TerminalInterface(lambda _: pytest.fail("planning input submitted as a new task"))
+        monkeypatch.setattr(ui, "active_terminal", terminal)
+        task = asyncio.create_task(terminal.app.run_async())
+        try:
+            choice = asyncio.create_task(asyncio.to_thread(ui.prompt_plan_choice, "修改范围？", (("1", "局部"), ("2", "统一"), ("3", "替换"), ("4", "其它"))))
+            await asyncio.sleep(0.15)
+            assert "修改范围？" in terminal.transcript.render()
+            rendered = output.getvalue()
+            assert "其它" in rendered
+            assert "type to filter" not in rendered
+            assert "Filter:" not in rendered
+            pipe.send_text("4\r")
+            assert await asyncio.wait_for(choice, 2) == "4"
+            answer = asyncio.create_task(asyncio.to_thread(ui.prompt_text, ""))
+            await asyncio.sleep(0.15)
+            composer_content = terminal.composer.control.create_content(width=100, height=1)
+            visible = "".join(fragment[1] for fragment in composer_content.get_line(0))
+            assert visible.strip() == "❯"
+            assert terminal.composer.text == ""
+            pipe.send_text("保留 API\r")
+            assert await asyncio.wait_for(answer, 2) == "保留 API"
+        finally:
+            terminal.app.exit()
+            await task
+
+    output = StringIO()
+    with create_pipe_input() as pipe:
+        with create_app_session(input=pipe, output=Vt100_Output(output, lambda: Size(rows=24, columns=100))):
+            asyncio.run(exercise(pipe, output))
+
+
+def test_quitting_terminal_releases_pending_planning_input():
+    import asyncio
+    from prompt_toolkit.application import create_app_session
+    from prompt_toolkit.input import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+
+    async def exercise(pipe):
+        terminal = ui.TerminalInterface(lambda _: None)
+        app_task = asyncio.create_task(terminal.app.run_async())
+
+        def request():
+            try:
+                terminal.request_input("")
+            except KeyboardInterrupt:
+                return "cancelled"
+
+        answer = asyncio.create_task(asyncio.to_thread(request))
+        await asyncio.sleep(0.15)
+        pipe.send_text("\x03")
+        assert await asyncio.wait_for(answer, 2) == "cancelled"
+        await asyncio.wait_for(app_task, 2)
+
+    with create_pipe_input() as pipe:
+        with create_app_session(input=pipe, output=DummyOutput()):
+            asyncio.run(exercise(pipe))
+
+
+def test_blank_fallback_input_hides_and_restores_shared_status(monkeypatch):
+    from io import StringIO
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.application import create_app_session
+    from prompt_toolkit.input import create_pipe_input
+    from prompt_toolkit.output.vt100 import Vt100_Output
+    from prompt_toolkit.data_structures import Size
+
+    output = StringIO()
+    with create_pipe_input() as pipe:
+        with create_app_session(input=pipe, output=Vt100_Output(output, lambda: Size(rows=24, columns=100))):
+            session = PromptSession(bottom_toolbar="STATUS-MUST-BE-HIDDEN")
+            monkeypatch.setattr(ui, "prompt_session", session)
+            monkeypatch.setattr(ui, "active_terminal", None)
+            from threading import Timer
+            timer = Timer(0.15, lambda: pipe.send_text("custom answer\r"))
+            timer.start()
+            assert ui.prompt_text("") == "custom answer"
+            assert "STATUS-MUST-BE-HIDDEN" not in output.getvalue()
+            assert session.bottom_toolbar == "STATUS-MUST-BE-HIDDEN"

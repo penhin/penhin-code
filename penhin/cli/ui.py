@@ -15,7 +15,7 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.layout.processors import BeforeInput, ConditionalProcessor, PasswordProcessor
 from prompt_toolkit.layout import HSplit, Layout
-from prompt_toolkit.layout.containers import Window
+from prompt_toolkit.layout.containers import ConditionalContainer, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.data_structures import Point
 from prompt_toolkit.layout.margins import ScrollbarMargin
@@ -25,6 +25,7 @@ from prompt_toolkit.widgets import Frame, TextArea
 from rich.columns import Columns
 from rich.console import Console, Group
 from rich.live import Live
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.text import Text
 
@@ -197,6 +198,9 @@ class Transcript:
     def render(self) -> str:
         rendered: list[str] = []
         for card in self.cards:
+            if card.kind == "planning":
+                rendered.extend((card.content, ""))
+                continue
             if card.kind == "tool":
                 status = {"running": "… running", "done": "✓ done", "failed": "✗ failed"}.get(card.status, card.status or "")
                 rendered.extend((
@@ -222,6 +226,13 @@ class Transcript:
             cards = tuple(self.cards)
         outer_width = 60
         for card in cards:
+            if card.kind == "planning":
+                for line in card.content.splitlines():
+                    style = "bold class:card-content" if line.startswith("#") else "class:card-content"
+                    result.append((style, line.lstrip("# ") if line.startswith("#") else line))
+                    result.append(("", "\n"))
+                result.append(("", "\n"))
+                continue
             if card.kind == "tool":
                 status = {"running": "… running", "done": "✓ done", "failed": "✗ failed"}.get(card.status, card.status or "")
                 result.extend((("class:prompt-label", f"╭─ tool · {card.name}\n"),))
@@ -260,9 +271,10 @@ class SelectionSurface:
     scroll_position: int
     selected: int = 0
     group_by_prefix: bool = True
+    inline: bool = False
 
     def matching_options(self, query: str) -> list[tuple[str, str]]:
-        normalized = query.casefold()
+        normalized = "" if self.inline else query.casefold()
         return [option for option in self.options if not normalized or normalized in option[0].casefold() or normalized in option[1].casefold()]
 
 
@@ -413,8 +425,9 @@ class TerminalInterface:
     def __init__(self, submit: Callable[[str], None], completer=None, cycle_permission: Callable[[], None] | None = None) -> None:
         self._submit = submit
         self._cycle_permission = cycle_permission
-        self._input_request: Queue[str] | None = None
+        self._input_request: Queue[str | None] | None = None
         self._input_request_lock = Lock()
+        self._quiet_input = False
         self._output_lock = Lock()
         self._selection: SelectionSurface | None = None
         self._waiting: str | None = None
@@ -423,14 +436,14 @@ class TerminalInterface:
         self._follow_latest = False
         self.transcript = Transcript()
         self.output = TranscriptWindow(
-            FormattedTextControl(self._main_panel, get_cursor_position=self._latest_output_cursor),
+            FormattedTextControl(self._main_panel, get_cursor_position=self._latest_output_cursor, focusable=True),
             wrap_lines=True,
             always_hide_cursor=True,
         )
         self.composer = TextArea(
             multiline=False,
             completer=completer,
-            complete_while_typing=True,
+            complete_while_typing=Condition(lambda: not self._quiet_input),
             history=InMemoryHistory(),
             prompt=FormattedText([("class:prompt", "❯ ")]),
             style="class:composer",
@@ -439,7 +452,7 @@ class TerminalInterface:
             BeforeInput("ask or /command", style="class:prompt-label"),
             Condition(lambda: not self.composer.text),
         )
-        self.composer.buffer.input_processors = [self._placeholder_processor]
+        self._configure_composer()
         bindings = KeyBindings()
 
         def selection_options() -> list[tuple[str, str]]:
@@ -452,10 +465,35 @@ class TerminalInterface:
             self._selection = None
             self.output.vertical_scroll = selection.scroll_position
             self.composer.buffer.reset()
-            self.composer.prompt = FormattedText([("class:prompt", "❯ ")])
-            self.composer.buffer.input_processors = [self._placeholder_processor]
+            self._configure_composer()
+            self.app.layout.focus(self.composer)
             selection.reply.put(value)
             self.app.invalidate()
+
+        for number in ("1", "2", "3", "4"):
+            @bindings.add(number, filter=Condition(lambda: self._selection is not None and self._selection.inline))
+            def select_number(event) -> None:
+                if self._selection is not None:
+                    index = int(event.data) - 1
+                    if index < len(self._selection.options):
+                        self._selection.selected = index
+                        self.app.invalidate()
+
+        def finish_input(value: str | None) -> None:
+            request, self._input_request = self._input_request, None
+            if request is None:
+                return
+            self._quiet_input = False
+            self.composer.buffer.reset()
+            self._configure_composer()
+            request.put(value)
+            self.app.invalidate()
+
+        def cancel_requests() -> None:
+            finish_selection(None)
+            finish_input(None)
+
+        self._cancel_requests = cancel_requests
 
         @bindings.add("enter")
         def submit_prompt(event) -> None:
@@ -467,18 +505,14 @@ class TerminalInterface:
             value = self.composer.text.strip()
             if not value:
                 return
-            self.composer.buffer.history.append_string(value)
             self.composer.buffer.reset()
             if self._input_request is not None:
-                request, self._input_request = self._input_request, None
-                self.composer.prompt = FormattedText([("class:prompt", "❯ ")])
-                self.composer.buffer.input_processors = [self._placeholder_processor]
-                request.put(value)
-                self.app.invalidate()
+                finish_input(value)
                 return
+            self.composer.buffer.history.append_string(value)
             self._submit(value)
 
-        @bindings.add("c-q")
+        @bindings.add("c-q", filter=Condition(lambda: not self._quiet_input and self._selection is None))
         def restore_queue(event) -> None:
             if restore_queued_prompts is None:
                 return
@@ -490,6 +524,7 @@ class TerminalInterface:
 
         @bindings.add("c-c")
         def exit_terminal(event) -> None:
+            self._cancel_requests()
             self.app.exit()
 
         @bindings.add("up")
@@ -498,12 +533,14 @@ class TerminalInterface:
                 self._selection.selected = max(0, self._selection.selected - 1)
                 self.app.invalidate()
                 return
-            event.current_buffer.history_backward()
+            if not self._quiet_input:
+                event.current_buffer.history_backward()
 
         @bindings.add("down")
         def select_next(event) -> None:
             if self._selection is None:
-                event.current_buffer.history_forward()
+                if not self._quiet_input:
+                    event.current_buffer.history_forward()
                 return
             options = selection_options()
             if options:
@@ -535,6 +572,8 @@ class TerminalInterface:
         def cancel_selection(event) -> None:
             if self._selection is not None:
                 finish_selection(None)
+            elif self._input_request is not None:
+                finish_input(None)
             elif self._waiting is not None:
                 self._waiting_cancelled = True
                 self.clear_temporary_surface()
@@ -560,8 +599,11 @@ class TerminalInterface:
             layout=Layout(
                 HSplit([
                     self.output,
-                    Frame(self.composer, style="class:composer-frame", height=3),
-                    status,
+                    ConditionalContainer(Window(FormattedTextControl(self._inline_choices), wrap_lines=True, dont_extend_height=True),
+                                         filter=Condition(self._inline_selection)),
+                    ConditionalContainer(Frame(self.composer, style="class:composer-frame", height=3),
+                                         filter=Condition(lambda: not self._inline_selection())),
+                    ConditionalContainer(status, filter=Condition(lambda: not self._inline_selection() and not self._quiet_input)),
                 ]),
                 focused_element=self.composer,
             ),
@@ -572,8 +614,19 @@ class TerminalInterface:
             mouse_support=True,
         )
 
+    def _configure_composer(self, prompt: str = "❯ ", *, placeholder: bool = True, secret: bool = False) -> None:
+        processors = self.composer.control.input_processors = []
+        if secret:
+            processors.append(PasswordProcessor())
+        if placeholder:
+            processors.append(self._placeholder_processor)
+        processors.append(BeforeInput(FormattedText([("class:prompt", prompt)])))
+
     def run(self) -> None:
-        self.app.run()
+        try:
+            self.app.run()
+        finally:
+            self._cancel_requests()
 
     def append(self, text: str) -> None:
         self.add_message("system", "System", text.rstrip())
@@ -614,7 +667,7 @@ class TerminalInterface:
 
     def _latest_output_cursor(self) -> Point:
         """Anchor the transcript viewport to its final rendered line."""
-        if self._selection is not None:
+        if self._selection is not None and not self._selection.inline:
             return Point(x=0, y=self._output_cursor_line)
         if self._follow_latest:
             self._follow_latest = False
@@ -624,12 +677,12 @@ class TerminalInterface:
     def _main_panel(self) -> FormattedText:
         selected_cursor_line: int | None = None
         if self._waiting is not None:
-            rows: FormattedText = [("class:heading", self._waiting + "\n")]
-        elif self._selection is None:
+            rows = FormattedText([("class:heading", self._waiting + "\n")])
+        elif self._selection is None or self._selection.inline:
             rows = self.transcript.formatted()
         else:
             options = self._selection.matching_options(self.composer.text)
-            rows = [("class:heading", self._selection.title + "\n\n")]
+            rows = FormattedText([("class:heading", self._selection.title + "\n\n")])
             if not options:
                 rows.append(("class:prompt-label", "No matching choices\n"))
             last_provider = ""
@@ -650,10 +703,22 @@ class TerminalInterface:
         )
         return rows
 
+    def _inline_selection(self) -> bool:
+        return self._selection is not None and self._selection.inline
+
+    def _inline_choices(self) -> FormattedText:
+        if not self._inline_selection() or self._selection is None:
+            return FormattedText()
+        return FormattedText([("class:prompt" if i == self._selection.selected else "class:composer",
+                 f"{'❯' if i == self._selection.selected else ' '} {i + 1}. {label}\n")
+                for i, (_value, label) in enumerate(self._selection.options)])
+
     def _bottom_toolbar(self) -> FormattedText:
+        if self._inline_selection() or self._quiet_input:
+            return FormattedText()
         if self._selection is not None:
-            return [("class:bottom-toolbar", "  ↑/↓ move · Enter confirm · Esc cancel · type to filter  ")]
-        return [("class:bottom-toolbar", f"  {_status_line()}  ")]
+            return FormattedText([("class:bottom-toolbar", "  ↑/↓ move · Enter confirm · Esc cancel · type to filter  ")])
+        return FormattedText([("class:bottom-toolbar", f"  {_status_line()}  ")])
 
     def request_select(
         self,
@@ -662,6 +727,7 @@ class TerminalInterface:
         *,
         initial_value: str | None = None,
         group_by_prefix: bool = True,
+        inline: bool = False,
     ) -> str:
         """Present a temporary selection page and restore the transcript on exit."""
         if not options:
@@ -675,10 +741,13 @@ class TerminalInterface:
             self.output.vertical_scroll,
             selected=selected,
             group_by_prefix=group_by_prefix,
+            inline=inline,
         )
         self.composer.buffer.reset()
-        self.composer.prompt = FormattedText([("class:prompt", "Filter: ")])
-        self.composer.buffer.input_processors = []
+        if inline:
+            self.add_message("planning", "Penhin", message)
+            self.app.layout.focus(self.output)
+        self._configure_composer("Filter: ", placeholder=False)
         self.app.invalidate()
         value = reply.get()
         if value is None:
@@ -702,13 +771,17 @@ class TerminalInterface:
     def request_input(self, message: str, *, secret: bool = False) -> str:
         """Request a value through the pinned composer from a command worker."""
         with self._input_request_lock:
-            request: Queue[str] = Queue(maxsize=1)
+            request: Queue[str | None] = Queue(maxsize=1)
             self._input_request = request
+            self._quiet_input = not message
+            self.composer.buffer.reset()
             suffix = " (hidden)" if secret else ""
-            self.composer.prompt = FormattedText([("class:prompt", f"{message}{suffix}: ")])
-            self.composer.buffer.input_processors = [PasswordProcessor()] if secret else []
+            self._configure_composer(f"{message}{suffix}: " if message else "❯ ", placeholder=False, secret=secret)
             self.app.invalidate()
-            return request.get()
+            value = request.get()
+            if value is None:
+                raise KeyboardInterrupt
+            return value
 
 
 def activate_terminal(terminal: TerminalInterface, context, queue) -> None:
@@ -744,6 +817,8 @@ def _add_terminal(kind: str, name: str, text: str, *, tokens: int | None = None)
 
 
 def start_tool_call(name: str, tool_input: dict[str, object]) -> MessageCard | None:
+    if name == "plan":
+        return None  # The planning dialogue renders its own questions and complete proposal.
     terminal = active_terminal
     if terminal is None:
         console.print(Text(f"tool · {name}", style="bold cyan"))
@@ -846,6 +921,8 @@ def prompt_text(message: str) -> str:
     terminal_value = _request_terminal_input(message)
     if terminal_value is not None:
         return terminal_value.strip()
+    if not message:
+        return _prompt_planning_input()
     return get_prompt_session().prompt(f"{message}: ", is_password=False).strip()
 
 
@@ -858,6 +935,35 @@ def prompt_confirm(message: str, default: bool = False) -> bool:
         else get_prompt_session().prompt(f"{message} {suffix} ", is_password=False)
     ).strip().lower()
     return answer in ({"", "y", "yes"} if default else {"y", "yes"})
+
+
+def _prompt_planning_input() -> str:
+    session = get_prompt_session()
+    toolbar, reserve = session.bottom_toolbar, session.reserve_space_for_menu
+    try:
+        return session.prompt("❯ ", is_password=False, bottom_toolbar="", reserve_space_for_menu=0).strip()
+    finally:
+        session.bottom_toolbar, session.reserve_space_for_menu = toolbar, reserve
+
+
+def print_planning_text(text: str) -> None:
+    if active_terminal is not None:
+        active_terminal.add_message("planning", "Penhin", text)
+    else:
+        console.print(Text(text))
+
+
+def prompt_plan_choice(message: str, options: tuple[tuple[str, str], ...]) -> str:
+    """Keep planning prose in the transcript and show a quiet numbered menu."""
+    if active_terminal is not None:
+        return active_terminal.request_select(message, options, group_by_prefix=False, inline=True)
+    console.print(Markdown(message))
+    for index, (_value, label) in enumerate(options, 1):
+        console.print(Text(f"  {index}. {label}"))
+    while True:
+        answer = _prompt_planning_input()
+        if answer.isdigit() and 1 <= int(answer) <= len(options):
+            return options[int(answer) - 1][0]
 
 
 def prompt_select(

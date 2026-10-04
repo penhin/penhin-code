@@ -75,7 +75,7 @@ def finish(
 
 def step_agent(context: RunContext, state: AgentState, deps: AgentDeps) -> AgentState:
     if state.phase == AgentPhase.COMPACT_CONTEXT:
-        if context.planning.active and context.planning.alternatives:
+        if context.planning.awaiting:
             return finish(state, TerminalReason.PLAN_SELECTION_REQUIRED)
         deps.compact_context(context)
         return replace(state, phase=AgentPhase.CALL_MODEL)

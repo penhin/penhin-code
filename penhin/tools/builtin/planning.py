@@ -1,44 +1,61 @@
-"""The plan tool validates proposals and declares a host-owned selection effect."""
+"""Validate planning questions and final proposals before host interaction."""
 from __future__ import annotations
+
+from typing import TypedDict
 
 from penhin.result import Result
 from penhin.tools.types import ToolEffect, ToolOutcome
 
 
-PLAN_FIELDS = ("title", "scope", "risks", "cost", "verification")
+class PlanningQuestion(TypedDict):
+    question: str
+    options: list[str]
+
+
 PLAN_SCHEMA = {
     "type": "object",
     "properties": {
-        "alternatives": {
-            "type": "array", "minItems": 3, "maxItems": 3,
+        "questions": {
+            "type": "array", "minItems": 1,
             "items": {
                 "type": "object",
-                "properties": {name: {"type": "string", "minLength": 1} for name in PLAN_FIELDS},
-                "required": list(PLAN_FIELDS), "additionalProperties": False,
+                "properties": {
+                    "question": {"type": "string", "minLength": 1},
+                    "options": {"type": "array", "minItems": 3, "maxItems": 3,
+                                "items": {"type": "string", "minLength": 1}},
+                },
+                "required": ["question", "options"], "additionalProperties": False,
             },
         },
+        "content": {"type": "string", "minLength": 1},
     },
     "additionalProperties": False,
 }
 
 
-def plan_outcome(alternatives: list[dict[str, str]] | None = None) -> ToolOutcome:
-    if alternatives is not None:
-        valid = (
-            isinstance(alternatives, list) and len(alternatives) == 3
-            and all(isinstance(option, dict) and set(option) == set(PLAN_FIELDS)
-                    and all(isinstance(value, str) and value.strip() for value in option.values())
-                    for option in alternatives)
-        )
-        if not valid:
-            return ToolOutcome(Result.failure(
-                "Provide exactly three alternatives, each with nonempty title, scope, risks, cost, and verification.",
-                code="invalid_tool_input",
-            ))
-        proposals = {
-            tuple(" ".join(option[name].casefold().split()) for name in PLAN_FIELDS[1:])
-            for option in alternatives
-        }
-        if len(proposals) != 3:
-            return ToolOutcome(Result.failure("Provide three distinct alternatives, not duplicate proposals.", code="invalid_tool_input"))
-    return ToolOutcome(Result.success(), (ToolEffect("present_plan", {"alternatives": alternatives}),))
+def valid_plan_input(questions: object, content: object) -> bool:
+    if questions is not None:
+        if content is not None or not isinstance(questions, list) or not questions:
+            return False
+        for item in questions:
+            if not isinstance(item, dict) or set(item) != {"question", "options"}:
+                return False
+            if not isinstance(item["question"], str) or not item["question"].strip():
+                return False
+            options = item["options"]
+            if not isinstance(options, list) or len(options) != 3:
+                return False
+            if not all(isinstance(option, str) and option.strip() for option in options):
+                return False
+            if len({" ".join(option.casefold().split()) for option in options}) != 3:
+                return False
+    return content is None or isinstance(content, str) and bool(content.strip())
+
+
+def plan_outcome(questions: list[PlanningQuestion] | None = None, content: str | None = None) -> ToolOutcome:
+    if not valid_plan_input(questions, content):
+        return ToolOutcome(Result.failure(
+            "Supply questions with exactly three distinct nonempty options each, OR one nonempty final plan in content. Omit both to begin planning.",
+            code="invalid_tool_input",
+        ))
+    return ToolOutcome(Result.success(), (ToolEffect("present_plan", {"questions": questions, "content": content}),))

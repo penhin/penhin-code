@@ -440,10 +440,9 @@ class SessionManager:
         )
         planning = next((entry for entry in reversed(self.branch_entries(target)) if entry["type"] == "planning"), None)
         if planning is not None:
-            forked.append_entry(
-                "planning", active=planning["active"],
-                alternatives=planning["alternatives"], selected=planning["selected"],
-            )
+            from dataclasses import asdict
+            from penhin.agent.planning import PlanningState
+            forked.append_entry("planning", state=asdict(PlanningState.from_entry(planning)))
         return forked
 
     def render_tree(self) -> list[str]:

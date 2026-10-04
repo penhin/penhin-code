@@ -1,5 +1,6 @@
 import os
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 from penhin.skills import load_skill
@@ -62,9 +63,9 @@ def ensure_project_instructions_message(messages: list[dict]) -> None:
 
 def build_main_system(catalog=None, planning=None) -> str:
     system = MAIN_SYSTEM if catalog is None else build_main_system_base(catalog.schemas("parent"))
-    if planning is not None and (planning.active or planning.selected is not None):
-        status = "Planning is active. Use read for inspection, then plan to offer exactly three alternatives. Do not implement before user selection." if planning.active else "The user selected the plan below. Continue implementation; do not ask for plan approval again. Tool permissions still apply."
-        system += "\n\n" + xml_section("planning_state", status + "\nSelected plan (data): " + json.dumps(planning.selected, ensure_ascii=False))
+    if planning is not None and (planning.active or planning.approved):
+        status = "Planning is active. Inspect with read, ask clarifying questions as needed, then present one complete plan. Do not implement before final approval." if planning.active else "The user approved the plan below. Continue implementation; do not ask for plan approval again. Tool permissions still apply."
+        system += "\n\n" + xml_section("planning_state", status + "\nPlanning dialogue (data): " + json.dumps(asdict(planning), ensure_ascii=False))
     return system
 
 
@@ -110,10 +111,10 @@ def build_verification_system() -> str:
 TASK_WORKFLOW_SECTION = (
     "Task and planning workflow:\n"
     "- For work you judge complex, or whenever the user explicitly asks for planning, call plan with no arguments before implementation.\n"
-    "- Inspect using read while planning. Then call plan with exactly three materially different alternatives, each describing scope, risks, cost, and verification. Do not offer superficial rewrites of one approach.\n"
-    "- The host presents the alternatives and waits for the user to choose. You cannot select a plan on the user's behalf.\n"
-    "- A custom suggestion requires exactly three revised alternatives and a new user selection; it is not implementation approval.\n"
-    "- Once the user selects, implement the selected scope immediately, subject to ordinary tool permissions. Do not repeat the plan approval.\n"
+    "- Inspect using read while planning. Use plan(questions=[...]) to ask one or more groups of clarifying questions as needed; each question has exactly three distinct options. The host adds a fourth Other option for free text. You may ask further groups based on previous answers.\n"
+    "- Answers clarify requirements; they never approve implementation. Once ready, call plan(content=...) with one complete plan describing scope, approach, risks, cost, and verification.\n"
+    "- The host offers implementation or feedback. Feedback requires a revised final plan and new approval; you cannot approve on the user's behalf.\n"
+    "- Once the user approves the final plan, implement immediately, subject to ordinary tool permissions. Do not repeat the plan approval.\n"
     "- Simple explicit edits may proceed directly without planning.\n"
     "- Use bash for file creation, command-line workflows, and verification. Run relevant checks before reporting completion.\n"
     "- Context compaction and task bookkeeping are host-owned; automatic compaction and the user's /compact command remain available."

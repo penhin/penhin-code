@@ -72,10 +72,7 @@ class RunContext:
         if self.session_manager is not None:
             for entry in self.session_manager.branch_entries():
                 if entry["type"] == "planning":
-                    self.planning = PlanningState(
-                        active=entry["active"], alternatives=entry["alternatives"],
-                        selected=entry["selected"],
-                    )
+                    self.planning = PlanningState.from_entry(entry)
 
     def record_runtime_envelope(self) -> None:
         if self.runtime_envelope is None or self.runtime_envelope_recorded:
@@ -87,13 +84,12 @@ class RunContext:
     def add_user_message(self, content: Any) -> None:
         if not is_tool_result_content(content):
             self.clear_post_delegation_guard()
-            from penhin.agent.planning import save_planning, select_plan
-            if isinstance(content, str) and self.planning.alternatives:
-                if content.strip() in {"1", "2", "3"}:
-                    select_plan(self, int(content.strip()))
-                else:
-                    save_planning(self, PlanningState(active=True))
-            elif self.planning.selected is not None:
+            from penhin.agent.planning import accept_reply, collect_replies, save_planning
+            if isinstance(content, str) and self.planning.awaiting:
+                accept_reply(self, content)
+                if self.planning.awaiting:
+                    collect_replies(self)
+            elif self.planning.approved:
                 save_planning(self, PlanningState())
         message = {"role": "user", "content": content}
         self.messages.append(message)
