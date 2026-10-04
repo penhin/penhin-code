@@ -9,6 +9,7 @@ from threading import Thread
 
 from penhin.agent.loop import agent_loop, run_once_prompt
 from penhin.cli.commands import handle_local_command, setup_command_completion
+from penhin.cli.commands.router import resolve_skill_prompt
 from penhin.infrastructure.config import get_permission_mode, get_version
 from penhin.agent.context import RunContext
 from penhin.permissions import PERMISSION_CYCLE, normalize_permission_mode
@@ -109,7 +110,6 @@ def main() -> None:
     session_manager = _session_for_args(args)
     messages = session_manager.build_context()
 
-    command_completer = setup_command_completion()
     permission_mode = get_permission_mode()
     try:
         normalize_permission_mode(permission_mode)
@@ -126,6 +126,7 @@ def main() -> None:
         session_manager=session_manager,
     )
     context.plugin_runtime = plugin_runtime_for_session()
+    command_completer = setup_command_completion(context)
     resolve_envelope(context, runtime_manager.current(), context.plugin_runtime.catalog())
     workspace = workspace_info()
     provider = runtime_manager.configured_provider()
@@ -138,6 +139,12 @@ def main() -> None:
                 if prompt.split()[0] == "/plan":
                     handle_local_command(prompt, context)
                     continue
+                skill = resolve_skill_prompt(prompt, context)
+                if skill is not None:
+                    if not skill.ok:
+                        print_error(skill.error or skill.message)
+                        continue
+                    prompt = skill.message
                 context.add_user_message(prompt)
                 agent_loop(context)
             except AuthenticationRequired as error:
@@ -156,7 +163,7 @@ def main() -> None:
         if user_input.split()[0] == "/plan":
             pending.submit(user_input)
             return
-        if user_input.startswith("/"):
+        if user_input.startswith("/") and not user_input.startswith("/skill:"):
             def run_local_command() -> None:
                 handle_local_command(user_input, context)
 

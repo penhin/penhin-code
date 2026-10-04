@@ -568,6 +568,77 @@ def test_setup_command_completion_returns_completer() -> None:
     assert [completion.text for completion in completions] == ["/workspace"]
 
 
+def test_command_completion_ranks_exact_then_prefix_then_fuzzy(tmp_path, monkeypatch):
+    from penhin.cli.commands.types import CommandSpec
+    from penhin.skills import SkillLoader
+
+    monkeypatch.setattr(router, "load_skill", SkillLoader(tmp_path))
+    commands = tuple(CommandSpec(name, "Description", lambda *_: None) for name in (
+        "/h-e-l-p", "/helper", "/help", "/unrelated",
+    ))
+    completer = router.LocalCommandCompleter(router.CommandRouter(commands))
+    def matches(text):
+        return [item.text for item in completer.get_completions(Document(text), None)]
+
+    assert matches("/help") == ["/help", "/helper", "/h-e-l-p"]
+    assert matches("/HLP") == ["/help", "/helper", "/h-e-l-p"]
+    assert matches("/zzq") == []
+    assert matches("/help argument") == []
+    assert matches("text /hlp") == []
+    assert matches("/") == [command.name for command in commands]
+
+
+def test_skill_completion_is_dynamic_and_keeps_builtin_commands_distinct(tmp_path, monkeypatch):
+    from penhin.skills import SkillLoader
+
+    monkeypatch.setattr(router, "load_skill", SkillLoader(tmp_path))
+    completer = router.setup_command_completion()
+    assert list(completer.get_completions(Document("/skill:"), None)) == []
+    skill = tmp_path / "plan" / "SKILL.md"
+    skill.parent.mkdir()
+    skill.write_text("---\nname: plan\ndescription: Review a proposed plan\n---\nCheck the scope.\n")
+
+    candidates = list(completer.get_completions(Document("/skill:pl"), None))
+    assert [item.text for item in candidates] == ["/skill:plan"]
+    assert candidates[0].display_meta_text == "Skill · Review a proposed plan"
+    assert [item.text for item in completer.get_completions(Document("/skpln"), None)] == ["/skill:plan"]
+    assert "/plan" in [item.text for item in completer.get_completions(Document("/pl"), None)]
+    prompt = router.resolve_skill_prompt("/skill:plan review this change")
+    assert prompt.ok
+    assert "Check the scope." in prompt.message
+    assert "review this change" in prompt.message
+    skill.unlink()
+    assert list(completer.get_completions(Document("/skill:"), None)) == []
+    assert not router.resolve_skill_prompt("/skill:plan").ok
+
+
+def test_only_active_plugin_skills_are_available_for_completion_and_execution(tmp_path, monkeypatch):
+    from penhin.plugins.contributions import PluginContributions, PluginSkill
+    from penhin.plugins.runtime import PluginRuntime, PluginRegistration
+    from penhin.result import Result
+    from penhin.skills import SkillLoader
+    from penhin.tools.catalog import ToolCatalog
+
+    monkeypatch.setattr(router, "load_skill", SkillLoader(tmp_path))
+    contributions = PluginContributions(set(), set(), plugin_id="reviewer")
+    contributions.add_skill(PluginSkill("reviewer__audit", "Audit changes", "Inspect the changed code."))
+    plugin = SimpleNamespace(contributions=contributions, catalog=lambda: ToolCatalog([]), close=lambda: None)
+    loader = SimpleNamespace(validate=lambda _: Result.success(), load=lambda _: plugin)
+    runtime = PluginRuntime(ToolCatalog([]), [PluginRegistration("reviewer", "fixture")], loader)
+    context = empty_context()
+    context.plugin_runtime = runtime
+    completer = router.setup_command_completion(context)
+
+    runtime.discover()
+    assert list(completer.get_completions(Document("/skill:"), None)) == []
+    assert runtime.activate("reviewer").ok
+    assert [item.text for item in completer.get_completions(Document("/skill:"), None)] == ["/skill:reviewer__audit"]
+    assert "Inspect the changed code." in router.resolve_skill_prompt("/skill:reviewer__audit", context).message
+    assert runtime.deactivate("reviewer").ok
+    assert list(completer.get_completions(Document("/skill:"), None)) == []
+    assert not router.resolve_skill_prompt("/skill:reviewer__audit", context).ok
+
+
 def test_plan_is_an_explicit_local_command_in_help_and_completion(tmp_path):
     context = empty_context()
     context.session_manager = SessionManager.create(tmp_path / "sessions")

@@ -48,16 +48,21 @@ class SkillLoader:
                 discovered[name] = skill_file
         return discovered
 
-    def get_descriptions(self) -> str:
-        descriptions: list[str] = []
+    def list_skills(self) -> dict[str, str]:
+        """Return current skill names and short descriptions without loading prompts."""
+        descriptions: dict[str, str] = {}
         for name, skill_file in self._discover().items():
             try:
                 metadata, _ = self._parse_frontmatter(skill_file.read_text(encoding="utf-8"))
             except OSError:
                 continue
             description = " ".join(str(metadata.get("description", "No description")).split())
-            descriptions.append(f"- {name}: {description}")
-        return "\n".join(descriptions) if descriptions else "(no skills available)"
+            descriptions[name] = description
+        return descriptions
+
+    def get_descriptions(self) -> str:
+        descriptions = self.list_skills()
+        return "\n".join(f"- {name}: {description}" for name, description in descriptions.items()) if descriptions else "(no skills available)"
 
     def get_content(self, name: str) -> Result:
         if not _SKILL_NAME.fullmatch(name):

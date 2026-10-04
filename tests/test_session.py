@@ -27,6 +27,65 @@ def test_parse_session_args() -> None:
         main_module.parse_args(["--new"])
 
 
+def test_interactive_skill_submission_loads_content_on_the_agent_queue(tmp_path, monkeypatch):
+    from threading import Event
+    from types import SimpleNamespace
+    from penhin.skills import SkillLoader
+    from penhin.agent.session_manager import SessionManager
+    from penhin.tools.registry import MODEL_TOOL_CATALOG
+
+    skill = tmp_path / "skills" / "review" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\nname: review\ndescription: Review changes\n---\nCheck correctness and tests.\n")
+    manager = SessionManager.create(tmp_path / "sessions")
+    completed, rejected = Event(), Event()
+    received = []
+
+    def run_agent(context):
+        received.append(context.messages[-1]["content"])
+        completed.set()
+
+    class Terminal:
+        def __init__(self, submit, **kwargs):
+            self.submit = submit
+
+        def run(self):
+            self.submit("/skill:missing")
+            assert rejected.wait(2)
+            self.submit("/skill:review inspect this project")
+            assert completed.wait(2)
+
+    monkeypatch.setattr("penhin.cli.commands.router.load_skill", SkillLoader(tmp_path / "skills"))
+    args = main_module.parse_args([])
+    monkeypatch.setattr(main_module, "parse_args", lambda: args)
+    monkeypatch.setattr(main_module, "_session_for_args", lambda _: manager)
+    monkeypatch.setattr(main_module.runtime_manager, "initialize", lambda **kwargs: None)
+    monkeypatch.setattr(main_module.runtime_manager, "current", lambda: SimpleNamespace(model="test"))
+    monkeypatch.setattr(main_module.runtime_manager, "available", lambda: False)
+    monkeypatch.setattr(main_module.runtime_manager, "configured_provider", lambda: "test")
+    monkeypatch.setattr(main_module, "get_permission_mode", lambda: "default")
+    monkeypatch.setattr(main_module, "resolve_envelope", lambda *args: None)
+    monkeypatch.setattr(main_module, "plugin_runtime_for_session", lambda: SimpleNamespace(
+        catalog=lambda: MODEL_TOOL_CATALOG, active=lambda: (), close=lambda: None,
+    ))
+    monkeypatch.setattr(main_module, "workspace_info", lambda *args: {})
+    monkeypatch.setattr(main_module, "agent_loop", run_agent)
+    monkeypatch.setattr(main_module, "handle_local_command", lambda *args: pytest.fail("skill routed to local commands"))
+    monkeypatch.setattr(main_module, "print_error", lambda _: rejected.set())
+    monkeypatch.setattr(main_module, "print_welcome", lambda **kwargs: None)
+    monkeypatch.setattr(main_module, "print_user_message", lambda _: None)
+    monkeypatch.setattr(main_module.ui, "TerminalInterface", Terminal)
+    monkeypatch.setattr(main_module.ui, "activate_terminal", lambda *args: None)
+    monkeypatch.setattr(main_module.ui, "deactivate_terminal", lambda: None)
+
+    main_module.main()
+
+    assert len(received) == 1
+    assert "Check correctness and tests." in received[0]
+    assert "inspect this project" in received[0]
+    assert manager.build_context()[-1]["content"] == received[0]
+
+
 @pytest.mark.parametrize("signal", [EOFError(), KeyboardInterrupt()])
 def test_run_cli_exits_silently_for_terminal_exit_signals(monkeypatch, signal) -> None:
     monkeypatch.setattr(main_module, "main", lambda: (_ for _ in ()).throw(signal))

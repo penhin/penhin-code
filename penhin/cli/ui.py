@@ -8,15 +8,19 @@ from typing import Callable
 from unicodedata import east_asian_width
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import ConditionalCompleter
 from prompt_toolkit.history import InMemoryHistory
-from prompt_toolkit.application import Application
+from prompt_toolkit.application import Application, get_app
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.filters import Condition
+from prompt_toolkit.filters import Condition, has_completions
 from prompt_toolkit.layout.processors import BeforeInput, ConditionalProcessor, PasswordProcessor
 from prompt_toolkit.layout import HSplit, Layout
-from prompt_toolkit.layout.containers import ConditionalContainer, Window
-from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.layout.containers import ConditionalContainer, ScrollOffsets, Window
+from prompt_toolkit.layout.controls import FormattedTextControl, UIContent
+from prompt_toolkit.layout.dimension import Dimension
+from prompt_toolkit.layout.menus import CompletionsMenuControl
+from prompt_toolkit.keys import Keys
 from prompt_toolkit.data_structures import Point
 from prompt_toolkit.layout.margins import ScrollbarMargin
 from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
@@ -50,12 +54,12 @@ TERMINAL_STYLE = Style.from_dict({
     "composer-frame": "",
     "composer-frame.border": "#475569",
     "composer.border": "#475569",
-    "bottom-toolbar": "bg:#16181d #94a3b8",
-    "completion-menu": "bg:#111827 #cbd5e1",
-    "completion-menu.completion": "bg:#111827 #cbd5e1",
-    "completion-menu.completion.current": "bg:#0e7490 #ffffff bold",
-    "completion-menu.meta.completion": "bg:#111827 #64748b",
-    "completion-menu.meta.completion.current": "bg:#0e7490 #dbeafe",
+    "bottom-toolbar": "bg:default #94a3b8",
+    "completion-menu": "bg:default #cbd5e1 noreverse",
+    "completion-menu.completion": "bg:default #cbd5e1 bold noreverse",
+    "completion-menu.completion.current": "bg:default #67e8f9 bold noreverse",
+    "completion-menu.meta.completion": "bg:default #94a3b8 noreverse",
+    "completion-menu.meta.completion.current": "bg:default #67e8f9 noreverse",
     "scrollbar.background": "bg:#334155",
     "scrollbar.button": "bg:#67e8f9 #0f172a",
 })
@@ -419,6 +423,38 @@ class TranscriptWindow(Window):
         )
 
 
+class CommandMenuControl(CompletionsMenuControl):
+    """Keep native completion navigation with descriptions at the right edge."""
+
+    def create_content(self, width: int, height: int) -> UIContent:
+        state = get_app().current_buffer.complete_state
+        if state is None:
+            return UIContent()
+        names = [item.display_text.removeprefix("/") for item in state.completions]
+        name_width = min(max(_terminal_width(name) for name in names), max(0, (width - 5) // 2))
+
+        def clip(text: str, limit: int) -> str:
+            if limit <= 0:
+                return ""
+            if _terminal_width(text) <= limit:
+                return text
+            return _fit_terminal_width(text, limit - 1).rstrip() + "…"
+
+        def line(index: int):
+            item = state.completions[index]
+            selected = index == (state.complete_index or 0)
+            suffix = ".current" if selected else ""
+            name = clip(names[index], name_width)
+            description = clip(" ".join(item.display_meta_text.split()), max(0, width - name_width - 5))
+            padding = " " * max(0, width - 3 - _terminal_width(name) - _terminal_width(description))
+            return [
+                (f"class:completion-menu.completion{suffix}", ("→ " if selected else "  ") + name + padding),
+                (f"class:completion-menu.meta.completion{suffix}", description + " "),
+            ]
+
+        return UIContent(get_line=line, line_count=len(state.completions), cursor_position=Point(0, state.complete_index or 0))
+
+
 class TerminalInterface:
     """A full-screen terminal with a scrollable transcript and pinned composer."""
 
@@ -428,6 +464,7 @@ class TerminalInterface:
         self._input_request: Queue[str | None] | None = None
         self._input_request_lock = Lock()
         self._quiet_input = False
+        self._startup_hint_visible = True
         self._output_lock = Lock()
         self._selection: SelectionSurface | None = None
         self._waiting: str | None = None
@@ -440,23 +477,46 @@ class TerminalInterface:
             wrap_lines=True,
             always_hide_cursor=True,
         )
+        completion_enabled = Condition(lambda: (
+            not self._quiet_input and self._selection is None
+            and self._input_request is None and self._waiting is None
+        ))
         self.composer = TextArea(
             multiline=False,
-            completer=completer,
-            complete_while_typing=Condition(lambda: not self._quiet_input),
+            completer=ConditionalCompleter(completer, completion_enabled) if completer is not None else None,
+            complete_while_typing=completion_enabled,
             history=InMemoryHistory(),
             prompt=FormattedText([("class:prompt", "❯ ")]),
             style="class:composer",
         )
         self._placeholder_processor = ConditionalProcessor(
             BeforeInput("ask or /command", style="class:prompt-label"),
-            Condition(lambda: not self.composer.text),
+            Condition(lambda: self._startup_hint_visible and not self.composer.text),
         )
         self._configure_composer()
         bindings = KeyBindings()
+        preview_active = completion_enabled & Condition(lambda: (
+            self.composer.buffer.complete_state is not None
+            and self.composer.buffer.complete_state.current_completion is not None
+        ))
+
+        @bindings.add(Keys.Any, filter=preview_active)
+        def replace_completion_preview(event) -> None:
+            event.current_buffer.cancel_completion()
+            event.current_buffer.insert_text(event.data * event.arg)
+
+        @bindings.add(Keys.BracketedPaste, filter=preview_active)
+        def paste_over_completion_preview(event) -> None:
+            event.current_buffer.cancel_completion()
+            event.current_buffer.insert_text(event.data.replace("\r\n", "\n").replace("\r", "\n"))
 
         def selection_options() -> list[tuple[str, str]]:
             return self._selection.matching_options(self.composer.text) if self._selection else []
+
+        def move_completion(buffer, direction: int) -> None:
+            state = buffer.complete_state
+            index = state.complete_index or 0
+            buffer.go_to_completion((index + direction) % len(state.completions))
 
         def finish_selection(value: str | None) -> None:
             selection = self._selection
@@ -502,6 +562,12 @@ class TerminalInterface:
                 if options:
                     finish_selection(options[min(self._selection.selected, len(options) - 1)][0])
                 return
+            if completion_enabled() and self.composer.buffer.complete_state is not None:
+                buffer = self.composer.buffer
+                if buffer.complete_state.current_completion is None:
+                    buffer.go_to_completion(0)
+                buffer.complete_state = None
+                return
             value = self.composer.text.strip()
             if not value:
                 return
@@ -533,12 +599,18 @@ class TerminalInterface:
                 self._selection.selected = max(0, self._selection.selected - 1)
                 self.app.invalidate()
                 return
+            if completion_enabled() and event.current_buffer.complete_state is not None:
+                move_completion(event.current_buffer, -1)
+                return
             if not self._quiet_input:
                 event.current_buffer.history_backward()
 
         @bindings.add("down")
         def select_next(event) -> None:
             if self._selection is None:
+                if completion_enabled() and event.current_buffer.complete_state is not None:
+                    move_completion(event.current_buffer, 1)
+                    return
                 if not self._quiet_input:
                     event.current_buffer.history_forward()
                 return
@@ -550,6 +622,11 @@ class TerminalInterface:
         @bindings.add("tab")
         def select_next_with_tab(event) -> None:
             if self._selection is None:
+                if completion_enabled():
+                    if event.current_buffer.complete_state is not None:
+                        move_completion(event.current_buffer, 1)
+                    else:
+                        event.current_buffer.start_completion(select_first=True)
                 return
             options = selection_options()
             if options:
@@ -564,13 +641,18 @@ class TerminalInterface:
                     self._selection.selected = (self._selection.selected - 1) % len(options)
                 self.app.invalidate()
                 return
+            if completion_enabled() and event.current_buffer.complete_state is not None:
+                move_completion(event.current_buffer, -1)
+                return
             if self._cycle_permission is not None:
                 self._cycle_permission()
                 self.app.invalidate()
 
         @bindings.add("escape")
         def cancel_selection(event) -> None:
-            if self._selection is not None:
+            if completion_enabled() and event.current_buffer.complete_state is not None:
+                event.current_buffer.cancel_completion()
+            elif self._selection is not None:
                 finish_selection(None)
             elif self._input_request is not None:
                 finish_input(None)
@@ -578,7 +660,12 @@ class TerminalInterface:
                 self._waiting_cancelled = True
                 self.clear_temporary_surface()
 
-        self.composer.buffer.on_text_changed += lambda _buffer: self.app.invalidate()
+        def composer_changed(buffer) -> None:
+            if buffer.text:
+                self._startup_hint_visible = False
+            self.app.invalidate()
+
+        self.composer.buffer.on_text_changed += composer_changed
 
         @bindings.add("pageup")
         def scroll_output_up(event) -> None:
@@ -595,6 +682,18 @@ class TerminalInterface:
             height=1,
             style="class:bottom-toolbar",
         )
+        completion_menu = ConditionalContainer(
+            HSplit([
+                Window(height=1),
+                Window(
+                    CommandMenuControl(), height=Dimension(min=1, max=5),
+                    dont_extend_height=True, always_hide_cursor=True,
+                    scroll_offsets=ScrollOffsets(top=1, bottom=1), style="class:completion-menu",
+                ),
+                Window(height=1),
+            ]),
+            filter=completion_enabled & has_completions,
+        )
         self.app = Application(
             layout=Layout(
                 HSplit([
@@ -603,6 +702,7 @@ class TerminalInterface:
                                          filter=Condition(self._inline_selection)),
                     ConditionalContainer(Frame(self.composer, style="class:composer-frame", height=3),
                                          filter=Condition(lambda: not self._inline_selection())),
+                    completion_menu,
                     ConditionalContainer(status, filter=Condition(lambda: not self._inline_selection() and not self._quiet_input)),
                 ]),
                 focused_element=self.composer,
@@ -620,6 +720,8 @@ class TerminalInterface:
             processors.append(PasswordProcessor())
         if placeholder:
             processors.append(self._placeholder_processor)
+        else:
+            self._startup_hint_visible = False
         processors.append(BeforeInput(FormattedText([("class:prompt", prompt)])))
 
     def run(self) -> None:

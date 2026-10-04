@@ -300,6 +300,150 @@ def test_shift_tab_cycles_permissions_outside_selection_pages() -> None:
     assert calls == ["cycle"]
 
 
+@pytest.mark.parametrize("columns", [40, 100])
+def test_slash_menu_renders_and_handles_keyboard_without_submitting_or_changing_permissions(columns, monkeypatch, tmp_path):
+    import asyncio
+    from io import StringIO
+    from prompt_toolkit.application import create_app_session
+    from prompt_toolkit.data_structures import Size
+    from prompt_toolkit.input import create_pipe_input
+    from prompt_toolkit.output.vt100 import Vt100_Output
+    from penhin.cli.commands.router import setup_command_completion
+    from penhin.skills import SkillLoader
+
+    skill = tmp_path / "skills" / "review" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\nname: review\ndescription: Review code changes\n---\nReview the diff.\n")
+    monkeypatch.setattr("penhin.cli.commands.router.load_skill", SkillLoader(tmp_path / "skills"))
+    monkeypatch.setattr(ui.TerminalInterface, "_bottom_toolbar", lambda self: "STATUS")
+
+    async def until(predicate):
+        async def poll():
+            while not predicate():
+                await asyncio.sleep(0.01)
+        await asyncio.wait_for(poll(), 2)
+
+    async def exercise(pipe):
+        submitted, permissions = [], []
+        terminal = ui.TerminalInterface(submitted.append, setup_command_completion(), lambda: permissions.append("cycle"))
+        terminal.app.ttimeoutlen = 0.01
+        buffer = terminal.composer.buffer
+        task = asyncio.create_task(terminal.app.run_async(set_exception_handler=False))
+
+        def screen_text():
+            screen = terminal.app.renderer.last_rendered_screen
+            if screen is None:
+                return ""
+            return "\n".join("".join(row[x].char for x in sorted(row)) for _, row in sorted(screen.data_buffer.items()))
+
+        try:
+            await until(lambda: terminal.app.is_running)
+            await until(lambda: "ask or /command" in screen_text())
+            pipe.send_text("x")
+            await until(lambda: buffer.text == "x")
+            pipe.send_text("\x15")
+            await until(lambda: buffer.text == "")
+            await until(lambda: "ask or /command" not in screen_text())
+            pipe.send_text("/")
+            await until(lambda: buffer.complete_state is not None)
+            candidates = [item.text for item in buffer.complete_state.completions]
+            labels = [name.removeprefix("/") for name in candidates]
+            # Exercise the rendered application, not just its completion provider.
+            await until(lambda: labels[0] in screen_text() and labels[1] in screen_text())
+            lines = screen_text().splitlines()
+            composer_row = next(i for i, line in enumerate(lines) if "❯" in line)
+            menu_row = next(i for i, line in enumerate(lines) if labels[0] in line)
+            status_row = next(i for i, line in enumerate(lines) if "STATUS" in line)
+            assert composer_row < menu_row < status_row
+            assert menu_row - (composer_row + 1) - 1 == status_row - (menu_row + 4) - 1 == 1
+            assert lines[menu_row].startswith("→ " + labels[0])
+            assert buffer.text == "/"
+            assert candidates[0] not in lines[menu_row]
+            description = buffer.complete_state.completions[0].display_meta_text
+            assert description[:5] in lines[menu_row].split(labels[0], 1)[1]
+            assert not any(f"/{len(candidates)})" in line for line in lines)
+            if columns == 100:
+                assert lines[menu_row].rstrip().endswith(description)
+                assert len(lines[menu_row].rstrip()) == columns - 1
+            from prompt_toolkit.styles import merge_styles
+            from prompt_toolkit.styles.defaults import default_ui_style
+            effective_style = merge_styles([default_ui_style(), ui.TERMINAL_STYLE])
+            for style in ("completion-menu", "completion-menu.completion.current", "completion-menu.meta.completion"):
+                attrs = effective_style.get_attrs_for_style_str(f"class:{style}")
+                assert attrs.bgcolor == "default"
+                assert not attrs.reverse
+            pipe.send_text("\x1b[B")
+            await until(lambda: buffer.complete_state.complete_index == 1)
+            pipe.send_text("\t")
+            await until(lambda: buffer.complete_state.complete_index == 2)
+            pipe.send_text("\x1b[A")
+            await until(lambda: buffer.complete_state.complete_index == 1)
+            pipe.send_text("\t\x1b[Z")
+            await until(lambda: buffer.complete_state.complete_index == 1)
+            pipe.send_text("\x1b[B" * (len(candidates) - 2))
+            await until(lambda: buffer.complete_state.complete_index == len(candidates) - 1)
+            await until(lambda: labels[-1] in screen_text())
+            assert permissions == []
+            pipe.send_text("\x1b")
+            await until(lambda: buffer.complete_state is None and buffer.text == "/")
+            await until(lambda: labels[0] not in screen_text())
+            assert terminal.cards == []
+            pipe.send_text("\t")
+            await until(lambda: buffer.complete_state is not None and buffer.complete_state.complete_index == 0)
+            pipe.send_text("\x1b[B" * candidates.index("/help"))
+            await until(lambda: buffer.text == "/help")
+            pipe.send_text("a")
+            await until(lambda: buffer.text == "/a")
+            pipe.send_text("\x15/hlp")
+            await until(lambda: buffer.complete_state is not None and buffer.complete_state.original_document.text == "/hlp")
+            assert buffer.complete_state.completions[0].text == "/help"
+            pipe.send_text("\t")
+            await until(lambda: buffer.text == "/help")
+            pipe.send_text("\x1b[200~x\x1b[201~")
+            await until(lambda: buffer.text == "/hlpx")
+            pipe.send_text("\x15/")
+            await until(lambda: buffer.text == "/")
+            pipe.send_text("pla")
+            await until(lambda: buffer.complete_state is not None and buffer.complete_state.original_document.text == "/pla")
+            assert [item.text for item in buffer.complete_state.completions] == ["/plan"]
+            pipe.send_text("\r")
+            await until(lambda: buffer.text == "/plan" and buffer.complete_state is None)
+            assert submitted == []
+            pipe.send_text("x")
+            await until(lambda: buffer.text == "/planx")
+            pipe.send_text("\x7f")
+            await until(lambda: buffer.text == "/plan")
+            pipe.send_text("\r")
+            await until(lambda: submitted == ["/plan"])
+            await until(lambda: "ask or /command" not in screen_text())
+            pipe.send_text("\x1b[Z")
+            await until(lambda: permissions == ["cycle"])
+            pipe.send_text("\x1b[A")
+            await until(lambda: buffer.text == "/plan")
+            pipe.send_text("\x15ordinary /text")
+            await until(lambda: buffer.text == "ordinary /text")
+            await asyncio.sleep(0.1)
+            assert buffer.complete_state is None
+            pipe.send_text("\x15/skill:rev")
+            await until(lambda: buffer.complete_state is not None)
+            await until(lambda: "skill:review" in screen_text())
+            assert "Skill" in screen_text()
+            pipe.send_text("\r")
+            await until(lambda: buffer.text == "/skill:review" and buffer.complete_state is None)
+            await until(lambda: "Skill" not in screen_text())
+            pipe.send_text(" inspect changes\r")
+            await until(lambda: submitted[-1] == "/skill:review inspect changes")
+            assert terminal.cards == []
+        finally:
+            terminal.app.exit()
+            await asyncio.wait_for(task, 2)
+
+    with create_pipe_input() as pipe:
+        output = Vt100_Output(StringIO(), lambda: Size(rows=24, columns=columns))
+        with create_app_session(input=pipe, output=output):
+            asyncio.run(exercise(pipe))
+
+
 def test_secret_prompt_interruption_does_not_mask_later_input(monkeypatch) -> None:
     calls = []
 
@@ -395,16 +539,20 @@ def test_selection_viewport_follows_the_selected_option() -> None:
     assert top_content.cursor_position.y < terminal.output.vertical_scroll + 10
 
 
-def test_planning_choice_switches_to_blank_composer_and_returns_free_text(monkeypatch):
+@pytest.mark.parametrize("answer_text", ["保留 API", "/plan"])
+def test_planning_choice_switches_to_blank_composer_and_returns_free_text(monkeypatch, answer_text):
     import asyncio
     from io import StringIO
     from prompt_toolkit.application import create_app_session
     from prompt_toolkit.input import create_pipe_input
     from prompt_toolkit.output.vt100 import Vt100_Output
     from prompt_toolkit.data_structures import Size
+    from penhin.cli.commands.router import setup_command_completion
 
     async def exercise(pipe, output):
-        terminal = ui.TerminalInterface(lambda _: pytest.fail("planning input submitted as a new task"))
+        terminal = ui.TerminalInterface(
+            lambda _: pytest.fail("planning input submitted as a new task"), setup_command_completion(),
+        )
         monkeypatch.setattr(ui, "active_terminal", terminal)
         task = asyncio.create_task(terminal.app.run_async())
         try:
@@ -423,8 +571,11 @@ def test_planning_choice_switches_to_blank_composer_and_returns_free_text(monkey
             visible = "".join(fragment[1] for fragment in composer_content.get_line(0))
             assert visible.strip() == "❯"
             assert terminal.composer.text == ""
-            pipe.send_text("保留 API\r")
-            assert await asyncio.wait_for(answer, 2) == "保留 API"
+            pipe.send_text(answer_text)
+            await asyncio.sleep(0.15)
+            assert terminal.composer.buffer.complete_state is None
+            pipe.send_text("\r")
+            assert await asyncio.wait_for(answer, 2) == answer_text
         finally:
             terminal.app.exit()
             await task
