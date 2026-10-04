@@ -59,6 +59,7 @@ def test_agent_job_instruction_is_redacted_before_persistence(
     from penhin.orchestration import service
 
     register_secret("job-secret-sentinel")
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(service, "provision_worktree", lambda _job_id: SimpleNamespace(
         path=str(tmp_path), branch="penhin/test-redaction",
     ))
@@ -67,6 +68,42 @@ def test_agent_job_instruction_is_redacted_before_persistence(
 
     assert job.instruction == "inspect <redacted>"
     assert job.subject == "inspect <redacted>"
+    assert job.worktree_path == str(tmp_path)
+
+
+@pytest.mark.parametrize("entrypoint", ["job", "dag", "service"])
+def test_worktree_factory_replacement_is_used_at_every_entrypoint(
+    repository: SqliteOrchestrationRepository, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, entrypoint: str,
+) -> None:
+    from penhin.orchestration import service
+    from penhin.orchestration.worktrees import AgentWorktree
+
+    monkeypatch.chdir(tmp_path)
+    calls = []
+
+    def factory(job_id: str) -> AgentWorktree:
+        calls.append(job_id)
+        return AgentWorktree(path=str(tmp_path / job_id), branch=f"test/{job_id}")
+
+    monkeypatch.setattr(service, "provision_worktree", factory)
+    if entrypoint == "job":
+        job = service._create_isolated_agent_job(repository, "inspect", "explore")
+    else:
+        planner = repository.create_root_job("plan", "plan", AgentRole.PLANNER)
+        plan = {
+            "protocol_version": DAG_PROTOCOL_VERSION, "goal": "Inspect",
+            "jobs": [{"key": "inspect", "agent_type": "explore", "instruction": "Inspect", "depends_on": []}],
+            "final_job_keys": ["inspect"],
+        }
+        if entrypoint == "dag":
+            submitted = service._materialize_dag_plan(repository, planner.id, plan)
+        else:
+            submitted = service.OrchestrationService(repository).submit(planner.id, plan)
+        job = repository.get_job(submitted["job_ids"]["inspect"])
+
+    assert calls == [job.id]
+    assert job.worktree_path == str(tmp_path / job.id)
 
 
 def test_sqlite_claim_respects_dependencies_and_records_integration(repository: SqliteOrchestrationRepository) -> None:
@@ -181,3 +218,29 @@ def test_repository_factory_accepts_postgres_and_rejects_unknown_url() -> None:
     assert repository_from_database_url("postgresql://user:pass@localhost/db").backend_name == "postgresql"
     with pytest.raises(ValueError, match="must use"):
         repository_from_database_url("mysql://localhost/db")
+
+
+def test_isolated_agent_job_gets_own_worktree_and_branch(
+    repository: SqliteOrchestrationRepository, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    subprocess.run(["git", "init", "-q"], check=True)
+    (tmp_path / "README.md").write_text("Temporary target project\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], check=True)
+    subprocess.run([
+        "git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+        "-c", "commit.gpgsign=false", "commit", "-qm", "Initial commit",
+    ], check=True)
+    from penhin.orchestration.service import _create_isolated_agent_job
+
+    job = _create_isolated_agent_job(repository, "inspect service boundaries", "explore")
+    worktree = Path(job.worktree_path)
+    try:
+        assert job.workspace_mode == "readonly"
+        assert worktree.is_dir()
+        assert worktree.is_relative_to(tmp_path)
+        assert (worktree / "README.md").exists()
+        assert job.worktree_branch.startswith("penhin/agent-")
+    finally:
+        subprocess.run(["git", "worktree", "remove", "--force", str(worktree)], check=True)
+        subprocess.run(["git", "branch", "-D", job.worktree_branch], check=True)

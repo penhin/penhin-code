@@ -205,24 +205,25 @@ def test_tool_runtime_logs_result_status() -> None:
     assert 'meta_keys=["code"]' in output
 
 
-def test_tool_runtime_logs_input_summary() -> None:
+def test_tool_runtime_logs_input_summary(tmp_path: Path, monkeypatch) -> None:
+    from penhin.tools.builtin import files, workspace
+
+    monkeypatch.setattr(files, "WORKDIR", tmp_path)
+    monkeypatch.setattr(workspace, "WORKDIR", tmp_path)
     stream, handler, logger, original_level, original_propagate = capture_tool_logs()
     try:
-        with patch(
-                "penhin.tools.execution.invocation.ToolInvocation.apply_outcome",
-            return_value=ToolRun(Result.success("ok")),
-        ):
-            result = run_tool(
-                "write",
-                {"path": "penhin.agent.loop.py", "content": "secret content"},
-                PermissionPolicy(allow={"write"}, deny=set()),
-                ApprovalFlow.preapproved({"write"}),
-            )
+        result = run_tool(
+            "write",
+            {"path": "penhin.agent.loop.py", "content": "secret content"},
+            PermissionPolicy(allow={"write"}, deny=set()),
+            ApprovalFlow.preapproved({"write"}),
+        )
     finally:
         restore_tool_logs(handler, logger, original_level, original_propagate)
 
     output = stream.getvalue()
     assert result.result.ok is True
+    assert (tmp_path / "penhin.agent.loop.py").read_text() == "secret content"
     assert "[tool] start call_id=tool-" in output
     assert "status=ok" in output
     assert "manual_compact=false" in output

@@ -73,11 +73,12 @@ def _create_isolated_agent_job(
     depends_on: list[str] | None = None,
     priority: int = 0,
     timeout_seconds: int | None = None,
-    worktree_factory: Callable[[str], Any] = provision_worktree,
+    worktree_factory: Callable[[str], Any] | None = None,
 ) -> AgentJob:
     task = redact_text(task)
     job_id = str(uuid4())
-    worktree = worktree_factory(job_id)
+    factory = provision_worktree if worktree_factory is None else worktree_factory
+    worktree = factory(job_id)
     try:
         role = ROLE_BY_AGENT_TYPE[agent_type]
     except KeyError as error:
@@ -158,7 +159,7 @@ def _materialize_dag_plan(
     planner_job_id: str,
     plan: dict,
     *,
-    worktree_factory: Callable[[str], Any] = provision_worktree,
+    worktree_factory: Callable[[str], Any] | None = None,
 ) -> dict:
     """Create isolated persistent jobs for a validated penhin.dag/v1 plan."""
     if plan.get("protocol_version") != DAG_PROTOCOL_VERSION:
@@ -360,7 +361,7 @@ class OrchestrationService:
         repository: OrchestrationRepository | None = None,
         scheduler: PersistentScheduler | None = None,
         *,
-        worktree_factory: Callable[[str], Any] = provision_worktree,
+        worktree_factory: Callable[[str], Any] | None = None,
     ) -> None:
         self.repository = repository
         self.scheduler = scheduler

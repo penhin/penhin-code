@@ -13,7 +13,7 @@ import pytest
 from penhin.orchestration.models import AgentJob, AgentRole, Artifact, IntegrationItem, IntegrationItemStatus, IntegrationRun, IntegrationRunStatus, JobStatus
 from penhin.orchestration.repositories.postgres_repository import PostgresOrchestrationRepository
 from penhin.orchestration.planning import DAG_PROTOCOL_VERSION, fallback_dag_plan, normalize_dag_plan, parse_dag_plan
-from penhin.orchestration.service import _create_isolated_agent_job, _implementation_jobs_for_final_outputs, _materialize_dag_plan
+from penhin.orchestration.service import _implementation_jobs_for_final_outputs, _materialize_dag_plan
 from penhin.orchestration.worker import prepare_dependency_context
 from penhin.orchestration.worktrees import AgentWorktree
 from penhin.orchestration.artifacts import build_handoff
@@ -70,19 +70,6 @@ def test_postgres_rejects_invalid_terminal_transition(repository: PostgresOrches
     with pytest.raises(ValueError, match="Cannot start"):
         repository.start_attempt(job.id)
         repository.start_attempt(job.id)
-
-
-def test_isolated_agent_job_gets_own_worktree_and_branch(repository: PostgresOrchestrationRepository) -> None:
-    job = _create_isolated_agent_job(repository, "inspect service boundaries", "explore")
-    worktree = Path(job.worktree_path)
-    try:
-        assert job.workspace_mode == "readonly"
-        assert worktree.is_dir()
-        assert (worktree / "README.md").exists()
-        assert job.worktree_branch.startswith("penhin/agent-")
-    finally:
-        subprocess.run(["git", "worktree", "remove", "--force", str(worktree)], check=True)
-        subprocess.run(["git", "branch", "-D", job.worktree_branch], check=True)
 
 
 def test_runtime_builds_valid_handoff_from_plain_text_and_tool_results() -> None:
