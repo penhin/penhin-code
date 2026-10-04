@@ -1,7 +1,15 @@
+from pathlib import Path
+
 from penhin.result import Result
 
 from .cache import directory_tree_signature, tool_result_cache, tree_validator
 from .workspace import WORKDIR, is_ignored_path
+
+
+def glob_workspace_files(root: Path, pattern: str) -> list[Path]:
+    """Return permitted file paths without tool-result caching or presentation."""
+    return [path for path in root.glob(pattern)
+            if not path.is_dir() and not is_ignored_path(path)]
 
 
 def run_glob(pattern: str, path: str = ".") -> Result:
@@ -15,15 +23,8 @@ def run_glob(pattern: str, path: str = ".") -> Result:
         if cached is not None:
             return cached
 
-        def matching_files() -> list:
-            return [
-                match_path
-                for match_path in root.glob(pattern)
-                if not match_path.is_dir() and not is_ignored_path(match_path)
-            ]
-
         recursive_signature = "/" in pattern or "**" in pattern
-        matched_files = matching_files()
+        matched_files = glob_workspace_files(root, pattern)
         signature = directory_tree_signature(
             root,
             WORKDIR,

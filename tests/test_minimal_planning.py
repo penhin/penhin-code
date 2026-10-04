@@ -275,3 +275,35 @@ def test_planning_protocol_does_not_stream_raw_json_into_transcript(tmp_path, mo
     state = run_agent_state_machine(context, build_agent_deps(StreamingProvider([proposal(content=PLAN)])))
     assert state.terminal_reason == TerminalReason.PLAN_SELECTION_REQUIRED
     assert context.planning.content == PLAN
+
+
+def test_planning_discovers_searches_and_reads_code_without_shell_or_writes(tmp_path, monkeypatch):
+    for module in ("files", "workspace", "glob", "shell"):
+        monkeypatch.setattr(f"penhin.tools.builtin.{module}.WORKDIR", tmp_path)
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "parser.py").write_text("def parse_config():\n    return {}\n")
+    (tmp_path / ".env").write_text("private_config=hidden\n")
+    monkeypatch.setattr("penhin.cli.ui.prompt_plan_choice", lambda *args: (_ for _ in ()).throw(EOFError()))
+    context = context_for(tmp_path / ".penhin")
+    provider = ScriptedProvider(
+        [call("read", path=".")],
+        [call("read", path=".", pattern="**/*.py")],
+        [call("read", path="src", query="parse_config")],
+        [call("read", path="src/parser.py")],
+        [call("bash", command="touch forbidden"), call("edit", path="src/parser.py", old="return {}", new="return None")],
+        [proposal(content=PLAN)],
+    )
+    state = run_agent_state_machine(context, build_agent_deps(provider))
+    results = [json.loads(block["content"]) for message in context.messages
+               if isinstance(message["content"], list) for block in message["content"] if block["type"] == "tool_result"]
+    assert all(result["ok"] for result in results[:4])
+    assert results[0]["data"]["paths"] == ["src/parser.py"]
+    assert results[1]["data"]["paths"] == ["src/parser.py"]
+    assert "src/parser.py:1:def parse_config():" in results[2]["message"]
+    assert "return {}" in results[3]["message"]
+    assert all(result["meta"]["code"] == "plan_selection_required" for result in results[4:])
+    assert not (tmp_path / "forbidden").exists()
+    assert (source / "parser.py").read_text() == "def parse_config():\n    return {}\n"
+    assert state.terminal_reason == TerminalReason.PLAN_SELECTION_REQUIRED
+    assert {tool["name"] for tool in provider.requests[0]["tools"]} == {"read", "edit", "bash"}

@@ -31,7 +31,12 @@ def valid_plan_input(questions: object, content: object) -> bool:
 
 PROTOCOL = (
     'Planning mode was explicitly enabled by the user through the CLI. '
-    'Use read for inspection. For each non-tool response, output ONLY one JSON object '
+    'Use read(path=".") to discover workspace files, read(path=".", pattern="**/*.py") to filter filenames, '
+    'or read(path="src", query="literal text") to search contents without shell commands. '
+    'Directory listings are live views: follow next_offset with the same path/pattern. '
+    'Search matches include paths and line numbers; narrow query or path when truncated. '
+    'Then read individual files for stable snapshot evidence. '
+    'For each non-tool response, output ONLY one JSON object '
     '(no Markdown fences or surrounding prose): '
     '{"questions":[{"question":"...","options":["...","...","..."]}]} '
     'to clarify requirements, OR {"content":"complete Markdown plan"} for final review. '

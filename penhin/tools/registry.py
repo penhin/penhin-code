@@ -409,20 +409,23 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     ),
     "read": ToolSpec(
         name="read",
-        description="Read a bounded file snapshot. Continue with next_offset and snapshot_id to preserve stable evidence after edits.",
+        description="Inspect the workspace without shell commands. A file path reads a bounded snapshot; a directory path lists files recursively. Use pattern (e.g. **/*.py) to filter filenames, OR query for a literal, case-sensitive content search. Directory listings support offset/next_offset; file reads also support snapshot_id for stable evidence. Search results are bounded; narrow the query or path when truncated.",
         input_schema=object_schema(
             {
                 "path": {"type": "string"},
                 "limit": {"type": "integer", "minimum": 0},
                 "offset": {"type": "integer", "minimum": 1},
-                "snapshot_id": {"type": "string"},
-                "line_numbers": {"type": "boolean"},
+                "snapshot_id": {"type": "string", "description": "File reads only."},
+                "line_numbers": {"type": "boolean", "description": "File reads only."},
+                "query": {"type": "string", "minLength": 1, "description": "Literal content search in this file or directory. Cannot combine with pattern, snapshot_id, or offset."},
+                "pattern": {"type": "string", "minLength": 1, "description": "Glob filename pattern relative to a directory, e.g. **/*.py. Cannot combine with query."},
             },
             ["path"],
         ),
         category=ToolCategory.readonly,
         handler=lambda **kwargs: run_read(
-            kwargs["path"], kwargs.get("limit"), kwargs.get("line_numbers", True), kwargs.get("offset", 1), kwargs.get("snapshot_id")
+            kwargs["path"], kwargs.get("limit"), kwargs.get("line_numbers", True), kwargs.get("offset", 1), kwargs.get("snapshot_id"),
+            query=kwargs.get("query"), pattern=kwargs.get("pattern"),
         ),
         parallel_safe=True,
         approval=ToolApproval(),

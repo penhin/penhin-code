@@ -57,13 +57,30 @@ def _read_snapshot(file_path: Path, snapshot_id: str | None) -> tuple[str, list[
     return identifier, lines, len(raw)
 
 
-def run_read(path: str, limit: int = None, line_numbers: bool = True, offset: int = 1, snapshot_id: str | None = None) -> Result:
+def run_read(
+    path: str, limit: int | None = None, line_numbers: bool = True,
+    offset: int = 1, snapshot_id: str | None = None, *,
+    query: str | None = None, pattern: str | None = None,
+) -> Result:
+    """Read a file snapshot, discover directory files, or search literal content."""
     try:
         if offset < 1:
             return Result.failure("Error: offset must be at least 1", code="invalid_offset")
         if limit is not None and limit < 0:
             return Result.failure("Error: limit cannot be negative", code="invalid_limit")
         file_path = safe_path(path)
+        if query is not None:
+            if not query or pattern is not None or snapshot_id is not None or offset != 1:
+                return Result.failure("Content search requires a nonempty query; pattern, snapshot_id and offset are not supported.", code="invalid_tool_input")
+            if not file_path.exists():
+                return Result.failure(f"Path does not exist: {path}", code="read_error")
+            return run_search(query, path, limit=limit)
+        if file_path.is_dir():
+            if snapshot_id is not None:
+                return Result.failure("snapshot_id is only supported for file reads.", code="invalid_tool_input")
+            return _read_directory(path, limit, offset, pattern)
+        if pattern is not None:
+            return Result.failure("A filename pattern requires a directory path.", code="invalid_tool_input")
         key = ("read", str(file_path), limit, line_numbers, offset, snapshot_id)
         cached = tool_result_cache.get(key)
         if cached is not None:
@@ -109,6 +126,30 @@ def run_read(path: str, limit: int = None, line_numbers: bool = True, offset: in
         )
     except Exception as error:
         return Result.failure(f"Error: {error}", code="read_error")
+
+
+def _read_directory(path: str, limit: int | None, offset: int, pattern: str | None) -> Result:
+    root = safe_path(path)
+    if pattern is not None:
+        from .glob import glob_workspace_files
+        if not pattern:
+            return Result.failure("Filename pattern cannot be empty.", code="invalid_tool_input")
+        files = glob_workspace_files(root, pattern)
+    else:
+        files = iter_workspace_files(root)
+    paths = sorted(str(file.relative_to(WORKDIR)) for file in files)
+    page_size = MAX_TOOL_OUTPUT_LINES if limit is None else min(limit, MAX_TOOL_OUTPUT_LINES)
+    page = paths[offset - 1:offset - 1 + page_size]
+    bounded = bound_text("\n".join(page))
+    page = page[:len(bounded.text.splitlines())]
+    next_offset = offset + len(page) if offset - 1 + len(page) < len(paths) else None
+    return Result.success(
+        bounded.text,
+        data={"kind": "directory", "path": path, "pattern": pattern,
+              "paths": page, "total_count": len(paths), "next_offset": next_offset,
+              "complete": next_offset is None},
+        count=len(page), truncated=next_offset is not None or bounded.truncated,
+    )
 
 
 def run_write(path: str, content: str = None) -> Result:
@@ -271,7 +312,7 @@ def _search_file(query: str, file_path: Path, workdir: Path, limit: int) -> list
     return matches
 
 
-def run_search(query: str, path: str = ".", limit: int = None, timeout: int = 30) -> Result:
+def run_search(query: str, path: str = ".", limit: int | None = None, timeout: int = 30) -> Result:
     try:
         if limit is not None and limit < 0:
             return Result.failure("Error: limit cannot be negative", code="invalid_limit")
