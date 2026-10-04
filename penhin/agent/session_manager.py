@@ -433,11 +433,18 @@ class SessionManager:
         target = self.leaf_id if entry_id is None else entry_id
         if target is not None and target not in self._by_id:
             raise KeyError(f"Session entry not found: {target}")
-        return SessionManager.create(
+        forked = SessionManager.create(
             session_dir,
             self.build_context(target),
             parent_session=str(self.path),
         )
+        planning = next((entry for entry in reversed(self.branch_entries(target)) if entry["type"] == "planning"), None)
+        if planning is not None:
+            forked.append_entry(
+                "planning", active=planning["active"],
+                alternatives=planning["alternatives"], selected=planning["selected"],
+            )
+        return forked
 
     def render_tree(self) -> list[str]:
         lines: list[str] = []

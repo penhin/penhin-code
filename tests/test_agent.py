@@ -15,7 +15,7 @@ from penhin.providers.protocols import LLMUsage
 from penhin.result import Result
 from penhin.tools.execution import ApprovalFlow, PermissionPolicy, ToolRun
 from penhin.tools.catalog import ToolCatalog
-from penhin.tools.registry import DEFAULT_TOOL_CATALOG
+from penhin.tools.registry import DEFAULT_TOOL_CATALOG, MODEL_TOOL_CATALOG
 
 
 @pytest.fixture(autouse=True)
@@ -226,7 +226,7 @@ def test_call_llm_uses_run_context_messages() -> None:
     assert runtime.kwargs["messages"] == context.messages
     assert runtime.kwargs["messages"] is not context.messages
     assert runtime.kwargs["max_tokens"] == 123
-    assert runtime.kwargs["tools"] is agent.PARENT_TOOLS
+    assert {tool["name"] for tool in runtime.kwargs["tools"]} == {"read", "edit", "bash", "plan"}
     assert isinstance(runtime.kwargs["system"], str)
 
 
@@ -237,7 +237,7 @@ def test_agent_dependencies_read_a_fresh_catalog_before_each_model_turn() -> Non
         approval=ApprovalFlow.require_confirmation(set()),
     )
     runtime = RecordingRuntime()
-    catalogs = [DEFAULT_TOOL_CATALOG, ToolCatalog(())]
+    catalogs = [MODEL_TOOL_CATALOG, ToolCatalog(())]
     deps = agent.build_agent_deps(runtime, catalog_provider=lambda: catalogs.pop(0))
 
     deps.call_llm(context)
@@ -245,7 +245,7 @@ def test_agent_dependencies_read_a_fresh_catalog_before_each_model_turn() -> Non
     deps.call_llm(context)
     second_tools = runtime.kwargs["tools"]
 
-    assert first_tools is agent.PARENT_TOOLS
+    assert {tool["name"] for tool in first_tools} == {"read", "edit", "bash", "plan"}
     assert second_tools == []
 
 

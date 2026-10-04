@@ -6,6 +6,37 @@ from penhin.tools.execution import ApprovalFlow, PermissionPolicy, ToolExecutor,
 from penhin.tools.types import ToolCategory, ToolOutcome, ToolSpec
 
 
+def test_default_session_catalog_hides_and_rejects_retired_model_tools(tmp_path, monkeypatch):
+    import json
+    from penhin.plugins.bootstrap import plugin_runtime_for_session
+    from penhin.tools.execution import runtime_permission_setup
+
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    runtime = plugin_runtime_for_session(cwd=tmp_path)
+    policy, approval = runtime_permission_setup("full-access")
+    context = RunContext(messages=[], policy=policy, approval=approval, plugin_runtime=runtime)
+
+    class Provider:
+        max_tokens = 50
+
+        def call_with_retry(self, **kwargs):
+            self.request = kwargs
+            return object()
+
+    provider = Provider()
+    try:
+        call_llm(context, provider, runtime.catalog())
+        assert {tool["name"] for tool in provider.request["tools"]} == {"read", "edit", "bash", "plan"}
+        response = type("Response", (), {"content": [
+            {"type": "tool_use", "id": "retired", "name": "compact", "input": {}},
+        ]})()
+        results, _ = execute_tool_uses(context, response, runtime.catalog())
+        assert json.loads(results[0]["content"])["meta"]["code"] == "unknown_tool"
+        assert context.pending_force_compact_hint is None
+    finally:
+        runtime.close()
+
+
 def echo(value: str) -> ToolOutcome:
     return ToolOutcome(Result.success(value))
 

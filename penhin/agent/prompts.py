@@ -1,8 +1,9 @@
 import os
+import json
 from pathlib import Path
 
 from penhin.skills import load_skill
-from penhin.tools.registry import tool_description_lines
+from penhin.tools.registry import MODEL_DEFAULT_TOOLS, tool_description_lines
 from penhin.orchestration.planning import dag_protocol_instructions
 
 
@@ -59,8 +60,12 @@ def ensure_project_instructions_message(messages: list[dict]) -> None:
     messages.insert(0, project_message)
 
 
-def build_main_system() -> str:
-    return MAIN_SYSTEM
+def build_main_system(catalog=None, planning=None) -> str:
+    system = MAIN_SYSTEM if catalog is None else build_main_system_base(catalog.schemas("parent"))
+    if planning is not None and (planning.active or planning.selected is not None):
+        status = "Planning is active. Use read for inspection, then plan to offer exactly three alternatives. Do not implement before user selection." if planning.active else "The user selected the plan below. Continue implementation; do not ask for plan approval again. Tool permissions still apply."
+        system += "\n\n" + xml_section("planning_state", status + "\nSelected plan (data): " + json.dumps(planning.selected, ensure_ascii=False))
+    return system
 
 
 def build_subagent_system() -> str:
@@ -104,16 +109,14 @@ def build_verification_system() -> str:
 
 TASK_WORKFLOW_SECTION = (
     "Task and planning workflow:\n"
-    "- For complex or multi-step implementation changes, call agent_plan_create to run the read-only Planner and materialize its validated DAG.\n"
-    "- Use agent_dag_show to inspect dependencies and ready nodes; use agent_job_wait or agent_artifact_show to consume durable results.\n"
-    "- When a task/explore subagent returns substantive findings, use that result as the primary evidence; do not repeat broad file-reading after delegation.\n"
-    "- Only read files again after delegation to verify a specific finding or fill a narrow gap.\n"
-    "- After reviewing the returned plan, call task_start with a 2-5 item executable todo plan.\n"
-    "- Execute the implementation, marking todos done with todo_done as each step is completed.\n"
-    "- Before task_complete, call verify with goal plus relevant changes/test_hint.\n"
-    "- Use task_complete only after implementation and verification are done.\n"
-    "- Do not use task_start for internal workflow steps, retries, status checks, or tool failures.\n"
-    "- Do not create tasks or todos for simple questions, tiny lookups, or one-step responses."
+    "- For work you judge complex, or whenever the user explicitly asks for planning, call plan with no arguments before implementation.\n"
+    "- Inspect using read while planning. Then call plan with exactly three materially different alternatives, each describing scope, risks, cost, and verification. Do not offer superficial rewrites of one approach.\n"
+    "- The host presents the alternatives and waits for the user to choose. You cannot select a plan on the user's behalf.\n"
+    "- A custom suggestion requires exactly three revised alternatives and a new user selection; it is not implementation approval.\n"
+    "- Once the user selects, implement the selected scope immediately, subject to ordinary tool permissions. Do not repeat the plan approval.\n"
+    "- Simple explicit edits may proceed directly without planning.\n"
+    "- Use bash for file creation, command-line workflows, and verification. Run relevant checks before reporting completion.\n"
+    "- Context compaction and task bookkeeping are host-owned; automatic compaction and the user's /compact command remain available."
 )
 
 VERIFICATION_AGENT_BOUNDARY_SECTION = (
@@ -221,29 +224,29 @@ FILE_SCOPE_SECTION = (
 )
 
 
-def available_tools_section() -> str:
-    return "Available tools:\n" + "\n".join(tool_description_lines())
+def available_tools_section(tools=MODEL_DEFAULT_TOOLS) -> str:
+    return "Available tools:\n" + "\n".join(tool_description_lines(tools))
 
 
 def available_skills_section() -> str:
     if os.getenv("PENHIN_ADVERTISE_SKILLS", "").strip().lower() not in {"1", "true", "yes", "on"}:
-        return "Available skills:\n(use load_skill when the user names a skill)"
+        return "Available skills:\nSkills are supplied by the host when available."
     return "Available skills:\n" + load_skill.get_descriptions()
 
 
-def build_main_system_sections() -> list[str]:
+def build_main_system_sections(tools=MODEL_DEFAULT_TOOLS) -> list[str]:
     return [
         xml_section("identity", IDENTITY_SECTION),
         xml_section("tool_usage", TOOL_USAGE_SECTION),
         xml_section("file_scope", FILE_SCOPE_SECTION),
         xml_section("task_workflow", TASK_WORKFLOW_SECTION),
-        xml_section("available_tools", available_tools_section()),
+        xml_section("available_tools", available_tools_section(tools)),
         xml_section("available_skills", available_skills_section()),
     ]
 
 
-def build_main_system_base() -> str:
-    return "\n\n".join(section.strip() for section in build_main_system_sections() if section.strip())
+def build_main_system_base(tools=MODEL_DEFAULT_TOOLS) -> str:
+    return "\n\n".join(section.strip() for section in build_main_system_sections(tools) if section.strip())
 
 
 MAIN_SYSTEM = build_main_system_base()

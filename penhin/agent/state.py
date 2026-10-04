@@ -20,6 +20,7 @@ class AgentPhase(str, Enum):
 
 
 class TerminalReason(str, Enum):
+    PLAN_SELECTION_REQUIRED = "plan_selection_required"
     END_TURN = "end_turn"
     CIRCUIT_OPEN = "circuit_open"
     NO_TOOL_RESULTS = "no_tool_results"
@@ -74,6 +75,8 @@ def finish(
 
 def step_agent(context: RunContext, state: AgentState, deps: AgentDeps) -> AgentState:
     if state.phase == AgentPhase.COMPACT_CONTEXT:
+        if context.planning.active and context.planning.alternatives:
+            return finish(state, TerminalReason.PLAN_SELECTION_REQUIRED)
         deps.compact_context(context)
         return replace(state, phase=AgentPhase.CALL_MODEL)
 

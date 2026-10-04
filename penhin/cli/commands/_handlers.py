@@ -631,6 +631,7 @@ def handle_tree_command(args: list[str], context: RunContext | None = None):
     try:
         entry_id = manager.resolve_entry_id(entry_id)
         context.messages[:] = manager.branch(entry_id)
+        context.restore_planning()
     except (KeyError, ValueError) as error:
         ui.print_error(str(error))
         return
@@ -653,6 +654,7 @@ def handle_fork_command(args: list[str], context: RunContext | None = None):
     context.session_manager = forked
     context.session_path = forked.path
     context.messages[:] = forked.build_context()
+    context.restore_planning()
     ui.print_info(f"fork: {forked.id}")
 
 

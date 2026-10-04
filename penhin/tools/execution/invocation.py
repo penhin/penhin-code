@@ -10,7 +10,7 @@ from typing import Any
 from penhin.result import Result
 from penhin.tools.catalog import ToolCatalog
 from penhin.tools.registry import DEFAULT_TOOL_CATALOG
-from penhin.tools.types import ToolEffect, ToolInput, ToolOutcome
+from penhin.tools.types import ToolCategory, ToolEffect, ToolInput, ToolOutcome
 from .approval import ApprovalFlow, PermissionPolicy, default_approval_flow
 from .service import ToolRun, check_tool_access
 from .validation import validate_tool_input
@@ -48,7 +48,12 @@ def _save_plan_and_exit(payload: dict[str, Any], context: object) -> Result:
     from penhin.tools.builtin.plan_mode import run_exit_plan
     return run_exit_plan(payload["plan_content"], context)
 
+def _present_plan(payload, context) -> Result:
+    from penhin.agent.planning import present_plan
+    return present_plan(context, payload["alternatives"])
+
 DEFAULT_EFFECTS: dict[str, EffectDefinition] = {
+    "present_plan": ({"required": {"alternatives": (list, type(None))}, "optional": set()}, _present_plan),
     "compact_context": ({"required": {}, "optional": set()}, _compact),
     "snip_turns": ({"required": {"selectors": (str, list)}, "optional": set()}, _snip),
     "enter_plan_mode": ({"required": {}, "optional": set()}, _enter_plan),
@@ -90,6 +95,10 @@ class ToolInvocation:
     def invoke(self, tool_name: str, tool_input: ToolInput, policy: PermissionPolicy, approval: ApprovalFlow | None = None, context: object = None, catalog: ToolCatalog = DEFAULT_TOOL_CATALOG) -> ToolRun:
         approval = approval or default_approval_flow(policy, catalog)
         call_id, start = f"tool-{next(_CALL_IDS)}", time.perf_counter()
+        spec = catalog.get(tool_name)
+        planning = getattr(context, "planning", None)
+        if planning is not None and planning.active and spec is not None and tool_name != "plan" and spec.category != ToolCategory.readonly:
+            return ToolRun(Result.failure("Implementation waits for user plan selection. Use read to inspect and plan to present three alternatives.", code="plan_selection_required"))
         access = check_tool_access(tool_name, tool_input, policy, approval, catalog)
         if access is not None:
             log_tool_blocked(call_id, tool_name, tool_input, access.result, (time.perf_counter() - start) * 1000, "approval_required" if access.approval_required else "blocked")

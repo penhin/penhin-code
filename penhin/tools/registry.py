@@ -28,6 +28,7 @@ from .types import ApprovalKey, ToolApproval, ToolCategory, ToolSchema, ToolSpec
 from .types import ToolEffect, ToolOutcome
 from .builtin.workspace import run_workspace
 from .catalog import ToolCatalog
+from .builtin.planning import PLAN_SCHEMA, plan_outcome
 
 
 def result_handler(handler):
@@ -186,10 +187,10 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     ),
     "plan": ToolSpec(
         name="plan",
-        description="Enter planning mode before proposing implementation work.",
-        input_schema=object_schema(),
+        description="Start read-only planning with no arguments, or present exactly three materially different alternatives for user selection. Each option describes scope, risks, cost, and verification. Only the user can select; a custom suggestion requires three revised alternatives.",
+        input_schema=PLAN_SCHEMA,
         category=ToolCategory.state,
-        handler=declared_effects(ToolEffect("enter_plan_mode", {})),
+        handler=outcome_handler(plan_outcome),
         parallel_safe=False,
         available_to_child=False,
         available_to_parent=True,
@@ -581,6 +582,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
 CHILD_TOOLS = [tool_schema(spec) for spec in TOOL_SPECS.values() if spec.available_to_child]
 MODEL_DEFAULT_TOOL_NAMES = ("read", "edit", "bash", "plan")
 MODEL_DEFAULT_TOOLS = [tool_schema(TOOL_SPECS[name]) for name in MODEL_DEFAULT_TOOL_NAMES]
+MODEL_TOOL_CATALOG = ToolCatalog([TOOL_SPECS[name] for name in MODEL_DEFAULT_TOOL_NAMES])
 PARENT_TOOLS = [tool_schema(spec) for spec in TOOL_SPECS.values() if spec.available_to_parent]
 DEFAULT_TOOL_CATALOG = ToolCatalog(TOOL_SPECS)
 

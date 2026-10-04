@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -14,6 +14,7 @@ from penhin.agent.compaction import (
     prepare_compaction,
 )
 from penhin.agent.projection import mark_message_snipped
+from penhin.agent.planning import PlanningState
 from penhin.permissions import PermissionMode
 from penhin.result import Result
 from penhin.tools.execution import ApprovalFlow, PermissionPolicy
@@ -61,6 +62,20 @@ class RunContext:
     plugin_runtime: Any = None
     runtime_envelope: RuntimeEnvelope | None = None
     runtime_envelope_recorded: bool = False
+    planning: PlanningState = field(default_factory=PlanningState)
+
+    def __post_init__(self) -> None:
+        self.restore_planning()
+
+    def restore_planning(self) -> None:
+        self.planning = PlanningState()
+        if self.session_manager is not None:
+            for entry in self.session_manager.branch_entries():
+                if entry["type"] == "planning":
+                    self.planning = PlanningState(
+                        active=entry["active"], alternatives=entry["alternatives"],
+                        selected=entry["selected"],
+                    )
 
     def record_runtime_envelope(self) -> None:
         if self.runtime_envelope is None or self.runtime_envelope_recorded:
@@ -72,6 +87,14 @@ class RunContext:
     def add_user_message(self, content: Any) -> None:
         if not is_tool_result_content(content):
             self.clear_post_delegation_guard()
+            from penhin.agent.planning import save_planning, select_plan
+            if isinstance(content, str) and self.planning.alternatives:
+                if content.strip() in {"1", "2", "3"}:
+                    select_plan(self, int(content.strip()))
+                else:
+                    save_planning(self, PlanningState(active=True))
+            elif self.planning.selected is not None:
+                save_planning(self, PlanningState())
         message = {"role": "user", "content": content}
         self.messages.append(message)
         if self.session_manager is not None:

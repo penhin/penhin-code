@@ -9,11 +9,11 @@ from penhin.plugins.installation import OFFICIAL_PUBLISHER_TRUST_ROOTS
 from penhin.plugins.runtime import PluginRuntime
 from penhin.plugins.service import LocalPluginLoader
 from penhin.tools.catalog import ToolCatalog
-from penhin.tools.registry import DEFAULT_TOOL_CATALOG
+from penhin.tools.registry import MODEL_TOOL_CATALOG
 
 
 def plugin_runtime_for_session(
-    base_catalog: ToolCatalog = DEFAULT_TOOL_CATALOG,
+    base_catalog: ToolCatalog = MODEL_TOOL_CATALOG,
     cwd: Path | None = None,
 ) -> PluginRuntime:
     """Discover the effective Plugins for a run without activating hosts."""

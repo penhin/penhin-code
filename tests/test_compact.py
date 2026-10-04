@@ -424,12 +424,10 @@ def test_committer_persists_before_mutating_live_context() -> None:
     assert live == [{"role": "user", "content": "unchanged"}]
 
 
-def test_auto_compact_failure_does_not_append_session_event(monkeypatch) -> None:
-    class RecordingSession:
-        calls = 0
+def test_auto_compact_failure_does_not_append_session_event(monkeypatch, tmp_path) -> None:
+    from penhin.agent.session_manager import SessionManager
 
-        def append_compaction(self, artifact):
-            self.calls += 1
+    session = SessionManager.create(tmp_path)
 
     def fail_compaction(*args, **kwargs):
         raise CompactionError("offline")
@@ -438,13 +436,13 @@ def test_auto_compact_failure_does_not_append_session_event(monkeypatch) -> None
         messages=[{"role": "user", "content": "x" * 5_000}],
         policy=PermissionPolicy(allow=set(), deny=set()),
         approval=ApprovalFlow.require_confirmation(set()),
-        session_manager=RecordingSession(),
+        session_manager=session,
     )
     monkeypatch.setattr("penhin.agent.context.prepare_compaction", fail_compaction)
 
     assert run_context.auto_compact_if_needed(1_000, 200) is False
     assert run_context.messages == [{"role": "user", "content": "x" * 5_000}]
-    assert run_context.session_manager.calls == 0
+    assert SessionManager.open(session.path).branch_entries() == []
 
 
 def test_empty_summary_is_rejected() -> None:

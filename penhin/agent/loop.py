@@ -18,10 +18,7 @@ from penhin.runtime.manager import log_usage
 from penhin.tools.execution import ApprovalFlow, PermissionPolicy, approval_key, run_tool
 from penhin.tools.execution.invocation import collect_tool_calls
 from penhin.tools.catalog import ToolCatalog
-from penhin.tools.registry import DEFAULT_TOOL_CATALOG, MODEL_DEFAULT_TOOLS
-
-# The main Agent's model-visible surface; internal tools remain in the registry.
-PARENT_TOOLS = MODEL_DEFAULT_TOOLS
+from penhin.tools.registry import DEFAULT_TOOL_CATALOG, MODEL_TOOL_CATALOG
 
 
 API_UNAVAILABLE_MESSAGE = "API is temporarily unavailable because the circuit breaker is open. Please try again later."
@@ -149,7 +146,7 @@ def compact_context_for_llm(context: RunContext, runtime) -> None:
     context.auto_compact_if_needed(runtime.context_window, runtime.compaction_reserve_tokens)
 
 
-def call_llm(context: RunContext, runtime, catalog: ToolCatalog = DEFAULT_TOOL_CATALOG):
+def call_llm(context: RunContext, runtime, catalog: ToolCatalog = MODEL_TOOL_CATALOG):
     ensure_project_instructions_message(context.messages)
     streamed = False
     stream = None
@@ -164,9 +161,9 @@ def call_llm(context: RunContext, runtime, catalog: ToolCatalog = DEFAULT_TOOL_C
     response = None
     try:
         response = runtime.call_with_retry(
-            system=build_main_system(),
+            system=build_main_system(catalog, context.planning),
             messages=messages_for_api(context.messages),
-            tools=PARENT_TOOLS if catalog is DEFAULT_TOOL_CATALOG else catalog.schemas("parent"),
+            tools=catalog.schemas("parent"),
             max_tokens=runtime.max_tokens,
             stream_callback=on_stream_text,
         )
@@ -191,7 +188,7 @@ def should_continue_with_tools(response) -> bool:
 def execute_tool_uses(
     context: RunContext,
     response,
-    catalog: ToolCatalog = DEFAULT_TOOL_CATALOG,
+    catalog: ToolCatalog = MODEL_TOOL_CATALOG,
 ) -> tuple[ToolResults, bool]:
     calls = collect_tool_calls(response.content)
     cards = [ui.start_tool_call(call.tool_name, call.tool_input) for call in calls]
@@ -235,7 +232,7 @@ def handle_circuit_open(context: RunContext, error: CircuitBreakerOpen) -> None:
 
 def build_agent_deps(
     runtime,
-    catalog: ToolCatalog = DEFAULT_TOOL_CATALOG,
+    catalog: ToolCatalog = MODEL_TOOL_CATALOG,
     catalog_provider: Callable[[], ToolCatalog] | None = None,
 ) -> AgentDeps:
     current_catalog = catalog_provider or (lambda: catalog)
@@ -261,7 +258,7 @@ def run_agent_state_machine(
     return state
 
 
-def agent_loop(context: RunContext, catalog: ToolCatalog = DEFAULT_TOOL_CATALOG) -> AgentState:
+def agent_loop(context: RunContext, catalog: ToolCatalog = MODEL_TOOL_CATALOG) -> AgentState:
     runtime = runtime_manager.current()
     plugin_runtime = context.plugin_runtime
     catalog_provider = plugin_runtime.catalog if plugin_runtime is not None else None
