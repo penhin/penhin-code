@@ -84,7 +84,7 @@ def prerequisites() -> dict[str, object]:
     versions = {name: run([tools[name], "--version"]).splitlines()[0]
                 for name in ("bwrap", "systemctl", "unshare", "mount", "cc")}
     manager = run([tools["systemctl"], "--user", "show", "--property=Version", "--value"])
-    match = re.match(r"(\d+)", manager)
+    match = re.match(r"v?(\d+)", manager)
     if not match or int(match[1]) < 257:
         raise ProbeFailure(f"existing systemd user manager >=257 is required for ExtraFileDescriptors: {manager!r}")
     versions["user_manager"] = manager
