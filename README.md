@@ -99,3 +99,5 @@ penhin-eval validate --suite baseline-v1
 ```
 
 更多评测选项见 [docs/evaluation.md](docs/evaluation.md)。
+
+Linux Sandbox 的实现准备和原生 Linux 验证入口见 [docs/linux-sandbox.md](docs/linux-sandbox.md)。目前尚无通过实测的隔离基线，未接入生产 Plugin 激活。

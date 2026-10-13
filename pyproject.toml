@@ -51,6 +51,9 @@ Changelog = "https://github.com/penhin/penhin-code/blob/main/CHANGELOG.md"
 [tool.setuptools.packages.find]
 include = ["penhin*"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [tool.setuptools.package-data]
 "penhin.evaluation" = [
   "suites/**/*.yaml",
